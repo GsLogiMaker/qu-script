@@ -7,15 +7,15 @@
 		{
 			"type": "lldb",
 			"request": "launch",
-			"name": "Debug executable 'ge-script'",
+			"name": "Debug executable 'ge_script'",
 			"cargo": {
 				"args": [
 					"build",
-					"--bin=ge-script",
-					"--package=ge-script"
+					"--bin=ge_script",
+					"--package=ge_script"
 				],
 				"filter": {
-					"name": "ge-script",
+					"name": "ge_script",
 					"kind": "bin"
 				}
 			},
@@ -25,16 +25,16 @@
 		{
 			"type": "lldb",
 			"request": "launch",
-			"name": "Debug unit tests in executable 'ge-script'",
+			"name": "Debug unit tests in executable 'ge_script'",
 			"cargo": {
 				"args": [
 					"test",
 					"--no-run",
-					"--bin=ge-script",
-					"--package=ge-script"
+					"--bin=ge_script",
+					"--package=ge_script"
 				],
 				"filter": {
-					"name": "ge-script",
+					"name": "ge_script",
 					"kind": "bin"
 				}
 			},
