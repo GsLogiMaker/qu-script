@@ -11,13 +11,13 @@
 use std::fmt::{self};
 
 
-/// An array of function pointers to be used in [`tokenize`].
+/// An array of function pointers to be used in [`chars_fit_rule`].
 /// 
-/// This array is used by [`tokenize`] to determin if a pattern of characters
-/// should be turned into a [`Token`]. See [`tokenrule_name`] or 
+/// This array is used by [`chars_fit_rule`] to determin if a pattern of
+/// characters should be turned into a [`Token`]. See [`tokenrule_name`] or 
 /// [`tokenrule_keyword`] for examples of how a `tokenrule_*` function should
 /// be structured.
-const RULES:&[& dyn Fn(&Vec<char>)->bool] = &[
+pub const RULES:&[& dyn Fn(&[char])->bool] = &[
 	&tokenrule_keyword,
 	&tokenrule_symbols,
 	&tokenrule_number,
@@ -25,6 +25,8 @@ const RULES:&[& dyn Fn(&Vec<char>)->bool] = &[
 ];
 
 
+/// A slice of a script file with information on the row, column, and indent of
+/// the slice.
 pub struct Token<'a> {
 	begin:u64,
 	end:u64,
@@ -42,7 +44,8 @@ pub struct Token<'a> {
 	}
 
 
-	fn text(&self, text:&str) -> String {
+	/// Returns a [`String`] copy of this [`Token`].
+	pub fn text(&self, text:&str) -> String {
 		let mut result = String::default();
 		for (idx, char) in text.char_indices() {
 			if idx > self.end as usize {
@@ -67,12 +70,29 @@ pub struct Token<'a> {
 }
 
 
-pub fn tokenrule_name(added_so_far:&Vec<char>) -> bool {
-	for char in  added_so_far.as_slice() {
-		if char == &' ' {
+/// Takes a [`Vec`] of [`char`]s and returns true if it matches a name.
+///
+/// A name could be a type, class, function name, or variable name.
+/// 
+/// Example
+/// ```
+/// use ge_script::tokenrule_name;
+///
+///	let chars1:&[char] = &['_', '_', 'i', 'n', 'i', 't', '_', '_',];
+///	assert!(ge_script::tokenrule_name(chars1));
+///
+///	let chars2:&[char] = &['a', 'b', '1', ];
+///	assert!(ge_script::tokenrule_name(chars2));
+///
+///	let chars3:&[char] = &['a', '+', '=', ];
+///	assert!(!ge_script::tokenrule_name(chars3));
+/// ```
+pub fn tokenrule_name(added_so_far:&[char]) -> bool {
+	for char in  added_so_far {
+		if *char == ' ' {
 			return false
 		}
-		if !char.is_alphanumeric() || char == &'_' {
+		if !char.is_alphanumeric() && *char != '_' {
 			return false;
 		}
 	}
@@ -81,8 +101,25 @@ pub fn tokenrule_name(added_so_far:&Vec<char>) -> bool {
 }
 
 
-pub fn tokenrule_number(added_so_far:&Vec<char>) -> bool {
-	for char in  added_so_far.as_slice() {
+/// Takes a [`Vec`] of [`char`]s and returns true if it matches a number.
+/// Some examples of numbers are *3.2* and *16*.
+/// 
+/// Example
+/// ```
+/// use ge_script::tokenrule_number;
+///
+///	let chars1:&[char] = &['5', '.', '6',];
+///	assert!(ge_script::tokenrule_number(chars1));
+///
+///	let chars2:&[char] = &['1','0',];
+///	assert!(ge_script::tokenrule_number(chars2));
+///
+///	let chars3:&[char] = &['a', ];
+///	assert!(!ge_script::tokenrule_number(chars3));
+/// ```
+pub fn tokenrule_number(added_so_far:&[char]) -> bool {
+	
+	for char in  added_so_far {
 		if char == &' ' {
 			return false
 		}
@@ -95,8 +132,25 @@ pub fn tokenrule_number(added_so_far:&Vec<char>) -> bool {
 }
 
 
-pub fn tokenrule_keyword(added_so_far:&Vec<char>) -> bool {
-	return match added_so_far.as_slice() {
+/// Takes a [`Vec`] of [`char`]s and returns true if it matches a keyword.
+/// 
+/// Some examples of keywords are *var*, *if*, and *fn*.
+/// 
+/// Example
+/// ```
+/// use ge_script::tokenrule_keyword;
+///
+///	let chars1:&[char] = &['v', 'a', 'r',];
+///	assert!(ge_script::tokenrule_keyword(chars1));
+///
+///	let chars2:&[char] = &['i','f',];
+///	assert!(ge_script::tokenrule_keyword(chars2));
+///
+///	let chars3:&[char] = &['d', 'u', 'd', 'e',];
+///	assert!(!ge_script::tokenrule_keyword(chars3));
+/// ```
+pub fn tokenrule_keyword(added_so_far:&[char]) -> bool {
+	return match added_so_far {
 		['v', 'a', 'r',] => true,
 		['f', 'n',] => true,
 		['c', 'l', 'a', 's', 's',] => true,
@@ -108,8 +162,25 @@ pub fn tokenrule_keyword(added_so_far:&Vec<char>) -> bool {
 }
 
 
-pub fn tokenrule_symbols(added_so_far:&Vec<char>) -> bool {
-	return match added_so_far.as_slice() {
+/// Takes a [`Vec`] of [`char`]s and returns true if it matches an operator.
+/// 
+/// Some examples of operators are *+*, *-*, and *+=*.
+/// 
+/// Example
+/// ```
+/// use ge_script::tokenrule_symbols;
+///
+///	let chars1:&[char] = &['*',];
+///	assert!(ge_script::tokenrule_symbols(chars1));
+///
+///	let chars2:&[char] = &['=','=',];
+///	assert!(ge_script::tokenrule_symbols(chars2));
+///
+///	let chars3:&[char] = &['+', '1'];
+///	assert!(!ge_script::tokenrule_symbols(chars3));
+/// ```
+pub fn tokenrule_symbols(added_so_far:&[char]) -> bool {
+	return match added_so_far {
 		['+',] => true,
 		['-',] => true,
 		['*',] => true,
@@ -136,14 +207,13 @@ pub fn tokenrule_symbols(added_so_far:&Vec<char>) -> bool {
 }
 
 
-/// Takes a &[str] and returns a [Vec] of [Token]s.
+/// Takes a &[`str`] and returns a [`Vec`] of [`Token`]s.
 /// 
-/// The rules govorning what becomes a [Token] are specified by the functions
-/// in [RULES].
+/// The rules govorning what becomes a [`Token`] are specified by the functions
+/// in [`RULES`].
 /// 
 /// Example
 /// ```
-/// extern crate ge_script;
 /// use ge_script::Token;
 /// use ge_script::tokenize;
 /// 
@@ -227,6 +297,10 @@ pub fn tokenize<'a>(script:&'a str) -> Vec<Token> {
 }
 
 
+/// Checks a [`Vec`] of [`char`]s against [`RULES`].
+/// 
+/// Returns *true* if the [`Vec`] of [`char`]s fits at least one of the rules
+/// specified in [`RULES`].
 pub fn chars_fit_rule(chars:&Vec<char>) -> bool {
 	let mut fits_rule = false;
 	for rule in RULES {
