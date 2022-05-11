@@ -1,2 +1,2 @@
-# ge-script
-Repository for the Ge scripting language.
+# qu-script
+Repository for the Qu scripting language.
