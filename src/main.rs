@@ -1,6 +1,6 @@
 
-use ge_script::tokenize;
-use ge_script::GeVm;
+use qu_script::tokenize;
+use qu_script::QuVm;
 
 /// var i = 0
 /// var j = 2
@@ -54,7 +54,7 @@ var dave.=5
 		5
 		10";
 
-	let mut vm = GeVm::new();
-	vm.run_bytes( GeVm::compile_asm(asm).as_slice() );
+	let mut vm = QuVm::new();
+	vm.run_bytes( QuVm::compile_asm(asm).as_slice() );
 	println!("")
 }

@@ -35,7 +35,7 @@ pub const RULES:&[& dyn Fn(&[char])->bool] = &[
 
 /// A slice of a script file with information on the row, column, and indent of
 /// the slice.
-pub struct GeToken<'a> {
+pub struct QuToken<'a> {
 	begin:u64,
 	end:u64,
 	row:u64,
@@ -44,13 +44,13 @@ pub struct GeToken<'a> {
 	source:&'a str,
 	varient:u8,
 
-} impl<'a> GeToken<'a> {
+} impl<'a> QuToken<'a> {
 
 	/// Makes a new [`Token`].
 	pub fn new(
 			begin:u64, end:u64, row:u64, 
-			col:u64, indent:u8, source:&'a str) -> GeToken {
-		return GeToken{begin, end, row, _col: col, indent, source, varient:0};
+			col:u64, indent:u8, source:&'a str) -> QuToken {
+		return QuToken{begin, end, row, _col: col, indent, source, varient:0};
 	}
 
 
@@ -68,7 +68,7 @@ pub struct GeToken<'a> {
 		return result;
 	}
 
-} impl<'a> std::fmt::Display for GeToken<'a> {
+} impl<'a> std::fmt::Display for QuToken<'a> {
 	
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		return write!(
@@ -80,16 +80,16 @@ pub struct GeToken<'a> {
 }
 
 
-pub struct GeVm {
+pub struct QuVm {
 	registers:[i32;32],
 	pc:usize,
 	stack:Vec<u8>,
 	pub source:Vec<u8>,
-} impl GeVm {
+} impl QuVm {
 	
 	/// Makes a new [`Vm`].
 	pub fn new() -> Self {
-		return GeVm { pc:0, stack:vec![], source:vec![], registers:[0;32] };
+		return QuVm { pc:0, stack:vec![], source:vec![], registers:[0;32] };
 	}
 
 
@@ -278,16 +278,16 @@ pub struct GeVm {
 /// 
 /// Example
 /// ```
-/// use ge_script::tokenrule_name;
+/// use qu_script::tokenrule_name;
 ///
 ///	let chars1:&[char] = &['_', '_', 'i', 'n', 'i', 't', '_', '_',];
-///	assert!(ge_script::tokenrule_name(chars1));
+///	assert!(qu_script::tokenrule_name(chars1));
 ///
 ///	let chars2:&[char] = &['a', 'b', '1', ];
-///	assert!(ge_script::tokenrule_name(chars2));
+///	assert!(qu_script::tokenrule_name(chars2));
 ///
 ///	let chars3:&[char] = &['a', '+', '=', ];
-///	assert!(!ge_script::tokenrule_name(chars3));
+///	assert!(!qu_script::tokenrule_name(chars3));
 /// ```
 pub fn tokenrule_name(added_so_far:&[char]) -> bool {
 	for char in  added_so_far {
@@ -308,16 +308,16 @@ pub fn tokenrule_name(added_so_far:&[char]) -> bool {
 /// 
 /// Example
 /// ```
-/// use ge_script::tokenrule_number;
+/// use qu_script::tokenrule_number;
 ///
 ///	let chars1:&[char] = &['5', '.', '6',];
-///	assert!(ge_script::tokenrule_number(chars1));
+///	assert!(qu_script::tokenrule_number(chars1));
 ///
 ///	let chars2:&[char] = &['1','0',];
-///	assert!(ge_script::tokenrule_number(chars2));
+///	assert!(qu_script::tokenrule_number(chars2));
 ///
 ///	let chars3:&[char] = &['a', ];
-///	assert!(!ge_script::tokenrule_number(chars3));
+///	assert!(!qu_script::tokenrule_number(chars3));
 /// ```
 pub fn tokenrule_number(added_so_far:&[char]) -> bool {
 	
@@ -340,16 +340,16 @@ pub fn tokenrule_number(added_so_far:&[char]) -> bool {
 /// 
 /// Example
 /// ```
-/// use ge_script::tokenrule_keyword;
+/// use qu_script::tokenrule_keyword;
 ///
 ///	let chars1:&[char] = &['v', 'a', 'r',];
-///	assert!(ge_script::tokenrule_keyword(chars1));
+///	assert!(qu_script::tokenrule_keyword(chars1));
 ///
 ///	let chars2:&[char] = &['i','f',];
-///	assert!(ge_script::tokenrule_keyword(chars2));
+///	assert!(qu_script::tokenrule_keyword(chars2));
 ///
 ///	let chars3:&[char] = &['d', 'u', 'd', 'e',];
-///	assert!(!ge_script::tokenrule_keyword(chars3));
+///	assert!(!qu_script::tokenrule_keyword(chars3));
 /// ```
 pub fn tokenrule_keyword(added_so_far:&[char]) -> bool {
 	return match added_so_far {
@@ -370,16 +370,16 @@ pub fn tokenrule_keyword(added_so_far:&[char]) -> bool {
 /// 
 /// Example
 /// ```
-/// use ge_script::tokenrule_symbols;
+/// use qu_script::tokenrule_symbols;
 ///
 ///	let chars1:&[char] = &['*',];
-///	assert!(ge_script::tokenrule_symbols(chars1));
+///	assert!(qu_script::tokenrule_symbols(chars1));
 ///
 ///	let chars2:&[char] = &['=','=',];
-///	assert!(ge_script::tokenrule_symbols(chars2));
+///	assert!(qu_script::tokenrule_symbols(chars2));
 ///
 ///	let chars3:&[char] = &['+', '1'];
-///	assert!(!ge_script::tokenrule_symbols(chars3));
+///	assert!(!qu_script::tokenrule_symbols(chars3));
 /// ```
 pub fn tokenrule_symbols(added_so_far:&[char]) -> bool {
 	return match added_so_far {
@@ -416,8 +416,8 @@ pub fn tokenrule_symbols(added_so_far:&[char]) -> bool {
 /// 
 /// Example
 /// ```
-/// use ge_script::Token;
-/// use ge_script::tokenize;
+/// use qu_script::Token;
+/// use qu_script::tokenize;
 /// 
 /// let script:&str = " hello=world ;! ";
 /// 
@@ -430,7 +430,7 @@ pub fn tokenrule_symbols(added_so_far:&[char]) -> bool {
 ///	assert!(tokens[3].text(&script) == ";");
 ///	assert!(tokens[4].text(&script) == "!");
 /// ```
-pub fn tokenize<'a>(script:&'a str) -> Vec<GeToken> {
+pub fn tokenize<'a>(script:&'a str) -> Vec<QuToken> {
 	let mut tokens = vec!();
 
 	/* WARNING: This does not account for grapheme clusters. Currently hoping
@@ -471,7 +471,7 @@ pub fn tokenize<'a>(script:&'a str) -> Vec<GeToken> {
 		loop {
 			if chars_fit_rule(&added_so_far){
 				if curr_token <= tokens.len() && added_so_far.len() == 1 {
-					tokens.push(GeToken::new(
+					tokens.push(QuToken::new(
 						idx as u64,
 						idx as u64,
 						row,

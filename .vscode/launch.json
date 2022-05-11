@@ -7,15 +7,15 @@
 		{
 			"type": "lldb",
 			"request": "launch",
-			"name": "Debug executable 'ge_script'",
+			"name": "Debug executable 'qu_script'",
 			"cargo": {
 				"args": [
 					"build",
-					"--bin=ge_script",
-					"--package=ge_script"
+					"--bin=qu_script",
+					"--package=qu_script"
 				],
 				"filter": {
-					"name": "ge_script",
+					"name": "qu_script",
 					"kind": "bin"
 				}
 			},
@@ -25,16 +25,16 @@
 		{
 			"type": "lldb",
 			"request": "launch",
-			"name": "Debug unit tests in executable 'ge_script'",
+			"name": "Debug unit tests in executable 'qu_script'",
 			"cargo": {
 				"args": [
 					"test",
 					"--no-run",
-					"--bin=ge_script",
-					"--package=ge_script"
+					"--bin=qu_script",
+					"--package=qu_script"
 				],
 				"filter": {
-					"name": "ge_script",
+					"name": "qu_script",
 					"kind": "bin"
 				}
 			},
