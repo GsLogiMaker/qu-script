@@ -6,18 +6,12 @@
 #![warn(rustdoc::missing_doc_code_examples)]
 #![warn(rustdoc::broken_intra_doc_links)]
 
-use std::fmt::{self};
-
-const OP_NULL:u8 = 0;
-const OP_CONST_TO_STACK:u8 = 1;
-const OP_ADD_U8:u8 = 2;
-const OP_JUMP_TO:u8 = 3;
-const OP_JUMP_BY:u8 = 4;
-const OP_JUMP_TO_IF:u8 = 5;
-const OP_JUMP_BY_IF:u8 = 6;
+use std::{fmt::{self}, str::FromStr};
 
 const TK_VARIENT_NAME:u8 = 0;
 const TK_VARIENT_NUMBER:u8 = 1;
+
+type Rules<'a> = [(&'a dyn Fn(&[char])->bool, u8)];
 
 /// An array of function pointers to be used in [`chars_fit_rule`].
 /// 
@@ -25,12 +19,25 @@ const TK_VARIENT_NUMBER:u8 = 1;
 /// characters should be turned into a [`Token`]. See [`tokenrule_name`] or 
 /// [`tokenrule_keyword`] for examples of how a `tokenrule_*` function should
 /// be structured.
-pub const RULES:&[& dyn Fn(&[char])->bool] = &[
-	&tokenrule_keyword,
-	&tokenrule_symbols,
-	&tokenrule_number,
-	&tokenrule_name,
+pub const RULES:&Rules = &[
+	(&tokenrule_keyword, 0),
+	(&tokenrule_symbols, 0),
+	(&tokenrule_number, 0),
+	(&tokenrule_name, 0),
 ];
+
+pub const ASM_RULES:&Rules = &[
+	(&tokenrule_symbols, 0),
+	(&tokenrule_flagref, 0),
+	(&tokenrule_number, 0),
+	(&tokenrule_name, 0),
+];
+
+
+struct Operation<'a> {
+	code:u8,
+	keyword:&'a str,
+}
 
 
 /// A slice of a script file with information on the row, column, and indent of
@@ -48,16 +55,24 @@ pub struct QuToken<'a> {
 
 	/// Makes a new [`Token`].
 	pub fn new(
-			begin:u64, end:u64, row:u64, 
-			col:u64, indent:u8, source:&'a str) -> QuToken {
-		return QuToken{begin, end, row, _col: col, indent, source, varient:0};
+			begin:u64, end:u64, row:u64, col:u64, indent:u8,
+			varient:u8, source:&'a str,) -> QuToken {
+		return QuToken{
+			begin,
+			end,
+			row,
+			_col:col,
+			indent,
+			source,
+			varient:varient
+		};
 	}
 
 
 	/// Returns a [`String`] copy of this [`Token`].
-	pub fn text(&self, text:&str) -> String {
+	pub fn text(&self) -> String {
 		let mut result = String::default();
-		for (idx, char) in text.char_indices() {
+		for (idx, char) in self.source.char_indices() {
 			if idx > self.end as usize {
 				break
 			}
@@ -73,23 +88,65 @@ pub struct QuToken<'a> {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		return write!(
 				f, "<'{}' row:{}  indent:{}>",
-				self.text(self.source),
+				self.text(),
 				self.row,
 				self.indent,);
 	}
 }
 
 
-pub struct QuVm {
-	registers:[i32;32],
+pub struct QuVm<'a> {
+	registers:[u64;16],
 	pc:usize,
-	stack:Vec<u8>,
 	pub source:Vec<u8>,
-} impl QuVm {
+	pub mem:Vec<u64>,
+	operations:Vec<Operation<'a>>,
+
+} impl<'a> QuVm<'a> {
 	
+	const OP_NULL:u8 = 0;
+	const OP_LOAD_CONST:u8 = 1;
+	const OP_ADD:u8 = 2;
+	const OP_SUB:u8 = 3;
+	const OP_MUL:u8 = 4;
+	const OP_DIV:u8 = 5;
+	const OP_POW:u8 = 6;
+	const OP_MOD:u8 = 7;
+	const OP_LESSER:u8 = 8;
+	const OP_GREATER:u8 = 9;
+	const OP_EQUAL:u8 = 10;
+	const OP_JUMP_TO:u8 = 11;
+	const OP_JUMP_BY:u8 = 12;
+	const OP_JUMP_TO_IF:u8 = 13;
+	const OP_JUMP_BY_IF:u8 = 14;
+
 	/// Makes a new [`Vm`].
 	pub fn new() -> Self {
-		return QuVm { pc:0, stack:vec![], source:vec![], registers:[0;32] };
+		let mut vm = QuVm { 
+			pc:0,
+			source:vec![],
+			registers:[0;16],
+			mem:vec![],
+			operations:vec![
+				Operation{code:QuVm::OP_NULL, keyword:"end",},
+				Operation{code:QuVm::OP_LOAD_CONST, keyword:"load_const",},
+				Operation{code:QuVm::OP_ADD, keyword:"add",},
+				Operation{code:QuVm::OP_SUB, keyword:"sub",},
+				Operation{code:QuVm::OP_MUL, keyword:"mul",},
+				Operation{code:QuVm::OP_DIV, keyword:"div",},
+				Operation{code:QuVm::OP_POW, keyword:"pow",},
+				Operation{code:QuVm::OP_MOD, keyword:"mod",},
+				Operation{code:QuVm::OP_LESSER, keyword:"lesser",},
+				Operation{code:QuVm::OP_GREATER, keyword:"greater",},
+				Operation{code:QuVm::OP_EQUAL, keyword:"equal",},
+				Operation{code:QuVm::OP_JUMP_TO, keyword:"jump",},
+				Operation{code:QuVm::OP_JUMP_BY, keyword:"jump_by",},
+				Operation{code:QuVm::OP_JUMP_TO_IF, keyword:"jump_if",},
+				Operation{code:QuVm::OP_JUMP_BY_IF, keyword:"jump_by_if",},
+			],
+		};
+
+		return vm;
 	}
 
 
@@ -109,130 +166,176 @@ pub struct QuVm {
 
 
 	/// Compiles byte code from low level VM instructions.
-	pub fn compile_asm(code:&str) -> Vec<u8> {
+	pub fn compile_asm(&mut self, code:&str) -> Vec<u8> {
 		let mut bcode = vec![];
 
-		let mut bytes_to_grab = 0;
-		for tk in tokenize(code) {
-			if bytes_to_grab > 0 {
-				bcode.push(
-						tk.text(tk.source)
-							.to_string()
-							.parse::<u8>()
-							.unwrap());
-				bytes_to_grab -= 1;
+		let tokens = tokenize(code, ASM_RULES);
+		
+
+		// Look for flags
+		let mut flags = vec![];
+		let mut next_is_flag = false;
+		let mut i = 0;
+		for tk in &tokens {
+			let tk_string = tk.text();
+
+			if tk_string == "flag" {
+				next_is_flag = true;
+				continue;
+
+			} else if next_is_flag {
+				next_is_flag = false;
+				flags.push(
+					(tk_string, i)
+				);
 				continue;
 			}
 
-			match tk.text(tk.source).to_lowercase().as_str() {
-				"end" => {
-					bcode.push(OP_NULL);
+			i += 1;
+		}
+
+		// Compile
+		for tk in &tokens {
+			let a = tk.text().to_lowercase();
+			let tk_str = a.as_str();
+
+			// Flag reference
+			if tk_str.chars().next() == Some('$') {
+				for (flag, idx) in &flags {
+					let mut flag2 = "$".to_string();
+					flag2.push_str(flag);
+					if tk_str == flag2 {
+						bcode.push(*idx as u8);
+					}
 				}
-				"const" => {
-					bcode.push(OP_CONST_TO_STACK);
-					bytes_to_grab = 2;
-				}
-				"add" => {
-					bcode.push(OP_ADD_U8);
-				}
-				_ => {
-					bcode.push(
-						tk.text(tk.source)
-							.to_string()
-							.parse::<u8>()
-							.unwrap());
+				continue;
+			}
+
+			// Keyword
+			let mut is_oper:bool = false;
+			for oper in &self.operations {
+				if tk_str == oper.keyword {
+					bcode.push(oper.code);
+					is_oper = true;
+					break;
 				}
 			}
+
+			// Number
+			if !is_oper {
+				match tk.text().to_string().parse::<u8>() {
+					Ok(number) => {bcode.push(number)}
+					Err(x) => {}
+				}
+			}
+			
 		}
 
 		return bcode;
 	}
 
 
-	/// Executes a load instruction.
-	fn exc_add_u8(&mut self) {
-		let rhs = self.stack.pop().expect("");
-		let lhs = self.stack.pop().expect("");
-		self.stack.push(lhs + rhs);
-	}
-
-
 	fn exc_jump_by(&mut self) {
-		let to_a = Self::u8_pair_to_u16(
-				self.stack.pop().expect(""),
-				self.stack.pop().expect("")
-				);
-		let to_b = Self::u8_pair_to_u16(
-				self.stack.pop().expect(""),
-				self.stack.pop().expect("")
-				);
-		self.pc += Self::u16_pair_to_u32(to_a, to_b) as usize;
 	}
 
 
 	fn exc_jump_by_if(&mut self) {
-		if self.next_u8() != 0 {
-			self.exc_jump_by();
-		} else {
-			self.stack.pop().expect("");
-			self.stack.pop().expect("");
-			self.stack.pop().expect("");
-			self.stack.pop().expect("");
-		}
 	}
 
 
 	fn exc_jump_to(&mut self) {
-		let to_a = Self::u8_pair_to_u16(
-				self.stack.pop().expect(""),
-				self.stack.pop().expect("")
-				);
-		let to_b = Self::u8_pair_to_u16(
-				self.stack.pop().expect(""),
-				self.stack.pop().expect("")
-				);
-		self.pc = Self::u16_pair_to_u32(to_a, to_b) as usize;
 	}
 
 
 	fn exc_jump_to_if(&mut self) {
-		if self.next_u8() != 0 {
-			self.exc_jump_to();
-		} else {
-			self.stack.pop().expect("");
-			self.stack.pop().expect("");
-			self.stack.pop().expect("");
-			self.stack.pop().expect("");
+		let rg_if = self.next() as usize;
+		let val_to = self.next() as usize;
+		if self.registers[rg_if] != 0 {
+			self.pc = val_to as usize;
 		}
 	}
 
 
 	/// Executes a load instruction.
 	fn exc_load_const_u8(&mut self) {
-		let load_from = self.next_u16() as usize;
-		self.stack.push(self.source[load_from]);
+		let src_from = self.next() as usize;
+		let rg_to = self.next() as usize;
+		self.registers[rg_to] = self.source[src_from] as u64;
+	}
+
+
+	fn exc_math_add(&mut self) {
+		let rg_left = self.next() as usize;
+		let rg_right = self.next() as usize;
+		let rg_result = self.next() as usize;
+		self.registers[rg_result] = 
+				self.registers[rg_left] as u64
+				+ self.registers[rg_right] as u64;
+	}
+
+
+	fn exc_math_div(&mut self) {
+		let rg_left = self.next() as usize;
+		let rg_right = self.next() as usize;
+		let rg_result = self.next() as usize;
+		self.registers[rg_result] = 
+				self.registers[rg_left] as u64
+				/ self.registers[rg_right] as u64;
+	}
+
+
+	fn exc_math_mult(&mut self) {
+		let rg_left = self.next() as usize;
+		let rg_right = self.next() as usize;
+		let rg_result = self.next() as usize;
+		self.registers[rg_result] = 
+				self.registers[rg_left] as u64
+				* self.registers[rg_right] as u64;
+	}
+
+
+	fn exc_math_sub(&mut self) {
+		let rg_left = self.next() as usize;
+		let rg_right = self.next() as usize;
+		let rg_result = self.next() as usize;
+		self.registers[rg_result] = 
+				self.registers[rg_left] as u64
+				- self.registers[rg_right] as u64;
+	}
+
+
+	fn exc_logi_equal(&mut self) {
+		let rg_left = self.next() as usize;
+		let rg_right = self.next() as usize;
+		let rg_result = self.next() as usize;
+		self.registers[rg_result] = 
+				(self.registers[rg_left] == self.registers[rg_right]) as u64;
+	}
+
+
+	fn exc_logi_greater(&mut self) {
+		let rg_left = self.next() as usize;
+		let rg_right = self.next() as usize;
+		let rg_result = self.next() as usize;
+		self.registers[rg_result] = 
+				(self.registers[rg_left] > self.registers[rg_right]) as u64;
+	}
+
+
+	fn exc_logi_lesser(&mut self) {
+		let rg_left = self.next() as usize;
+		let rg_right = self.next() as usize;
+		let rg_result = self.next() as usize;
+		self.registers[rg_result] = 
+				(self.registers[rg_left] < self.registers[rg_right]) as u64;
 	}
 
 
 	/// Gets the next byte in the source code as a u8 int.
-	fn next_u8(&mut self) -> u8 {
+	fn next(&mut self) -> u8 {
 		let val = self.source[self.pc];
 		self.pc += 1;
 		return val;
-	}
-
-	/// Gets the next 2 bytes in the source code as a u16 int.
-	fn next_u16(&mut self) -> u16 {
-		return Self::u8_pair_to_u16(self.next_u8(), self.next_u8());
-	}
-
-
-	/// Gets the next 4 bytes in the source code as a u32 int.
-	fn next_u32(&mut self) -> u32 {
-		return Self::u16_pair_to_u32(
-				self.next_u16(), 
-				self.next_u16()
-				);
 	}
 
 	
@@ -240,35 +343,64 @@ pub struct QuVm {
 		self.source = code.to_vec();
 		loop {
 			
-			match self.next_u8() {
-				OP_NULL => {
+			match self.next() {
+				QuVm::OP_NULL => {
 					println!("Halting");
 					break;
 				}
-				OP_CONST_TO_STACK => {
+				QuVm::OP_LOAD_CONST => {
 					self.exc_load_const_u8();
 				}
-				OP_ADD_U8 => {
-					self.exc_add_u8();
+				QuVm::OP_ADD => {
+					self.exc_math_add();
 				}
-				OP_JUMP_TO => {
+				QuVm::OP_JUMP_TO => {
 					self.exc_jump_to();
 				}
-				OP_JUMP_BY => {
+				QuVm::OP_JUMP_BY => {
 					self.exc_jump_by();
 				}
-				OP_JUMP_TO_IF => {
+				QuVm::OP_JUMP_TO_IF => {
 					self.exc_jump_to_if();
 				}
-				OP_JUMP_BY_IF => {
+				QuVm::OP_JUMP_BY_IF => {
 					self.exc_jump_by_if();
 				}
-				_ => { todo!() }
+				QuVm::OP_GREATER => {
+					self.exc_logi_greater();
+				}
+				QuVm::OP_LESSER => {
+					self.exc_logi_lesser();
+				}
+				QuVm::OP_EQUAL => {
+					self.exc_logi_equal();
+				}
+				x => { println!("{x}"); todo!(); }
 			}
 
 		}
 	}
 
+}
+
+
+pub fn tokenrule_flagref(added_so_far:&[char]) -> bool {
+	if added_so_far[0] != '$' {
+		return false;
+	}
+
+	let mut i = 1; // Set to 1 because first checked previously
+	while i < added_so_far.len() {
+		if added_so_far[i] == ' ' {
+			return false
+		}
+		if !added_so_far[i].is_alphanumeric() && added_so_far[i] != '_' {
+			return false;
+		}
+		i += 1;
+	}
+
+	return true;
 }
 
 
@@ -394,6 +526,7 @@ pub fn tokenrule_symbols(added_so_far:&[char]) -> bool {
 		[',',] => true,
 		[';',] => true,
 		['=',] => true,
+		['$',] => true,
 		['=', '=',] => true,
 		['!', '=',] => true,
 		['>', '=',] => true,
@@ -430,7 +563,7 @@ pub fn tokenrule_symbols(added_so_far:&[char]) -> bool {
 ///	assert!(tokens[3].text(&script) == ";");
 ///	assert!(tokens[4].text(&script) == "!");
 /// ```
-pub fn tokenize<'a>(script:&'a str) -> Vec<QuToken> {
+pub fn tokenize<'a>(script:&'a str, rules:&Rules<'a>) -> Vec<QuToken<'a>> {
 	let mut tokens = vec!();
 
 	/* WARNING: This does not account for grapheme clusters. Currently hoping
@@ -469,7 +602,11 @@ pub fn tokenize<'a>(script:&'a str) -> Vec<QuToken> {
 		// Update token end if it fits rule, 
 		// otherwise clear the added so far
 		loop {
-			if chars_fit_rule(&added_so_far){
+			let (does_fit, char_type) = chars_fit_rule(
+				&added_so_far,
+				rules,
+			);
+			if does_fit{
 				if curr_token <= tokens.len() && added_so_far.len() == 1 {
 					tokens.push(QuToken::new(
 						idx as u64,
@@ -477,6 +614,7 @@ pub fn tokenize<'a>(script:&'a str) -> Vec<QuToken> {
 						row,
 						col,
 						indent,
+						char_type,
 						script,));
 				}
 				tokens[curr_token].end = idx as u64;
@@ -503,14 +641,16 @@ pub fn tokenize<'a>(script:&'a str) -> Vec<QuToken> {
 /// 
 /// Returns *true* if the [`Vec`] of [`char`]s fits at least one of the rules
 /// specified in [`RULES`].
-pub fn chars_fit_rule(chars:&Vec<char>) -> bool {
+pub fn chars_fit_rule<'a>(chars:&Vec<char>, rules:&Rules<'a>) -> (bool, u8) {
 	let mut fits_rule = false;
-	for rule in RULES {
-		fits_rule = fits_rule || rule(&chars);
+	let mut i = 0;
+	for rule in rules {
+		fits_rule = fits_rule || rule.0(&chars);
 		if fits_rule{
 			break;
 		}
+		i += rule.1;
 	}
 
-	return fits_rule;
+	return (fits_rule, i);
 }

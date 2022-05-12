@@ -29,7 +29,6 @@ use qu_script::QuVm;
 /// push_val 10
 /// lesser
 /// if_jump loop
-
 fn main() {
 	println!("");
 	println!("---START---");
@@ -47,14 +46,33 @@ var dave.=5
 	//}
 
 	let asm = "
-		const 8 0
-		const 9 0
-		add
-		end
-		5
-		10";
+		load_const $constant0 0
+		load_const $constant1 1
+		load_const $constant2 2
+		load_const $constant3 3
+
+		flag loop
+			add 1 1 1
+			add 0 2 0
+
+			lesser 0 3 4
+			jump_if 4 $loop
+
+			end
+
+		flag constant0
+			0
+		flag constant1
+			2
+		flag constant2
+			1
+		flag constant3
+			10
+	";
 
 	let mut vm = QuVm::new();
-	vm.run_bytes( QuVm::compile_asm(asm).as_slice() );
+	let bcode_vec = vm.compile_asm(asm);
+	let bcode = bcode_vec.as_slice();
+	vm.run_bytes( bcode );
 	println!("")
 }
