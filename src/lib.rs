@@ -8,6 +8,27 @@
 
 use std::{fmt::{self}, str::FromStr};
 
+#[repr(u8)]
+#[derive(PartialEq)]
+enum Op {
+	END = 0,
+	LD_CONST,
+	LD_VAL,
+	ADD,
+	SUB,
+	MUL,
+	DIV,
+	MOD,
+	POW,
+	LESSER,
+	GREATER,
+	EQUAL,
+	JP_TO,
+	JP_BY,
+	JP_TO_IF,
+	JP_BY_IF,
+}
+
 const TK_VARIENT_NAME:u8 = 0;
 const TK_VARIENT_NUMBER:u8 = 1;
 
@@ -103,15 +124,17 @@ pub struct QuVm<'a> {
 	operations:Vec<Operation<'a>>,
 
 } impl<'a> QuVm<'a> {
-	
+
 	const OP_NULL:u8 = 0;
 	const OP_LOAD_CONST:u8 = 1;
+
 	const OP_ADD:u8 = 2;
 	const OP_SUB:u8 = 3;
 	const OP_MUL:u8 = 4;
 	const OP_DIV:u8 = 5;
 	const OP_POW:u8 = 6;
 	const OP_MOD:u8 = 7;
+
 	const OP_LESSER:u8 = 8;
 	const OP_GREATER:u8 = 9;
 	const OP_EQUAL:u8 = 10;
@@ -128,21 +151,22 @@ pub struct QuVm<'a> {
 			registers:[0;16],
 			mem:vec![],
 			operations:vec![
-				Operation{code:QuVm::OP_NULL, keyword:"end",},
-				Operation{code:QuVm::OP_LOAD_CONST, keyword:"load_const",},
-				Operation{code:QuVm::OP_ADD, keyword:"add",},
-				Operation{code:QuVm::OP_SUB, keyword:"sub",},
-				Operation{code:QuVm::OP_MUL, keyword:"mul",},
-				Operation{code:QuVm::OP_DIV, keyword:"div",},
-				Operation{code:QuVm::OP_POW, keyword:"pow",},
-				Operation{code:QuVm::OP_MOD, keyword:"mod",},
-				Operation{code:QuVm::OP_LESSER, keyword:"lesser",},
-				Operation{code:QuVm::OP_GREATER, keyword:"greater",},
-				Operation{code:QuVm::OP_EQUAL, keyword:"equal",},
-				Operation{code:QuVm::OP_JUMP_TO, keyword:"jump",},
-				Operation{code:QuVm::OP_JUMP_BY, keyword:"jump_by",},
-				Operation{code:QuVm::OP_JUMP_TO_IF, keyword:"jump_if",},
-				Operation{code:QuVm::OP_JUMP_BY_IF, keyword:"jump_by_if",},
+				Operation{code:Op::END as u8, keyword:"end",},
+				Operation{code:Op::LD_CONST as u8, keyword:"load_const",},
+				Operation{code:Op::LD_VAL as u8, keyword:"load_val",},
+				Operation{code:Op::ADD as u8, keyword:"add",},
+				Operation{code:Op::SUB as u8, keyword:"sub",},
+				Operation{code:Op::MUL as u8, keyword:"mul",},
+				Operation{code:Op::DIV as u8, keyword:"div",},
+				Operation{code:Op::MOD as u8, keyword:"mod",},
+				Operation{code:Op::POW as u8, keyword:"pow",},
+				Operation{code:Op::LESSER as u8, keyword:"lesser",},
+				Operation{code:Op::GREATER as u8, keyword:"greater",},
+				Operation{code:Op::EQUAL as u8, keyword:"equal",},
+				Operation{code:Op::JP_TO as u8, keyword:"jump",},
+				Operation{code:Op::JP_BY as u8, keyword:"jump_by",},
+				Operation{code:Op::JP_TO_IF as u8, keyword:"jump_if",},
+				Operation{code:Op::JP_BY_IF as u8, keyword:"jump_by_if",},
 			],
 		};
 
@@ -264,6 +288,13 @@ pub struct QuVm<'a> {
 	}
 
 
+	fn exc_load_val_u8(&mut self) {
+		let val = self.next() as usize;
+		let rg_to = self.next() as usize;
+		self.registers[rg_to] = val as u64;
+	}
+
+
 	fn exc_math_add(&mut self) {
 		let rg_left = self.next() as usize;
 		let rg_right = self.next() as usize;
@@ -271,6 +302,26 @@ pub struct QuVm<'a> {
 		self.registers[rg_result] = 
 				self.registers[rg_left] as u64
 				+ self.registers[rg_right] as u64;
+	}
+
+
+	fn exc_math_sub(&mut self) {
+		let rg_left = self.next() as usize;
+		let rg_right = self.next() as usize;
+		let rg_result = self.next() as usize;
+		self.registers[rg_result] = 
+				self.registers[rg_left] as u64
+				- self.registers[rg_right] as u64;
+	}
+
+
+	fn exc_math_mul(&mut self) {
+		let rg_left = self.next() as usize;
+		let rg_right = self.next() as usize;
+		let rg_result = self.next() as usize;
+		self.registers[rg_result] = 
+				self.registers[rg_left] as u64
+				* self.registers[rg_right] as u64;
 	}
 
 
@@ -284,23 +335,23 @@ pub struct QuVm<'a> {
 	}
 
 
-	fn exc_math_mult(&mut self) {
+	fn exc_math_mod(&mut self) {
 		let rg_left = self.next() as usize;
 		let rg_right = self.next() as usize;
 		let rg_result = self.next() as usize;
 		self.registers[rg_result] = 
 				self.registers[rg_left] as u64
-				* self.registers[rg_right] as u64;
+				% self.registers[rg_right] as u64;
 	}
 
 
-	fn exc_math_sub(&mut self) {
+	fn exc_math_pow(&mut self) {
 		let rg_left = self.next() as usize;
 		let rg_right = self.next() as usize;
 		let rg_result = self.next() as usize;
 		self.registers[rg_result] = 
 				self.registers[rg_left] as u64
-				- self.registers[rg_right] as u64;
+				^ self.registers[rg_right] as u64;
 	}
 
 
@@ -344,37 +395,27 @@ pub struct QuVm<'a> {
 		loop {
 			
 			match self.next() {
-				QuVm::OP_NULL => {
-					println!("Halting");
-					break;
-				}
-				QuVm::OP_LOAD_CONST => {
-					self.exc_load_const_u8();
-				}
-				QuVm::OP_ADD => {
-					self.exc_math_add();
-				}
-				QuVm::OP_JUMP_TO => {
-					self.exc_jump_to();
-				}
-				QuVm::OP_JUMP_BY => {
-					self.exc_jump_by();
-				}
-				QuVm::OP_JUMP_TO_IF => {
-					self.exc_jump_to_if();
-				}
-				QuVm::OP_JUMP_BY_IF => {
-					self.exc_jump_by_if();
-				}
-				QuVm::OP_GREATER => {
-					self.exc_logi_greater();
-				}
-				QuVm::OP_LESSER => {
-					self.exc_logi_lesser();
-				}
-				QuVm::OP_EQUAL => {
-					self.exc_logi_equal();
-				}
+				 x if x == Op::END as u8 => {println!("Halting"); break;},
+
+				x if x == Op::LD_CONST as u8 => self.exc_load_const_u8(),
+				x if x == Op::LD_VAL as u8 => self.exc_load_val_u8(),
+
+				x if x == Op::ADD as u8 => self.exc_math_add(),
+				x if x == Op::SUB as u8 => self.exc_math_sub(),
+				x if x == Op::MUL as u8 => self.exc_math_mul(),
+				x if x == Op::DIV as u8 => self.exc_math_div(),
+				x if x == Op::MOD as u8 => self.exc_math_mod(),
+				x if x == Op::POW as u8 => self.exc_math_pow(),
+
+				x if x == Op::LESSER as u8 => self.exc_logi_lesser(),
+				x if x == Op::GREATER as u8 => self.exc_logi_greater(),
+				x if x == Op::EQUAL as u8 => self.exc_logi_equal(),
+
+				x if x == Op::JP_TO as u8 => self.exc_jump_to(),
+				x if x == Op::JP_BY as u8 => self.exc_jump_by(),
+				x if x == Op::JP_TO_IF as u8 => self.exc_jump_to_if(),
+				x if x == Op::JP_BY_IF as u8 => self.exc_jump_by_if(),
+
 				x => { println!("{x}"); todo!(); }
 			}
 

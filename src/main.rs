@@ -45,33 +45,25 @@ var dave.=5
 	//	println!("{token}")
 	//}
 
-	let asm = "
-		load_const $constant0 0
-		load_const $constant1 1
-		load_const $constant2 2
-		load_const $constant3 3
+	let asm = format!("
+		load_val 0 {i}
+		load_val 2 {double}
+		load_val 1 {one}
+		load_val 10 {ten}
+		load_val 2 {two}
 
 		flag loop
-			add 1 1 1
-			add 0 2 0
+			mul {double} {two} {double}
+			add {i} {one} {i}
 
-			lesser 0 3 4
-			jump_if 4 $loop
+			lesser {i} {ten} {is_lesser}
+			jump_if {is_lesser} $loop
 
 			end
-
-		flag constant0
-			0
-		flag constant1
-			2
-		flag constant2
-			1
-		flag constant3
-			10
-	";
+	", i=0, double=1, one=2, ten=3, two=4, is_lesser=5);
 
 	let mut vm = QuVm::new();
-	let bcode_vec = vm.compile_asm(asm);
+	let bcode_vec = vm.compile_asm(asm.as_str());
 	let bcode = bcode_vec.as_slice();
 	vm.run_bytes( bcode );
 	println!("")
