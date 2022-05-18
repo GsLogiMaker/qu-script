@@ -6,7 +6,7 @@
 #![warn(rustdoc::missing_doc_code_examples)]
 #![warn(rustdoc::broken_intra_doc_links)]
 
-use std::{fmt::{self}, str::FromStr};
+use std::{fmt::{self, Display}, str::FromStr, any::Any};
 
 #[repr(u8)]
 #[derive(PartialEq)]
@@ -29,8 +29,28 @@ enum Op {
 	JP_BY_IF,
 }
 
-const TK_VARIENT_NAME:u8 = 0;
-const TK_VARIENT_NUMBER:u8 = 1;
+pub enum QuLeaf {
+	Expression(QuOp, Box<QuLeaf>, Box<QuLeaf>),
+	Value(u64),
+
+} impl Display for QuLeaf {
+
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			QuLeaf::Expression(op, lft, rht) => {
+				let opstr:&str = (*op).into();
+				return write!(f, "Expr({lft} {opstr} {rht})");
+			}
+			QuLeaf::Value(val) => {
+				return write!(f, "v{val}");
+			}
+			_ => {
+				return write!(f, "<QuLeaf NULL>");
+			}
+		}
+	}
+
+}
 
 type Rules<'a> = [(&'a dyn Fn(&[char])->bool, u8)];
 
@@ -58,6 +78,155 @@ pub const ASM_RULES:&Rules = &[
 struct Operation<'a> {
 	code:u8,
 	keyword:&'a str,
+}
+
+
+pub struct QuParser<'a> {
+	tk_idx:usize,
+	tk_stack:Vec<usize>,
+	tokens:&'a Vec<QuToken<'a>>,
+
+} impl<'a> QuParser<'a> {
+
+	pub fn new(tokens:&'a mut Vec<QuToken<'a>>) -> Self {
+		tokens.push(
+			QuToken::new(tokens.len() as u64, tokens.len() as u64, 
+			0, 0, 0, u8::MAX, "")
+		);
+		return QuParser {
+			tk_idx:0,
+			tk_stack:vec![],
+			tokens:tokens,
+		}
+	}
+
+	/// Checks for an expression
+	fn ck_expr(&mut self) -> Option<QuLeaf> {
+		if let Some(check) = self.ck_op_sub() {
+			return Some(check);
+		}
+
+		return None;
+	}
+
+
+	fn ck_op_add(&mut self) -> Option<(QuLeaf)> {
+		return self.ck_operation("+", &Self::ck_op_div);
+	}
+
+
+	fn ck_op_div(&mut self) -> Option<(QuLeaf)> {
+		return self.ck_operation("/", &Self::ck_op_mul);
+	}
+
+
+	fn ck_op_mul(&mut self) -> Option<(QuLeaf)> {
+		return self.ck_operation("*", &Self::ck_value);
+	}
+
+
+	fn ck_op_sub(&mut self) -> Option<(QuLeaf)> {
+		return self.ck_operation("-", &Self::ck_op_add);
+	}
+
+
+	/// Returns a tuple with the type, and two box pointers to expressions
+	fn ck_operation(
+			&mut self, operator:&str,
+			next:&dyn Fn(&mut Self)->Option<(QuLeaf)>,
+			) -> Option<(QuLeaf)> {
+
+		self.tk_push();
+
+		// Check left side for value
+		let data_l = next(self);
+		if let None = data_l {
+			self.tk_pop();
+			return None;
+		}
+		let data_l = data_l.unwrap();
+
+		let tk_op = self.tk_spy(0);
+		if tk_op.text() != operator {
+			return Some(data_l);
+		}
+		self.tk_next();
+
+		// Check right side for expression
+		let data_r = next(self);
+		if let None = data_r {
+			self.tk_pop();
+			return None;
+		}
+		let data_r = data_r.unwrap();
+
+		return Some(
+			QuLeaf::Expression(
+				QuOp::from(operator),
+				Box::new(data_l),
+				Box::new(data_r)
+			)
+		);
+	}
+
+
+	fn ck_value(&mut self) -> Option<(QuLeaf)> {
+		self.tk_push();
+		return match self.tk_next().text().parse::<u64>() {
+			Ok(x) => Some(QuLeaf::Value(x)),
+			Err(x) => {
+				self.tk_pop();
+				None
+			},
+		};
+	}
+
+
+	pub fn parse(&mut self) -> Vec<QuLeaf> {
+		self.tk_idx = 0;
+		let mut leafs = vec![];
+
+		while self.tk_idx < self.tokens.len() {
+			match self.ck_expr() {
+				Some(x) => {leafs.push(x);}
+				None => {
+					break;
+				//	panic!("Parsing failed at {i}:'{j}'", 
+				//		i=self.tk_idx, 
+				//		j=self.tokens[self.tk_idx].text());
+				}
+			}
+			
+		}
+
+		return leafs;
+	}
+
+
+	fn tk_next(&mut self) -> &QuToken {
+		let a = &self.tokens[self.tk_idx];
+		self.tk_idx += 1;
+		return a;
+	}
+
+
+	fn tk_pop(&mut self) {
+		self.tk_idx = self.tk_stack.pop().unwrap();
+	}
+
+
+	fn tk_push(&mut self) {
+		self.tk_stack.push(self.tk_idx);
+	}
+
+
+	fn tk_spy(&mut self, at:usize) -> &QuToken {
+		if self.tk_idx+at >= self.tokens.len() {
+			return &self.tokens[self.tokens.len()-1];
+		}
+		return &self.tokens[self.tk_idx+at];
+	}
+
 }
 
 
@@ -92,6 +261,10 @@ pub struct QuToken<'a> {
 
 	/// Returns a [`String`] copy of this [`Token`].
 	pub fn text(&self) -> String {
+		if self.begin == u64::MAX {
+			return "".to_string();
+		}
+
 		let mut result = String::default();
 		for (idx, char) in self.source.char_indices() {
 			if idx > self.end as usize {
@@ -104,7 +277,7 @@ pub struct QuToken<'a> {
 		return result;
 	}
 
-} impl<'a> std::fmt::Display for QuToken<'a> {
+} impl<'a> Display for QuToken<'a> {
 	
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		return write!(
@@ -124,24 +297,6 @@ pub struct QuVm<'a> {
 	operations:Vec<Operation<'a>>,
 
 } impl<'a> QuVm<'a> {
-
-	const OP_NULL:u8 = 0;
-	const OP_LOAD_CONST:u8 = 1;
-
-	const OP_ADD:u8 = 2;
-	const OP_SUB:u8 = 3;
-	const OP_MUL:u8 = 4;
-	const OP_DIV:u8 = 5;
-	const OP_POW:u8 = 6;
-	const OP_MOD:u8 = 7;
-
-	const OP_LESSER:u8 = 8;
-	const OP_GREATER:u8 = 9;
-	const OP_EQUAL:u8 = 10;
-	const OP_JUMP_TO:u8 = 11;
-	const OP_JUMP_BY:u8 = 12;
-	const OP_JUMP_TO_IF:u8 = 13;
-	const OP_JUMP_BY_IF:u8 = 14;
 
 	/// Makes a new [`Vm`].
 	pub fn new() -> Self {
@@ -425,6 +580,92 @@ pub struct QuVm<'a> {
 }
 
 
+#[derive(Clone, Copy)]
+pub struct QuOp {
+	op:u8,
+} impl From<&str> for QuOp {
+
+	fn from(x:&str) -> Self {
+		match x {
+			"+"  => QuOp{op:0},
+			"-"  => QuOp{op:1},
+			"*"  => QuOp{op:2},
+			"/"  => QuOp{op:3},
+			"%"  => QuOp{op:4},
+			"**" => QuOp{op:5},
+			"//" => QuOp{op:6},
+			"&"  => QuOp{op:7},
+			"|"  => QuOp{op:8},
+			"^"  => QuOp{op:9},
+			
+			"+="  => QuOp{op:10},
+			"-="  => QuOp{op:11},
+			"*="  => QuOp{op:12},
+			"/="  => QuOp{op:13},
+			"%="  => QuOp{op:16},
+			"**=" => QuOp{op:14},
+			"//=" => QuOp{op:15},
+			"&="  => QuOp{op:17},
+			"|="  => QuOp{op:18},
+			"^="  => QuOp{op:19},
+
+			":" => QuOp{op:20},
+			"," => QuOp{op:21},
+			"=" => QuOp{op:22},
+			
+			"==" => QuOp{op:23},
+			"!=" => QuOp{op:24},
+			">=" => QuOp{op:25},
+			"<=" => QuOp{op:26},
+
+			_ => QuOp{op:u8::MAX},
+		}
+	}
+
+}
+
+impl From<QuOp> for &str {
+
+	fn from(x:QuOp) -> Self {
+		match x.op {
+			0 => "+",
+			1 => "-",
+			2 => "*",
+			3 => "/",
+			4 => "%",
+			5 => "**",
+			6 => "//",
+			7 => "&",
+			8 => "|",
+			9 => "^",
+			
+			10 => "+=" ,
+			11 => "-=" ,
+			12 => "*=" ,
+			13 => "/=" ,
+			16 => "%=" ,
+			14 => "**=",
+			15 => "//=",
+			17 => "&=" ,
+			18 => "|=" ,
+			19 => "^=" ,
+
+			20 => ":",
+			21 => ",",
+			22 => "=",
+			
+			23 => "==",
+			24 => "!=",
+			25 => ">=",
+			26 => "<=",
+
+			_ => "",
+		}
+	}
+
+}
+
+
 pub fn tokenrule_flagref(added_so_far:&[char]) -> bool {
 	if added_so_far[0] != '$' {
 		return false;
@@ -561,13 +802,14 @@ pub fn tokenrule_symbols(added_so_far:&[char]) -> bool {
 		['*',] => true,
 		['/',] => true,
 		['%',] => true,
+		['&',] => true,
+		['|',] => true,
 		['^',] => true,
-		['!',] => true,
 		[':',] => true,
 		[',',] => true,
-		[';',] => true,
 		['=',] => true,
-		['$',] => true,
+		['*', '*',] => true,
+		['/', '/',] => true,
 		['=', '=',] => true,
 		['!', '=',] => true,
 		['>', '=',] => true,
@@ -577,7 +819,6 @@ pub fn tokenrule_symbols(added_so_far:&[char]) -> bool {
 		['*', '=',] => true,
 		['/', '=',] => true,
 		['%', '=',] => true,
-		['^', '=',] => true,
 		_ => false,
 	};
 }

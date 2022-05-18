@@ -1,6 +1,8 @@
 
 use qu_script::tokenize;
 use qu_script::QuVm;
+use qu_script::QuParser;
+use qu_script::RULES;
 
 /// var i = 0
 /// var j = 2
@@ -66,5 +68,12 @@ var dave.=5
 	let bcode_vec = vm.compile_asm(asm.as_str());
 	let bcode = bcode_vec.as_slice();
 	vm.run_bytes( bcode );
-	println!("")
+	println!("");
+
+	let expr_str = "2 + 6 * 7 - 8 / 20";
+	let mut expr_tk = &mut tokenize(expr_str, RULES);
+	let mut parser = QuParser::new(expr_tk);
+	let a = parser.parse();
+	println!("{x}", x = a[0]);
+	println!("Expr(v2 + Expr(Expr(v6 * v7) - Expr(v8 / v20)))");
 }
