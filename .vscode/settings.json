@@ -1,6 +1,14 @@
 {
 	"rust-analyzer.linkedProjects": [
 	"Cargo.toml", // outer first
-	"inner/Cargo.toml",
-	]
+	"Cargo.toml",
+	],
+	"editor.semanticTokenColorCustomizations": {
+        "enabled": true,
+        "rules": {
+            "*.mutable": {
+                "underline": false,
+            }
+        }
+    }
 }

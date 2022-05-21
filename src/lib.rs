@@ -6,14 +6,19 @@
 #![warn(rustdoc::missing_doc_code_examples)]
 #![warn(rustdoc::broken_intra_doc_links)]
 
-use std::{fmt::{self, Display}, str::FromStr, any::Any};
+use std::{fmt::{self, Display}, str::FromStr, any::Any, vec};
+use std::fmt::Write;
 
 #[repr(u8)]
-#[derive(PartialEq)]
-enum Op {
+#[derive(PartialEq, Debug, Clone, Copy)]
+pub enum Op {
 	END = 0,
 	LD_CONST,
 	LD_VAL,
+	LD_MEM,
+	ST_MEM,
+	LD_STK,
+	ST_STK,
 	ADD,
 	SUB,
 	MUL,
@@ -27,10 +32,79 @@ enum Op {
 	JP_BY,
 	JP_TO_IF,
 	JP_BY_IF,
+} impl From<&str> for Op {
+
+	fn from(x:&str) -> Self {
+		match x.to_uppercase().as_str() {
+			"ADD" => Op::ADD,
+			"SUB" => Op::SUB,
+			"MUL" => Op::MUL,
+			"DIV" => Op::DIV,
+			"MOD" => Op::MOD,
+			"POW" => Op::POW,
+			"GRT" => Op::GREATER,
+			"LES" => Op::LESSER,
+			"EQL" => Op::EQUAL,
+
+			"+"   => Op::ADD,
+			"-"   => Op::SUB,
+			"*"   => Op::MUL,
+			"/"   => Op::DIV,
+			"%"   => Op::MOD,
+			"**"  => Op::POW,
+			"<"   => Op::LESSER,
+			">"   => Op::GREATER,
+			"=="  => Op::EQUAL,
+
+			"//"  => Op::END,
+			"&"   => Op::END,
+			"|"   => Op::END,
+			"^"   => Op::END,
+			
+			"+="  => Op::END,
+			"-="  => Op::END,
+			"*="  => Op::END,
+			"/="  => Op::END,
+			"%="  => Op::END,
+			"**=" => Op::END,
+			"//=" => Op::END,
+			"&="  => Op::END,
+			"|="  => Op::END,
+			"^="  => Op::END,
+
+			":"   => Op::END,
+			","   => Op::END,
+			"="   => Op::END,
+			
+			"!="  => Op::END,
+			">="  => Op::END,
+			"<="  => Op::END,
+
+			_ => Op::END,
+		}
+	}
+
+} impl Display for Op {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		return match self {
+			Op::ADD => write!(f, "+"),
+			Op::SUB => write!(f, "-"),
+			Op::MUL => write!(f, "*"),
+			Op::DIV => write!(f, "/"),
+			Op::MOD => write!(f, "%"),
+			Op::POW => write!(f, "**"),
+			Op::GREATER => write!(f, ">"),
+			Op::LESSER => write!(f, "<"),
+			Op::EQUAL => write!(f, "=="),
+			_ => write!(f, "{}", *self as u8),
+		};
+	}
 }
 
+
+#[derive(Debug)]
 pub enum QuLeaf {
-	Expression(QuOp, Box<QuLeaf>, Box<QuLeaf>),
+	Expression(Op, Box<QuLeaf>, Box<QuLeaf>),
 	Value(u64),
 
 } impl Display for QuLeaf {
@@ -38,7 +112,8 @@ pub enum QuLeaf {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
 			QuLeaf::Expression(op, lft, rht) => {
-				let opstr:&str = (*op).into();
+				let string = format!("{}", op);
+				let opstr:&str = string.as_str();
 				return write!(f, "Expr({lft} {opstr} {rht})");
 			}
 			QuLeaf::Value(val) => {
@@ -81,6 +156,111 @@ struct Operation<'a> {
 }
 
 
+pub struct QuCompiler {
+	reserved_vregs:[bool;16],
+} impl QuCompiler {
+
+	pub fn new() -> Self {
+		return Self{
+			reserved_vregs:[false;16],
+		};
+	}
+
+
+	/// Calculates an expression and returns the virtual register to the result.
+	fn cmp_expression(
+			&mut self, op_code:Op, lft:&QuLeaf, rgh:&QuLeaf
+			) -> (Vec<u8>, u8) {
+		
+		// Right hand value code
+		let mut rgh_data = match rgh {
+			QuLeaf::Expression(op, lft, rgh)
+				=> self.cmp_expression(*op, lft, rgh),
+			QuLeaf::Value(v) => self.cmp_value(*v as u8),
+		};
+
+		// Left hand value code
+		let mut lft_data = match lft {
+			QuLeaf::Expression(op, lft, rgh)
+				=> self.cmp_expression(*op, lft, rgh),
+			QuLeaf::Value(v) => self.cmp_value(*v as u8),
+		};
+
+		let mut code:Vec<u8> = Vec::with_capacity(
+				lft_data.0.len()+rgh_data.0.len() + 4);
+		let to_reg = self.vreg_reserve();
+		code.append(&mut rgh_data.0);
+		code.append(&mut lft_data.0);
+		code.append(&mut vec![
+			op_code as u8, lft_data.1, rgh_data.1, to_reg
+		]);
+
+		// Free registers
+		self.vreg_free(lft_data.1);
+		self.vreg_free(rgh_data.1);
+
+		return (code, to_reg);
+	}
+
+
+	/// Reserves a virtual register, stores the literal in it, and returns
+	/// the register.
+	fn cmp_value(&mut self, value:u8) -> (Vec<u8>, u8) {
+		let reg = self.vreg_reserve();
+		let mut code = Vec::with_capacity(10);
+		code.push(Op::LD_VAL as u8);
+		code.append(&mut value.to_be_bytes().to_vec());
+		code.push(reg);
+		return (code, reg);
+	}
+
+
+	pub fn compile(&mut self, leafs:&mut Vec<QuLeaf>) -> Vec<u8> {
+		let mut code:Vec<u8> = vec![];
+		for leaf in leafs {
+			match leaf {
+				QuLeaf::Expression(
+						op, 
+						lft, 
+						rgh) => {
+					let (mut expr_code,_reg) = self.cmp_expression(
+							*op, lft, rgh);
+					code.append(&mut expr_code);
+				}
+	
+				QuLeaf::Value(val) => {
+					code.push(Op::LD_VAL as u8);
+					code.append(&mut u64::to_be_bytes(*val).to_vec());
+					code.push(0);
+				}
+			}
+		}
+		code.push(Op::END as u8);
+		return code;
+	}
+
+
+	/// Reserves a register so that nothing else uses it until it's freed.
+	fn vreg_reserve(&mut self) -> u8 {
+		let mut i:u8 = 0;
+		while i < 16 {
+			if !self.reserved_vregs[i as usize] {
+				self.reserved_vregs[i as usize] = true;
+				return i;
+			}
+			i += 1;
+		}
+		panic!("No more regs");
+	}
+
+	/// Frees a previously reserved register.
+	fn vreg_free(&mut self, reg:u8) {
+		self.reserved_vregs[reg as usize] = false;
+	}
+
+}
+
+
 pub struct QuParser<'a> {
 	tk_idx:usize,
 	tk_stack:Vec<usize>,
@@ -102,11 +282,31 @@ pub struct QuParser<'a> {
 
 	/// Checks for an expression
 	fn ck_expr(&mut self) -> Option<QuLeaf> {
-		if let Some(check) = self.ck_op_sub() {
+		if let Some(check) = self.ck_op_les() {
 			return Some(check);
 		}
 
 		return None;
+	}
+
+
+	fn ck_op_les(&mut self) -> Option<(QuLeaf)> {
+		return self.ck_operation("<", &Self::ck_op_grt);
+	}
+
+
+	fn ck_op_grt(&mut self) -> Option<(QuLeaf)> {
+		return self.ck_operation(">", &Self::ck_op_eql);
+	}
+
+
+	fn ck_op_eql(&mut self) -> Option<(QuLeaf)> {
+		return self.ck_operation("==", &Self::ck_op_sub);
+	}
+
+
+	fn ck_op_sub(&mut self) -> Option<(QuLeaf)> {
+		return self.ck_operation("-", &Self::ck_op_add);
 	}
 
 
@@ -121,16 +321,42 @@ pub struct QuParser<'a> {
 
 
 	fn ck_op_mul(&mut self) -> Option<(QuLeaf)> {
-		return self.ck_operation("*", &Self::ck_value);
+		return self.ck_operation("*", &Self::ck_op_paren_expr);
 	}
 
 
-	fn ck_op_sub(&mut self) -> Option<(QuLeaf)> {
-		return self.ck_operation("-", &Self::ck_op_add);
+	fn ck_op_paren_expr(&mut self) -> Option<(QuLeaf)> {
+		self.tk_push();
+
+		if self.tk_next().text() != "(" {
+			self.tk_pop();
+
+			// Match for a value if no parenthesis expression is matched.
+			let data = self.ck_value();
+			if let None = data {
+				self.tk_pop();
+				return None;
+			}
+			return data;
+		}
+
+		let data = self.ck_expr();
+		if let None = data {
+			self.tk_pop();
+			return None;
+		}
+
+		if self.tk_next().text() != ")" {
+			panic!("Parenthesis expression ended without closing parenthesis.");
+			self.tk_pop();
+			return None;
+		}
+
+		return data;
 	}
 
 
-	/// Returns a tuple with the type, and two box pointers to expressions
+	/// Returns a QuLeaf
 	fn ck_operation(
 			&mut self, operator:&str,
 			next:&dyn Fn(&mut Self)->Option<(QuLeaf)>,
@@ -146,14 +372,16 @@ pub struct QuParser<'a> {
 		}
 		let data_l = data_l.unwrap();
 
+		// Check operator
 		let tk_op = self.tk_spy(0);
-		if tk_op.text() != operator {
+		let txt_op = tk_op.text();
+		if txt_op != operator {
 			return Some(data_l);
 		}
 		self.tk_next();
 
 		// Check right side for expression
-		let data_r = next(self);
+		let data_r = self.ck_operation(operator, next);//next(self);
 		if let None = data_r {
 			self.tk_pop();
 			return None;
@@ -162,7 +390,7 @@ pub struct QuParser<'a> {
 
 		return Some(
 			QuLeaf::Expression(
-				QuOp::from(operator),
+				Op::from(operator),
 				Box::new(data_l),
 				Box::new(data_r)
 			)
@@ -290,10 +518,11 @@ pub struct QuToken<'a> {
 
 
 pub struct QuVm<'a> {
-	registers:[u64;16],
+	pub registers:[u64;16],
 	pc:usize,
 	pub source:Vec<u8>,
 	pub mem:Vec<u64>,
+	pub stack:Vec<u64>,
 	operations:Vec<Operation<'a>>,
 
 } impl<'a> QuVm<'a> {
@@ -305,10 +534,15 @@ pub struct QuVm<'a> {
 			source:vec![],
 			registers:[0;16],
 			mem:vec![],
+			stack:vec![],
 			operations:vec![
 				Operation{code:Op::END as u8, keyword:"end",},
 				Operation{code:Op::LD_CONST as u8, keyword:"load_const",},
 				Operation{code:Op::LD_VAL as u8, keyword:"load_val",},
+				Operation{code:Op::LD_MEM as u8, keyword:"load",},
+				Operation{code:Op::ST_MEM as u8, keyword:"store",},
+				Operation{code:Op::LD_STK as u8, keyword:"load_stack",},
+				Operation{code:Op::ST_STK as u8, keyword:"store_stack",},
 				Operation{code:Op::ADD as u8, keyword:"add",},
 				Operation{code:Op::SUB as u8, keyword:"sub",},
 				Operation{code:Op::MUL as u8, keyword:"mul",},
@@ -413,6 +647,164 @@ pub struct QuVm<'a> {
 		return bcode;
 	}
 
+	/// Compiles byte code from low level VM instructions.
+	pub fn decompile_asm(&mut self, code:&Vec<u8>) -> String {
+		let mut asm = String::new();
+		
+		let mut i = 0;
+		while i < code.len() {
+			match code[i] {
+				x if x == Op::END as u8 => {
+					asm.push_str("\nEND");
+				},
+
+				x if x == Op::LD_CONST as u8 => {
+					asm.push_str(
+						format!("\nLOAD_MEM s{} r{}",
+						code[i+1], code[i+2]).as_str()
+					);
+					i += 2;
+				},
+				x if x == Op::LD_VAL as u8 => {
+					asm.push_str(
+						format!("\nLOAD_VAL {} r{}",
+						code[i+1], code[i+2]).as_str()
+					);
+					i += 2;
+				},
+
+				x if x == Op::LD_MEM as u8 => {
+					asm.push_str(
+						format!("\nLOAD_MEM m{} r{}",
+						code[i+1], code[i+2]).as_str()
+					);
+					i += 2;
+				},
+				x if x == Op::ST_MEM as u8 => {
+					asm.push_str(
+						format!("\nSTORE_MEM r{} m{}",
+						code[i+1], code[i+2]).as_str()
+					);
+					i += 2;
+				},
+				x if x == Op::LD_STK as u8 => {
+					asm.push_str(
+						format!("\nLOAD_STACK stk{} r{}",
+						code[i+1], code[i+2]).as_str()
+					);
+					i += 2;
+				},
+				x if x == Op::ST_STK as u8 => {
+					asm.push_str(
+						format!("\nSTORE_STACK r{} stk{}",
+						code[i+1], code[i+2]).as_str()
+					);
+					i += 2;
+				},
+
+				x if x == Op::ADD as u8 => {
+					asm.push_str(
+						format!("\nADD r{} r{} r{}",
+						code[i+1], code[i+2], code[i+3]).as_str()
+					);
+					i += 3;
+				},
+				x if x == Op::SUB as u8 => {
+					asm.push_str(
+						format!("\nSUB r{} r{} r{}",
+						code[i+1], code[i+2], code[i+3]).as_str()
+					);
+					i += 3;
+				},
+				x if x == Op::MUL as u8 => {
+					asm.push_str(
+						format!("\nMUL r{} r{} r{}",
+						code[i+1], code[i+2], code[i+3]).as_str()
+					);
+					i += 3;
+				},
+				x if x == Op::DIV as u8 => {
+					asm.push_str(
+						format!("\nDIV r{} r{} r{}",
+						code[i+1], code[i+2], code[i+3]).as_str()
+					);
+					i += 3;
+				},
+				x if x == Op::MOD as u8 => {
+					asm.push_str(
+						format!("\nMOD r{} r{} r{}",
+						code[i+1], code[i+2], code[i+3]).as_str()
+					);
+					i += 3;
+				},
+				x if x == Op::POW as u8 => {
+					asm.push_str(
+						format!("\nPOW r{} r{} r{}",
+						code[i+1], code[i+2], code[i+3]).as_str()
+					);
+					i += 3;
+				},
+
+				x if x == Op::LESSER as u8 => {
+					asm.push_str(
+						format!("\nLESSER r{} r{} r{}",
+						code[i+1], code[i+2], code[i+3]).as_str()
+					);
+					i += 3;
+				},
+				x if x == Op::GREATER as u8 => {
+					asm.push_str(
+						format!("\nGREATER r{} r{} r{}",
+						code[i+1], code[i+2], code[i+3]).as_str()
+					);
+					i += 3;
+				},
+				x if x == Op::EQUAL as u8 => {
+					asm.push_str(
+						format!("\nEQUAL r{} r{} r{}",
+						code[i+1], code[i+2], code[i+3]).as_str()
+					);
+					i += 3;
+				},
+
+				x if x == Op::JP_TO as u8 => {
+					asm.push_str(
+						format!("\nJUMP {}",
+						code[i+1]).as_str()
+					);
+					i += 1;
+				},
+				x if x == Op::JP_BY as u8 => {
+					asm.push_str(
+						format!("\nJUMP_BY {}",
+						code[i+1]).as_str()
+					);
+					i += 1;
+				},
+				x if x == Op::JP_TO_IF as u8 => {
+					asm.push_str(
+						format!("\nJUMP_IF r{} {}",
+						code[i+1], code[i+2]).as_str()
+					);
+					i += 2;
+				},
+				x if x == Op::JP_BY_IF as u8 => {
+					asm.push_str(
+						format!("\nJUMP_BY_IF r{} {}",
+						code[i+1], code[i+2]).as_str()
+					);
+					i += 2;
+				},
+
+				x => { println!("{x}"); todo!(); }
+			}
+
+			i += 1;
+		}
+
+		return asm;
+	}
+
 
 	fn exc_jump_by(&mut self) {
 	}
@@ -447,6 +839,32 @@ pub struct QuVm<'a> {
 		let val = self.next() as usize;
 		let rg_to = self.next() as usize;
 		self.registers[rg_to] = val as u64;
+	}
+
+
+	fn exc_load_mem(&mut self) {
+		let mem_from = self.next() as usize;
+		let rg_to = self.next() as usize;
+		self.registers[rg_to] = self.mem[mem_from] as u64;
+	}
+
+
+	fn exc_store_mem(&mut self) {
+		let rg_from = self.next() as usize;
+		let mem_to = self.next() as usize;
+		self.mem[mem_to] = self.registers[rg_from];
+	}
+
+
+	fn exc_load_stk(&mut self) {
+		let rg_to = self.next() as usize;
+		self.registers[rg_to] = self.stack.pop().unwrap() as u64;
+	}
+
+
+	fn exc_store_stk(&mut self) {
+		let rg_from = self.next() as usize;
+		self.stack.push(self.registers[rg_from]);
 	}
 
 
@@ -550,10 +968,15 @@ pub struct QuVm<'a> {
 		loop {
 			
 			match self.next() {
-				 x if x == Op::END as u8 => {println!("Halting"); break;},
+				x if x == Op::END as u8 => {println!("Halting"); break;},
 
 				x if x == Op::LD_CONST as u8 => self.exc_load_const_u8(),
 				x if x == Op::LD_VAL as u8 => self.exc_load_val_u8(),
+
+				x if x == Op::LD_MEM as u8 => self.exc_load_mem(),
+				x if x == Op::ST_MEM as u8 => self.exc_store_mem(),
+				x if x == Op::LD_STK as u8 => self.exc_load_stk(),
+				x if x == Op::ST_STK as u8 => self.exc_store_stk(),
 
 				x if x == Op::ADD as u8 => self.exc_math_add(),
 				x if x == Op::SUB as u8 => self.exc_math_sub(),
@@ -574,92 +997,6 @@ pub struct QuVm<'a> {
 				x => { println!("{x}"); todo!(); }
 			}
 
-		}
-	}
-
-}
-
-
-#[derive(Clone, Copy)]
-pub struct QuOp {
-	op:u8,
-} impl From<&str> for QuOp {
-
-	fn from(x:&str) -> Self {
-		match x {
-			"+"  => QuOp{op:0},
-			"-"  => QuOp{op:1},
-			"*"  => QuOp{op:2},
-			"/"  => QuOp{op:3},
-			"%"  => QuOp{op:4},
-			"**" => QuOp{op:5},
-			"//" => QuOp{op:6},
-			"&"  => QuOp{op:7},
-			"|"  => QuOp{op:8},
-			"^"  => QuOp{op:9},
-			
-			"+="  => QuOp{op:10},
-			"-="  => QuOp{op:11},
-			"*="  => QuOp{op:12},
-			"/="  => QuOp{op:13},
-			"%="  => QuOp{op:16},
-			"**=" => QuOp{op:14},
-			"//=" => QuOp{op:15},
-			"&="  => QuOp{op:17},
-			"|="  => QuOp{op:18},
-			"^="  => QuOp{op:19},
-
-			":" => QuOp{op:20},
-			"," => QuOp{op:21},
-			"=" => QuOp{op:22},
-			
-			"==" => QuOp{op:23},
-			"!=" => QuOp{op:24},
-			">=" => QuOp{op:25},
-			"<=" => QuOp{op:26},
-
-			_ => QuOp{op:u8::MAX},
-		}
-	}
-
-}
-
-impl From<QuOp> for &str {
-
-	fn from(x:QuOp) -> Self {
-		match x.op {
-			0 => "+",
-			1 => "-",
-			2 => "*",
-			3 => "/",
-			4 => "%",
-			5 => "**",
-			6 => "//",
-			7 => "&",
-			8 => "|",
-			9 => "^",
-			
-			10 => "+=" ,
-			11 => "-=" ,
-			12 => "*=" ,
-			13 => "/=" ,
-			16 => "%=" ,
-			14 => "**=",
-			15 => "//=",
-			17 => "&=" ,
-			18 => "|=" ,
-			19 => "^=" ,
-
-			20 => ":",
-			21 => ",",
-			22 => "=",
-			
-			23 => "==",
-			24 => "!=",
-			25 => ">=",
-			26 => "<=",
-
-			_ => "",
 		}
 	}
 
@@ -808,6 +1145,10 @@ pub fn tokenrule_symbols(added_so_far:&[char]) -> bool {
 		[':',] => true,
 		[',',] => true,
 		['=',] => true,
+		['(',] => true,
+		[')',] => true,
+		['>',] => true,
+		['<',] => true,
 		['*', '*',] => true,
 		['/', '/',] => true,
 		['=', '=',] => true,
