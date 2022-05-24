@@ -1,113 +1,116 @@
 
-
 //! TODO: Project level documentation.
 
 #![warn(missing_docs)]
 #![warn(rustdoc::missing_doc_code_examples)]
 #![warn(rustdoc::broken_intra_doc_links)]
 
-use std::{fmt::{self, Display}, str::FromStr, any::Any, vec};
+use std::{fmt::{self, Display, Debug}, str::FromStr, any::Any, vec};
 use std::fmt::Write;
 
 #[repr(u8)]
 #[derive(PartialEq, Debug, Clone, Copy)]
 pub enum Op {
-	END = 0,
-	LD_CONST,
-	LD_VAL,
-	LD_MEM,
-	ST_MEM,
-	LD_STK,
-	ST_STK,
-	ADD,
-	SUB,
-	MUL,
-	DIV,
-	MOD,
-	POW,
-	LESSER,
-	GREATER,
-	EQUAL,
-	JP_TO,
-	JP_BY,
-	JP_TO_IF,
-	JP_BY_IF,
+	End = 0,
+	LoadConst,
+	LoadValU8,
+	LoadValU16,
+	LoadValU32,
+	LoadValU64,
+	LoadMem,
+	StoreMem,
+	Add,
+	Sub,
+	Mul,
+	Div,
+	Mod,
+	Pow,
+	Lesser,
+	Greater,
+	Equal,
+	JumpTo,
+	JumpBy,
+	JumpToIf,
+	JumpByIf,
 } impl From<&str> for Op {
 
 	fn from(x:&str) -> Self {
 		match x.to_uppercase().as_str() {
-			"ADD" => Op::ADD,
-			"SUB" => Op::SUB,
-			"MUL" => Op::MUL,
-			"DIV" => Op::DIV,
-			"MOD" => Op::MOD,
-			"POW" => Op::POW,
-			"GRT" => Op::GREATER,
-			"LES" => Op::LESSER,
-			"EQL" => Op::EQUAL,
+			"ADD" => Op::Add,
+			"SUB" => Op::Sub,
+			"MUL" => Op::Mul,
+			"DIV" => Op::Div,
+			"MOD" => Op::Mod,
+			"POW" => Op::Pow,
+			"GRT" => Op::Greater,
+			"LES" => Op::Lesser,
+			"EQL" => Op::Equal,
 
-			"+"   => Op::ADD,
-			"-"   => Op::SUB,
-			"*"   => Op::MUL,
-			"/"   => Op::DIV,
-			"%"   => Op::MOD,
-			"**"  => Op::POW,
-			"<"   => Op::LESSER,
-			">"   => Op::GREATER,
-			"=="  => Op::EQUAL,
+			"+"   => Op::Add,
+			"-"   => Op::Sub,
+			"*"   => Op::Mul,
+			"/"   => Op::Div,
+			"%"   => Op::Mod,
+			"**"  => Op::Pow,
+			"<"   => Op::Lesser,
+			">"   => Op::Greater,
+			"=="  => Op::Equal,
 
-			"//"  => Op::END,
-			"&"   => Op::END,
-			"|"   => Op::END,
-			"^"   => Op::END,
+			"//"  => {unimplemented!(); Op::End},
+			"&"   => {unimplemented!(); Op::End},
+			"|"   => {unimplemented!(); Op::End},
+			"^"   => {unimplemented!(); Op::End},
 			
-			"+="  => Op::END,
-			"-="  => Op::END,
-			"*="  => Op::END,
-			"/="  => Op::END,
-			"%="  => Op::END,
-			"**=" => Op::END,
-			"//=" => Op::END,
-			"&="  => Op::END,
-			"|="  => Op::END,
-			"^="  => Op::END,
+			"+="  => {unimplemented!(); Op::End},
+			"-="  => {unimplemented!(); Op::End},
+			"*="  => {unimplemented!(); Op::End},
+			"/="  => {unimplemented!(); Op::End},
+			"%="  => {unimplemented!(); Op::End},
+			"**=" => {unimplemented!(); Op::End},
+			"//=" => {unimplemented!(); Op::End},
+			"&="  => {unimplemented!(); Op::End},
+			"|="  => {unimplemented!(); Op::End},
+			"^="  => {unimplemented!(); Op::End},
 
-			":"   => Op::END,
-			","   => Op::END,
-			"="   => Op::END,
+			":"   => {unimplemented!(); Op::End},
+			","   => {unimplemented!(); Op::End},
+			OP_ASSIGN_WORD   => {unimplemented!(); Op::End},
 			
-			"!="  => Op::END,
-			">="  => Op::END,
-			"<="  => Op::END,
+			"!="  => {unimplemented!(); Op::End},
+			">="  => {unimplemented!(); Op::End},
+			"<="  => {unimplemented!(); Op::End},
 
-			_ => Op::END,
+			_ => Op::End,
 		}
 	}
 
 } impl Display for Op {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		return match self {
-			Op::ADD => write!(f, "+"),
-			Op::SUB => write!(f, "-"),
-			Op::MUL => write!(f, "*"),
-			Op::DIV => write!(f, "/"),
-			Op::MOD => write!(f, "%"),
-			Op::POW => write!(f, "**"),
-			Op::GREATER => write!(f, ">"),
-			Op::LESSER => write!(f, "<"),
-			Op::EQUAL => write!(f, "=="),
+			Op::Add => write!(f, "+"),
+			Op::Sub => write!(f, "-"),
+			Op::Mul => write!(f, "*"),
+			Op::Div => write!(f, "/"),
+			Op::Mod => write!(f, "%"),
+			Op::Pow => write!(f, "**"),
+			Op::Greater => write!(f, ">"),
+			Op::Lesser => write!(f, "<"),
+			Op::Equal => write!(f, "=="),
 			_ => write!(f, "{}", *self as u8),
 		};
 	}
 }
 
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum QuLeaf {
 	Expression(Op, Box<QuLeaf>, Box<QuLeaf>),
 	Value(u64),
+	VarName(String),
+	/// Name, Type, Value
+	VarDecl(Box<QuLeaf>, Option<Box<QuLeaf>>, Option<Box<QuLeaf>>),
 
-} impl Display for QuLeaf {
+} impl<'a> Display for QuLeaf {
 
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
@@ -119,13 +122,39 @@ pub enum QuLeaf {
 			QuLeaf::Value(val) => {
 				return write!(f, "v{val}");
 			}
+			QuLeaf::VarName(name) => {
+				return write!(f, "'{name}'");
+			}
+			QuLeaf::VarDecl(
+					name, 
+					var_type, 
+					val) => {
+				return write!(f, "VarDecl({} {} {})", name, "todo", "todo");
+			}
 			_ => {
-				return write!(f, "<QuLeaf NULL>");
+				return write!(f, "<QuLeaf Unimplemented Format>");
 			}
 		}
 	}
 
 }
+
+const KEYWORD_CLASS:&str = "cl";
+const KEYWORD_ELSE:&str = "else";
+const KEYWORD_ELIF:&str = "elif";
+const KEYWORD_FUNCTION:&str = "fn";
+const KEYWORD_IF:&str = "if";
+const KEYWORD_TRAIT:&str = "tr";
+const KEYWORD_TRAIT_IMPL:&str = "does";
+const KEYWORD_VAR:&str = "vl";
+const KEYWORD_WHILE:&str = "while";
+
+const OP_ASSIGN_WORD:&str = "=";
+
+const TOKEN_TYPE_KEYWORD:u8 = 1;
+const TOKEN_TYPE_SYMBOL:u8 = 2;
+const TOKEN_TYPE_NUMBER:u8 = 3;
+const TOKEN_TYPE_NAME:u8 = 4;
 
 type Rules<'a> = [(&'a dyn Fn(&[char])->bool, u8)];
 
@@ -136,33 +165,31 @@ type Rules<'a> = [(&'a dyn Fn(&[char])->bool, u8)];
 /// [`tokenrule_keyword`] for examples of how a `tokenrule_*` function should
 /// be structured.
 pub const RULES:&Rules = &[
-	(&tokenrule_keyword, 0),
-	(&tokenrule_symbols, 0),
-	(&tokenrule_number, 0),
-	(&tokenrule_name, 0),
+	(&tokenrule_keyword, TOKEN_TYPE_KEYWORD),
+	(&tokenrule_symbols, TOKEN_TYPE_SYMBOL),
+	(&tokenrule_number, TOKEN_TYPE_NUMBER),
+	(&tokenrule_name, TOKEN_TYPE_NAME),
 ];
 
 pub const ASM_RULES:&Rules = &[
-	(&tokenrule_symbols, 0),
+	(&tokenrule_symbols, TOKEN_TYPE_KEYWORD),
 	(&tokenrule_flagref, 0),
-	(&tokenrule_number, 0),
-	(&tokenrule_name, 0),
+	(&tokenrule_number, TOKEN_TYPE_NUMBER),
+	(&tokenrule_name, TOKEN_TYPE_NAME),
 ];
-
-
-struct Operation<'a> {
-	code:u8,
-	keyword:&'a str,
-}
 
 
 pub struct QuCompiler {
 	reserved_vregs:[bool;16],
+	variables:Vec<(String, usize)>,
+	stack_ptr:usize,
 } impl QuCompiler {
 
 	pub fn new() -> Self {
 		return Self{
 			reserved_vregs:[false;16],
+			variables:vec![],
+			stack_ptr:0,
 		};
 	}
 
@@ -177,6 +204,7 @@ pub struct QuCompiler {
 			QuLeaf::Expression(op, lft, rgh)
 				=> self.cmp_expression(*op, lft, rgh),
 			QuLeaf::Value(v) => self.cmp_value(*v as u8),
+			_ => {unimplemented!()}
 		};
 
 		// Left hand value code
@@ -184,11 +212,12 @@ pub struct QuCompiler {
 			QuLeaf::Expression(op, lft, rgh)
 				=> self.cmp_expression(*op, lft, rgh),
 			QuLeaf::Value(v) => self.cmp_value(*v as u8),
+			_ => {unimplemented!()}
 		};
 
 		let mut code:Vec<u8> = Vec::with_capacity(
 				lft_data.0.len()+rgh_data.0.len() + 4);
-		let to_reg = self.vreg_reserve();
+		let to_reg = self.reg_reserve();
 		code.append(&mut rgh_data.0);
 		code.append(&mut lft_data.0);
 		code.append(&mut vec![
@@ -196,8 +225,8 @@ pub struct QuCompiler {
 		]);
 
 		// Free registers
-		self.vreg_free(lft_data.1);
-		self.vreg_free(rgh_data.1);
+		self.reg_free(lft_data.1);
+		self.reg_free(rgh_data.1);
 
 		return (code, to_reg);
 	}
@@ -206,12 +235,34 @@ pub struct QuCompiler {
 	/// Reserves a virtual register, stores the literal in it, and returns
 	/// the register.
 	fn cmp_value(&mut self, value:u8) -> (Vec<u8>, u8) {
-		let reg = self.vreg_reserve();
+		let reg = self.reg_reserve();
 		let mut code = Vec::with_capacity(10);
-		code.push(Op::LD_VAL as u8);
+		code.push(Op::LoadValU8 as u8);
 		code.append(&mut value.to_be_bytes().to_vec());
 		code.push(reg);
 		return (code, reg);
+	}
+
+
+	fn cmp_var_decl(&mut self, name:String, var_type:u8, val:u8) -> Vec<u8> {
+		let stk = self.stack_reserve();
+		self.variables.push(
+			(name.clone(), stk)
+		);
+
+		// Construct code
+		let mut code = Vec::with_capacity(10);
+		// Get default val
+		let rg_default_val = self.reg_reserve();
+		code.push(Op::LoadValU8 as u8);
+		code.push(0);
+		code.push(rg_default_val);
+		// Store in mem
+		code.push(Op::StoreMem as u8);
+		code.push(rg_default_val);
+		code.append(&mut (stk as u32).to_be_bytes().to_vec());
+
+		return code;
 	}
 
 
@@ -227,21 +278,38 @@ pub struct QuCompiler {
 							*op, lft, rgh);
 					code.append(&mut expr_code);
 				}
-	
 				QuLeaf::Value(val) => {
-					code.push(Op::LD_VAL as u8);
-					code.append(&mut u64::to_be_bytes(*val).to_vec());
-					code.push(0);
+					panic!(
+						"QuLeaf::Value probobly should not be compiled alone!");
+					code.push(Op::LoadValU8 as u8);
+					code.append(&mut val.to_be_bytes().to_vec());
+					code.push(self.reg_reserve());
 				}
+				QuLeaf::VarDecl(
+						name_leaf,
+						static_type_leaf,
+						value_leaf
+						) => {
+					assert!(matches!(&(**name_leaf), QuLeaf::VarName(name)));
+					
+					let mut name = "".to_string();
+					if let QuLeaf::VarName(name_) = &(**name_leaf) {
+						name = name_.clone()
+					}
+					code.append(
+						&mut self.cmp_var_decl(name, 0, 0)
+					);
+				}
+				_ => {unimplemented!()}
 			}
 		}
-		code.push(Op::END as u8);
+		code.push(Op::End as u8);
 		return code;
 	}
 
 
 	/// Reserves a register so that nothing else uses it until it's freed.
-	fn vreg_reserve(&mut self) -> u8 {
+	fn reg_reserve(&mut self) -> u8 {
 		let mut i:u8 = 0;
 		while i < 16 {
 			if !self.reserved_vregs[i as usize] {
@@ -253,9 +321,30 @@ pub struct QuCompiler {
 		panic!("No more regs");
 	}
 
+
 	/// Frees a previously reserved register.
-	fn vreg_free(&mut self, reg:u8) {
+	fn reg_free(&mut self, reg:u8) {
 		self.reserved_vregs[reg as usize] = false;
+	}
+
+
+	/// Returns and increments the stack pointer.
+	fn stack_reserve(&mut self) -> usize {
+		let x = self.stack_ptr;
+		self.stack_ptr += 1;
+		return x;
+	}
+
+
+	/// Closes the current stack frame.
+	fn stack_frame_pop(&mut self) {
+		unimplemented!()
+	}
+
+
+	/// Starts a new stack frame.
+	fn stack_frame_push(&mut self) {
+		unimplemented!()
 	}
 
 }
@@ -280,6 +369,64 @@ pub struct QuParser<'a> {
 		}
 	}
 
+
+	fn ck_var_decl(&mut self) -> Result<Option<QuLeaf>, &str> {
+		// Match keyword
+		let keyword_tk = self.tk_spy(0);
+		if keyword_tk != KEYWORD_VAR {
+			return Ok(None);
+		}
+		self.tk_next();
+
+		// Match variable name
+		let name_data = self.ck_var_name();
+		if let None = name_data {
+			return Err("Token after 'var' does not match a name.");
+		}
+		let name_data = name_data.unwrap();
+
+		// Match variable type
+		let type_data = self.ck_type_name();
+
+		// Match assign operator
+		let keyword_tk = self.tk_spy(0);
+		let mut assign_data = None;
+		if keyword_tk == OP_ASSIGN_WORD {
+			self.tk_next();
+			assign_data = self.ck_expr();
+			if let None = assign_data {
+				return Err("Expected expression after '='.");
+			}
+		}
+
+		// Create leaf boxes
+		let name_box = Box::new(name_data);
+		let mut type_box = None;
+		if let Some(type_data) = type_data {
+			type_box = Some(Box::new(type_data));
+		}
+		let mut assign_box = None;
+		if let Some(assign_data) = assign_data {
+			assign_box = Some(Box::new(assign_data));
+		}
+		
+		return Ok(Some(QuLeaf::VarDecl(
+			name_box,
+			type_box,
+			assign_box,
+		)));
+	}
+
+
+	fn ck_var_name(&mut self) -> Option<QuLeaf> {
+		let tk = self.tk_spy(0);
+		if tk.tk_type != TOKEN_TYPE_NAME {
+			return None;
+		}
+		return Some(QuLeaf::VarName( self.tk_next().text() ));
+	}
+
+
 	/// Checks for an expression
 	fn ck_expr(&mut self) -> Option<QuLeaf> {
 		if let Some(check) = self.ck_op_les() {
@@ -290,46 +437,48 @@ pub struct QuParser<'a> {
 	}
 
 
-	fn ck_op_les(&mut self) -> Option<(QuLeaf)> {
+	fn ck_op_les(&mut self) -> Option<QuLeaf> {
 		return self.ck_operation("<", &Self::ck_op_grt);
 	}
 
 
-	fn ck_op_grt(&mut self) -> Option<(QuLeaf)> {
+	fn ck_op_grt(&mut self) -> Option<QuLeaf> {
 		return self.ck_operation(">", &Self::ck_op_eql);
 	}
 
 
-	fn ck_op_eql(&mut self) -> Option<(QuLeaf)> {
+	fn ck_op_eql(&mut self) -> Option<QuLeaf> {
 		return self.ck_operation("==", &Self::ck_op_sub);
 	}
 
 
-	fn ck_op_sub(&mut self) -> Option<(QuLeaf)> {
+	fn ck_op_sub(&mut self) -> Option<QuLeaf> {
 		return self.ck_operation("-", &Self::ck_op_add);
 	}
 
 
-	fn ck_op_add(&mut self) -> Option<(QuLeaf)> {
+	fn ck_op_add(&mut self) -> Option<QuLeaf> {
 		return self.ck_operation("+", &Self::ck_op_div);
 	}
 
 
-	fn ck_op_div(&mut self) -> Option<(QuLeaf)> {
+	fn ck_op_div(&mut self) -> Option<QuLeaf> {
 		return self.ck_operation("/", &Self::ck_op_mul);
 	}
 
 
-	fn ck_op_mul(&mut self) -> Option<(QuLeaf)> {
+	fn ck_op_mul(&mut self) -> Option<QuLeaf> {
 		return self.ck_operation("*", &Self::ck_op_paren_expr);
 	}
 
 
-	fn ck_op_paren_expr(&mut self) -> Option<(QuLeaf)> {
+	fn ck_op_paren_expr(&mut self) -> Option<QuLeaf> {
 		self.tk_push();
 
-		if self.tk_next().text() != "(" {
+		let tk = self.tk_next();
+		if tk != "(" {
 			self.tk_pop();
+			self.tk_push();
 
 			// Match for a value if no parenthesis expression is matched.
 			let data = self.ck_value();
@@ -346,7 +495,7 @@ pub struct QuParser<'a> {
 			return None;
 		}
 
-		if self.tk_next().text() != ")" {
+		if self.tk_next() != ")" {
 			panic!("Parenthesis expression ended without closing parenthesis.");
 			self.tk_pop();
 			return None;
@@ -360,7 +509,7 @@ pub struct QuParser<'a> {
 	fn ck_operation(
 			&mut self, operator:&str,
 			next:&dyn Fn(&mut Self)->Option<(QuLeaf)>,
-			) -> Option<(QuLeaf)> {
+			) -> Option<QuLeaf> {
 
 		self.tk_push();
 
@@ -374,8 +523,7 @@ pub struct QuParser<'a> {
 
 		// Check operator
 		let tk_op = self.tk_spy(0);
-		let txt_op = tk_op.text();
-		if txt_op != operator {
+		if tk_op != operator {
 			return Some(data_l);
 		}
 		self.tk_next();
@@ -398,6 +546,11 @@ pub struct QuParser<'a> {
 	}
 
 
+	fn ck_type_name(&mut self) -> Option<QuLeaf> {
+		return self.ck_var_name();
+	}
+
+
 	fn ck_value(&mut self) -> Option<(QuLeaf)> {
 		self.tk_push();
 		return match self.tk_next().text().parse::<u64>() {
@@ -415,14 +568,15 @@ pub struct QuParser<'a> {
 		let mut leafs = vec![];
 
 		while self.tk_idx < self.tokens.len() {
-			match self.ck_expr() {
-				Some(x) => {leafs.push(x);}
-				None => {
-					break;
-				//	panic!("Parsing failed at {i}:'{j}'", 
-				//		i=self.tk_idx, 
-				//		j=self.tokens[self.tk_idx].text());
-				}
+			// Variable declaration
+			if let Some(data) = self.ck_var_decl().unwrap() {
+				leafs.push(data);
+			// Expression
+			} else if let Some(data) = self.ck_expr() {
+				leafs.push(data);
+			// No more matches
+			} else {
+				break;
 			}
 			
 		}
@@ -461,13 +615,13 @@ pub struct QuParser<'a> {
 /// A slice of a script file with information on the row, column, and indent of
 /// the slice.
 pub struct QuToken<'a> {
-	begin:u64,
-	end:u64,
-	row:u64,
-	_col:u64,
-	indent:u8,
-	source:&'a str,
-	varient:u8,
+	pub begin:u64,
+	pub end:u64,
+	pub row:u64,
+	pub _col:u64,
+	pub indent:u8,
+	pub source:&'a str,
+	pub tk_type:u8,
 
 } impl<'a> QuToken<'a> {
 
@@ -481,28 +635,19 @@ pub struct QuToken<'a> {
 			row,
 			_col:col,
 			indent,
-			source,
-			varient:varient
+			source:&source,
+			tk_type:varient
 		};
 	}
 
 
-	/// Returns a [`String`] copy of this [`Token`].
+	/// Returns a ['String'] copy of this ['Token']'s slice of
+	/// the ['source'] text.
 	pub fn text(&self) -> String {
-		if self.begin == u64::MAX {
+		if self.tk_type == u8::MAX {
 			return "".to_string();
 		}
-
-		let mut result = String::default();
-		for (idx, char) in self.source.char_indices() {
-			if idx > self.end as usize {
-				break
-			}
-			if idx >= self.begin as usize {
-				result.push(char);
-			}
-		}
-		return result;
+		return self.source[self.begin as usize..=self.end as usize].to_string();
 	}
 
 } impl<'a> Display for QuToken<'a> {
@@ -514,18 +659,163 @@ pub struct QuToken<'a> {
 				self.row,
 				self.indent,);
 	}
+} impl<'a> Debug for QuToken<'a> {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		return write!(f, "Hi: {}", 0);
+		//f.debug_struct("QuToken")
+		//	.field("begin", &self.begin)
+		//	.field("end", &self.end)
+		//	.field("row", &self.row)
+		//	.field("_col", &self._col)
+		//	.field("indent", &self.indent)
+		//	.field("source", &self.source)
+		//	.field("tk_type", &self.tk_type).finish()
+	}
+} impl<'a> PartialEq for QuToken<'a> {
+	fn eq(&self, other:&Self) -> bool {
+		if self.tk_type == u8::MAX {
+			return false;
+		}
+		return self.source[self.begin as usize..self.end as usize]
+			== other.source[other.begin as usize..=other.end as usize];
+	}
+} impl<'a> PartialEq<str> for QuToken<'a> {
+	fn eq(&self, other:&str) -> bool {
+		if self.tk_type == u8::MAX {
+			return false;
+		}
+		return &self.source[self.begin as usize..=self.end as usize]
+			== other;
+	}
+} impl<'a> PartialEq<String> for QuToken<'a> {
+	fn eq(&self, other:&String) -> bool {
+		if self.tk_type == u8::MAX {
+			return false;
+		}
+		return &self.source[self.begin as usize..=self.end as usize]
+			== other;
+	}
 }
 
 
-pub struct QuVm<'a> {
+type OpData<'a> = [(Op,&'a str,&'a [(&'a str, u8)])];
+const OP_DATA:&OpData = &[
+	(
+		Op::End,
+		"end", 
+		&[],
+	),
+	(
+		Op::LoadConst,
+		"load_const",
+		&[("s", 1), ("r", 1)],
+	),
+	(
+		Op::LoadValU8,
+		"load_val_u8",
+		&[("", 1), ("r", 1)],
+	),
+	(
+		Op::LoadValU16,
+		"load_val_u16",
+		&[("", 1), ("r", 1)],
+	),
+	(
+		Op::LoadValU32,
+		"load_val_u32",
+		&[("", 1), ("r", 1)],
+	),
+	(
+		Op::LoadValU64,
+		"load_val_u64",
+		&[("", 1), ("r", 1)],
+	),
+	(
+		Op::LoadMem,
+		"load",
+		&[("m", 4), ("r", 1)],
+	),
+	(
+		Op::StoreMem,
+		"store",
+		&[("r", 1), ("m", 4)],
+	),
+	(
+		Op::Add,
+		"add",
+		&[("r", 1), ("r", 1)]
+	),
+	(
+		Op::Sub,
+		"sub",
+		&[("r", 1), ("r", 1)]
+	),
+	(
+		Op::Mul,
+		"mul",
+		&[("r", 1), ("r", 1)]
+	),
+	(
+		Op::Div,
+		"div",
+		&[("r", 1), ("r", 1)]
+	),
+	(
+		Op::Mod,
+		"mod",
+		&[("r", 1), ("r", 1)]
+	),
+	(
+		Op::Pow,
+		"pow",
+		&[("r", 1), ("r", 1)]
+	),
+	(
+		Op::Lesser,
+		"lesser",
+		&[("r", 1), ("r", 1)]
+	),
+	(
+		Op::Greater,
+		"greater",
+		&[("r", 1), ("r", 1)]
+	),
+	(
+		Op::Equal,
+		"equal",
+		&[("r", 1), ("r", 1)]
+	),
+	(
+		Op::JumpTo,
+		"jump",
+		&[("", 4)]),
+	(
+		
+		Op::JumpBy,
+		"jump_by",
+		&[("", 2)]),
+	(
+		
+		Op::JumpToIf,
+		"jump_if",
+		&[("r", 1), ("", 4)]
+	),
+	(
+		Op::JumpByIf,
+		"jump_by_if",
+		&[("r", 1), ("", 2)]
+	),
+];
+
+
+pub struct QuVm {
 	pub registers:[u64;16],
 	pc:usize,
 	pub source:Vec<u8>,
 	pub mem:Vec<u64>,
 	pub stack:Vec<u64>,
-	operations:Vec<Operation<'a>>,
 
-} impl<'a> QuVm<'a> {
+} impl QuVm {
 
 	/// Makes a new [`Vm`].
 	pub fn new() -> Self {
@@ -535,51 +825,14 @@ pub struct QuVm<'a> {
 			registers:[0;16],
 			mem:vec![],
 			stack:vec![],
-			operations:vec![
-				Operation{code:Op::END as u8, keyword:"end",},
-				Operation{code:Op::LD_CONST as u8, keyword:"load_const",},
-				Operation{code:Op::LD_VAL as u8, keyword:"load_val",},
-				Operation{code:Op::LD_MEM as u8, keyword:"load",},
-				Operation{code:Op::ST_MEM as u8, keyword:"store",},
-				Operation{code:Op::LD_STK as u8, keyword:"load_stack",},
-				Operation{code:Op::ST_STK as u8, keyword:"store_stack",},
-				Operation{code:Op::ADD as u8, keyword:"add",},
-				Operation{code:Op::SUB as u8, keyword:"sub",},
-				Operation{code:Op::MUL as u8, keyword:"mul",},
-				Operation{code:Op::DIV as u8, keyword:"div",},
-				Operation{code:Op::MOD as u8, keyword:"mod",},
-				Operation{code:Op::POW as u8, keyword:"pow",},
-				Operation{code:Op::LESSER as u8, keyword:"lesser",},
-				Operation{code:Op::GREATER as u8, keyword:"greater",},
-				Operation{code:Op::EQUAL as u8, keyword:"equal",},
-				Operation{code:Op::JP_TO as u8, keyword:"jump",},
-				Operation{code:Op::JP_BY as u8, keyword:"jump_by",},
-				Operation{code:Op::JP_TO_IF as u8, keyword:"jump_if",},
-				Operation{code:Op::JP_BY_IF as u8, keyword:"jump_by_if",},
-			],
 		};
 
 		return vm;
 	}
 
 
-	fn u8_pair_to_u16(b1:u8, b2:u8) -> u16 {
-		return b1 as u16 + ((b2 as u16) << 8);
-	}
-
-
-	fn u16_pair_to_u32(b1:u16, b2:u16) -> u32 {
-		return b1 as u32 + ((b2 as u32) << 16);
-	}
-
-
-	fn u32_pair_to_u64(b1:u32, b2:u32) -> u64 {
-		return b1 as u64 + ((b2 as u64) << 32);
-	}
-
-
 	/// Compiles byte code from low level VM instructions.
-	pub fn compile_asm(&mut self, code:&str) -> Vec<u8> {
+	pub fn compile_asm(&mut self, code:&String) -> Vec<u8> {
 		let mut bcode = vec![];
 
 		let tokens = tokenize(code, ASM_RULES);
@@ -608,7 +861,9 @@ pub struct QuVm<'a> {
 		}
 
 		// Compile
-		for tk in &tokens {
+		let mut i = 0;
+		while i < tokens.len() {
+			let tk = &tokens[i];
 			let a = tk.text().to_lowercase();
 			let tk_str = a.as_str();
 
@@ -626,179 +881,95 @@ pub struct QuVm<'a> {
 
 			// Keyword
 			let mut is_oper:bool = false;
-			for oper in &self.operations {
-				if tk_str == oper.keyword {
-					bcode.push(oper.code);
+			for oper in OP_DATA {
+				if tk_str == oper.1 {
+					bcode.push(oper.0 as u8);
 					is_oper = true;
 					break;
 				}
-			}
 
-			// Number
-			if !is_oper {
-				match tk.text().to_string().parse::<u8>() {
-					Ok(number) => {bcode.push(number)}
-					Err(x) => {}
+				// Parameters
+				for (_p_prefix, p_size) in oper.2 {
+					i += 1;
+					let tk = &tokens[i];
+					match p_size {
+						1 => bcode.push(tk.text().parse::<u8>().unwrap()),
+						2 => bcode.append(
+							&mut tk.text()
+								.parse::<u16>()
+								.unwrap()
+								.to_be_bytes()
+								.to_vec()),
+						4 => bcode.append(
+							&mut tk.text()
+								.parse::<u32>()
+								.unwrap()
+								.to_be_bytes()
+								.to_vec()),
+						8 => bcode.append(
+							&mut tk.text()
+								.parse::<u64>()
+								.unwrap()
+								.to_be_bytes()
+								.to_vec()),
+						_ => panic!(),
+					}
+					
 				}
 			}
-			
+
+			i += 1;
 		}
 
 		return bcode;
 	}
 
-	/// Compiles byte code from low level VM instructions.
-	pub fn decompile_asm(&mut self, code:&Vec<u8>) -> String {
+
+	/// Converts byte code to human readable instructions.
+	pub fn code_to_asm(&mut self, code:&Vec<u8>) -> String {
 		let mut asm = String::new();
 		
 		let mut i = 0;
 		while i < code.len() {
-			match code[i] {
-				x if x == Op::END as u8 => {
-					asm.push_str("\nEND");
-				},
+			let op_code = code[i];
+			let (op, name, params)
+					= OP_DATA[op_code as usize];
+			assert!(op as u8 == op_code);
 
-				x if x == Op::LD_CONST as u8 => {
-					asm.push_str(
-						format!("\nLOAD_MEM s{} r{}",
-						code[i+1], code[i+2]).as_str()
-					);
-					i += 2;
-				},
-				x if x == Op::LD_VAL as u8 => {
-					asm.push_str(
-						format!("\nLOAD_VAL {} r{}",
-						code[i+1], code[i+2]).as_str()
-					);
-					i += 2;
-				},
+			// Add command text
+			asm.push_str(format!("\n{}", name.to_uppercase()).as_str());
 
-				x if x == Op::LD_MEM as u8 => {
-					asm.push_str(
-						format!("\nLOAD_MEM m{} r{}",
-						code[i+1], code[i+2]).as_str()
-					);
-					i += 2;
-				},
-				x if x == Op::ST_MEM as u8 => {
-					asm.push_str(
-						format!("\nSTORE_MEM r{} m{}",
-						code[i+1], code[i+2]).as_str()
-					);
-					i += 2;
-				},
-				x if x == Op::LD_STK as u8 => {
-					asm.push_str(
-						format!("\nLOAD_STACK stk{} r{}",
-						code[i+1], code[i+2]).as_str()
-					);
-					i += 2;
-				},
-				x if x == Op::ST_STK as u8 => {
-					asm.push_str(
-						format!("\nSTORE_STACK r{} stk{}",
-						code[i+1], code[i+2]).as_str()
-					);
-					i += 2;
-				},
-
-				x if x == Op::ADD as u8 => {
-					asm.push_str(
-						format!("\nADD r{} r{} r{}",
-						code[i+1], code[i+2], code[i+3]).as_str()
-					);
-					i += 3;
-				},
-				x if x == Op::SUB as u8 => {
-					asm.push_str(
-						format!("\nSUB r{} r{} r{}",
-						code[i+1], code[i+2], code[i+3]).as_str()
-					);
-					i += 3;
-				},
-				x if x == Op::MUL as u8 => {
-					asm.push_str(
-						format!("\nMUL r{} r{} r{}",
-						code[i+1], code[i+2], code[i+3]).as_str()
-					);
-					i += 3;
-				},
-				x if x == Op::DIV as u8 => {
-					asm.push_str(
-						format!("\nDIV r{} r{} r{}",
-						code[i+1], code[i+2], code[i+3]).as_str()
-					);
-					i += 3;
-				},
-				x if x == Op::MOD as u8 => {
-					asm.push_str(
-						format!("\nMOD r{} r{} r{}",
-						code[i+1], code[i+2], code[i+3]).as_str()
-					);
-					i += 3;
-				},
-				x if x == Op::POW as u8 => {
-					asm.push_str(
-						format!("\nPOW r{} r{} r{}",
-						code[i+1], code[i+2], code[i+3]).as_str()
-					);
-					i += 3;
-				},
-
-				x if x == Op::LESSER as u8 => {
-					asm.push_str(
-						format!("\nLESSER r{} r{} r{}",
-						code[i+1], code[i+2], code[i+3]).as_str()
-					);
-					i += 3;
-				},
-				x if x == Op::GREATER as u8 => {
-					asm.push_str(
-						format!("\nGREATER r{} r{} r{}",
-						code[i+1], code[i+2], code[i+3]).as_str()
-					);
-					i += 3;
-				},
-				x if x == Op::EQUAL as u8 => {
-					asm.push_str(
-						format!("\nEQUAL r{} r{} r{}",
-						code[i+1], code[i+2], code[i+3]).as_str()
-					);
-					i += 3;
-				},
-
-				x if x == Op::JP_TO as u8 => {
-					asm.push_str(
-						format!("\nJUMP {}",
-						code[i+1]).as_str()
-					);
-					i += 1;
-				},
-				x if x == Op::JP_BY as u8 => {
-					asm.push_str(
-						format!("\nJUMP_BY {}",
-						code[i+1]).as_str()
-					);
-					i += 1;
-				},
-				x if x == Op::JP_TO_IF as u8 => {
-					asm.push_str(
-						format!("\nJUMP_IF r{} {}",
-						code[i+1], code[i+2]).as_str()
-					);
-					i += 2;
-				},
-				x if x == Op::JP_BY_IF as u8 => {
-					asm.push_str(
-						format!("\nJUMP_BY_IF r{} {}",
-						code[i+1], code[i+2]).as_str()
-					);
-					i += 2;
-				},
-
-				x => { println!("{x}"); todo!(); }
+			// Add parameter text
+			for (prefix, size) in params {
+				// Get value
+				let val = match size {
+					1 => {
+						let bytes = [code[i+1]];
+						i += 1;
+						u8::from_be_bytes(bytes) as u64
+					}
+					2 => {
+						let bytes = [code[i+1], code[i+2]];
+						i += 2;
+						u16::from_be_bytes(bytes) as u64
+					}
+					4 => {
+						let bytes = [
+							code[i+1], code[i+2], code[i+3], code[i+4]];
+						i += 4;
+						u32::from_be_bytes(bytes) as u64
+					}
+					8 => {
+						let bytes = [
+							code[i+1], code[i+2], code[i+3], code[i+4],
+							code[i+5], code[i+6], code[i+7], code[i+8]];
+						i += 8;
+						u64::from_be_bytes(bytes) as u64
+					}
+					_ => panic!(),
+				};
+				asm.push_str(format!(" {}{}", prefix, val).as_str());
 			}
-
 			i += 1;
 		}
 
@@ -819,8 +990,8 @@ pub struct QuVm<'a> {
 
 
 	fn exc_jump_to_if(&mut self) {
-		let rg_if = self.next() as usize;
-		let val_to = self.next() as usize;
+		let rg_if = self.next_u8() as usize;
+		let val_to = self.next_u32() as usize;
 		if self.registers[rg_if] != 0 {
 			self.pc = val_to as usize;
 		}
@@ -829,49 +1000,61 @@ pub struct QuVm<'a> {
 
 	/// Executes a load instruction.
 	fn exc_load_const_u8(&mut self) {
-		let src_from = self.next() as usize;
-		let rg_to = self.next() as usize;
+		let src_from = self.next_u32() as usize;
+		let rg_to = self.next_u8() as usize;
 		self.registers[rg_to] = self.source[src_from] as u64;
 	}
 
 
 	fn exc_load_val_u8(&mut self) {
-		let val = self.next() as usize;
-		let rg_to = self.next() as usize;
-		self.registers[rg_to] = val as u64;
+		let val = self.next_u8() as u64;
+		let rg_to = self.next_u8() as usize;
+		self.registers[rg_to] = val;
+	}
+
+
+	fn exc_load_val_u16(&mut self) {
+		let val = self.next_u16() as u64;
+		let rg_to = self.next_u8() as usize;
+		self.registers[rg_to] = val;
+	}
+
+
+	fn exc_load_val_u32(&mut self) {
+		let val = self.next_u32() as u64;
+		let rg_to = self.next_u8() as usize;
+		self.registers[rg_to] = val;
+	}
+
+
+	fn exc_load_val_u64(&mut self) {
+		let val = self.next_u64() as u64;
+		let rg_to = self.next_u8() as usize;
+		self.registers[rg_to] = val;
 	}
 
 
 	fn exc_load_mem(&mut self) {
-		let mem_from = self.next() as usize;
-		let rg_to = self.next() as usize;
+		let mem_from = self.next_u32() as usize;
+		let rg_to = self.next_u8() as usize;
 		self.registers[rg_to] = self.mem[mem_from] as u64;
 	}
 
 
 	fn exc_store_mem(&mut self) {
-		let rg_from = self.next() as usize;
-		let mem_to = self.next() as usize;
+		let rg_from = self.next_u8() as usize;
+		let mem_to = self.next_u32() as usize;
+		if mem_to >= self.mem.len() {
+			self.mem.resize(mem_to+1, 0);
+		}
 		self.mem[mem_to] = self.registers[rg_from];
 	}
 
 
-	fn exc_load_stk(&mut self) {
-		let rg_to = self.next() as usize;
-		self.registers[rg_to] = self.stack.pop().unwrap() as u64;
-	}
-
-
-	fn exc_store_stk(&mut self) {
-		let rg_from = self.next() as usize;
-		self.stack.push(self.registers[rg_from]);
-	}
-
-
 	fn exc_math_add(&mut self) {
-		let rg_left = self.next() as usize;
-		let rg_right = self.next() as usize;
-		let rg_result = self.next() as usize;
+		let rg_left = self.next_u8() as usize;
+		let rg_right = self.next_u8() as usize;
+		let rg_result = self.next_u8() as usize;
 		self.registers[rg_result] = 
 				self.registers[rg_left] as u64
 				+ self.registers[rg_right] as u64;
@@ -879,9 +1062,9 @@ pub struct QuVm<'a> {
 
 
 	fn exc_math_sub(&mut self) {
-		let rg_left = self.next() as usize;
-		let rg_right = self.next() as usize;
-		let rg_result = self.next() as usize;
+		let rg_left = self.next_u8() as usize;
+		let rg_right = self.next_u8() as usize;
+		let rg_result = self.next_u8() as usize;
 		self.registers[rg_result] = 
 				self.registers[rg_left] as u64
 				- self.registers[rg_right] as u64;
@@ -889,9 +1072,9 @@ pub struct QuVm<'a> {
 
 
 	fn exc_math_mul(&mut self) {
-		let rg_left = self.next() as usize;
-		let rg_right = self.next() as usize;
-		let rg_result = self.next() as usize;
+		let rg_left = self.next_u8() as usize;
+		let rg_right = self.next_u8() as usize;
+		let rg_result = self.next_u8() as usize;
 		self.registers[rg_result] = 
 				self.registers[rg_left] as u64
 				* self.registers[rg_right] as u64;
@@ -899,9 +1082,9 @@ pub struct QuVm<'a> {
 
 
 	fn exc_math_div(&mut self) {
-		let rg_left = self.next() as usize;
-		let rg_right = self.next() as usize;
-		let rg_result = self.next() as usize;
+		let rg_left = self.next_u8() as usize;
+		let rg_right = self.next_u8() as usize;
+		let rg_result = self.next_u8() as usize;
 		self.registers[rg_result] = 
 				self.registers[rg_left] as u64
 				/ self.registers[rg_right] as u64;
@@ -909,9 +1092,9 @@ pub struct QuVm<'a> {
 
 
 	fn exc_math_mod(&mut self) {
-		let rg_left = self.next() as usize;
-		let rg_right = self.next() as usize;
-		let rg_result = self.next() as usize;
+		let rg_left = self.next_u8() as usize;
+		let rg_right = self.next_u8() as usize;
+		let rg_result = self.next_u8() as usize;
 		self.registers[rg_result] = 
 				self.registers[rg_left] as u64
 				% self.registers[rg_right] as u64;
@@ -919,9 +1102,9 @@ pub struct QuVm<'a> {
 
 
 	fn exc_math_pow(&mut self) {
-		let rg_left = self.next() as usize;
-		let rg_right = self.next() as usize;
-		let rg_result = self.next() as usize;
+		let rg_left = self.next_u8() as usize;
+		let rg_right = self.next_u8() as usize;
+		let rg_result = self.next_u8() as usize;
 		self.registers[rg_result] = 
 				self.registers[rg_left] as u64
 				^ self.registers[rg_right] as u64;
@@ -929,37 +1112,69 @@ pub struct QuVm<'a> {
 
 
 	fn exc_logi_equal(&mut self) {
-		let rg_left = self.next() as usize;
-		let rg_right = self.next() as usize;
-		let rg_result = self.next() as usize;
+		let rg_left = self.next_u8() as usize;
+		let rg_right = self.next_u8() as usize;
+		let rg_result = self.next_u8() as usize;
 		self.registers[rg_result] = 
 				(self.registers[rg_left] == self.registers[rg_right]) as u64;
 	}
 
 
 	fn exc_logi_greater(&mut self) {
-		let rg_left = self.next() as usize;
-		let rg_right = self.next() as usize;
-		let rg_result = self.next() as usize;
+		let rg_left = self.next_u8() as usize;
+		let rg_right = self.next_u8() as usize;
+		let rg_result = self.next_u8() as usize;
 		self.registers[rg_result] = 
 				(self.registers[rg_left] > self.registers[rg_right]) as u64;
 	}
 
 
 	fn exc_logi_lesser(&mut self) {
-		let rg_left = self.next() as usize;
-		let rg_right = self.next() as usize;
-		let rg_result = self.next() as usize;
+		let rg_left = self.next_u8() as usize;
+		let rg_right = self.next_u8() as usize;
+		let rg_result = self.next_u8() as usize;
 		self.registers[rg_result] = 
 				(self.registers[rg_left] < self.registers[rg_right]) as u64;
 	}
 
 
 	/// Gets the next byte in the source code as a u8 int.
-	fn next(&mut self) -> u8 {
+	fn next_u8(&mut self) -> u8 {
 		let val = self.source[self.pc];
 		self.pc += 1;
 		return val;
+	}
+
+
+	/// Gets the next 2 byte in the source code as a u16 int.
+	fn next_u16(&mut self) -> u16 {
+		let bytes = [self.source[self.pc], self.source[self.pc+1]];
+		self.pc += 2;
+		return u16::from_be_bytes(bytes);
+	}
+
+
+	/// Gets the next 4 byte in the source code as a u32 int.
+	fn next_u32(&mut self) -> u32 {
+		let bytes = [
+			self.source[self.pc], self.source[self.pc+1],
+			self.source[self.pc+2], self.source[self.pc+3],
+		];
+		self.pc += 4;
+		return u32::from_be_bytes(bytes);
+	}
+
+
+	// Gets the next 8 byte in the source code as a u64 int.
+	fn next_u64(&mut self) -> u64 {
+		let bytes = [
+			self.source[self.pc], self.source[self.pc+1],
+			self.source[self.pc+2], self.source[self.pc+3],
+			self.source[self.pc+4], self.source[self.pc+5],
+			self.source[self.pc+6], self.source[self.pc+7],
+		];
+		self.pc += 8;
+		return u64::from_be_bytes(bytes);
 	}
 
 	
@@ -967,32 +1182,33 @@ pub struct QuVm<'a> {
 		self.source = code.to_vec();
 		loop {
 			
-			match self.next() {
-				x if x == Op::END as u8 => {println!("Halting"); break;},
+			match self.next_u8() {
+				x if x == Op::End as u8 => {println!("Halting"); break;},
 
-				x if x == Op::LD_CONST as u8 => self.exc_load_const_u8(),
-				x if x == Op::LD_VAL as u8 => self.exc_load_val_u8(),
+				x if x == Op::LoadConst as u8 => self.exc_load_const_u8(),
+				x if x == Op::LoadValU8 as u8 => self.exc_load_val_u8(),
+				x if x == Op::LoadValU16 as u8 => self.exc_load_val_u16(),
+				x if x == Op::LoadValU32 as u8 => self.exc_load_val_u32(),
+				x if x == Op::LoadValU64 as u8 => self.exc_load_val_u64(),
 
-				x if x == Op::LD_MEM as u8 => self.exc_load_mem(),
-				x if x == Op::ST_MEM as u8 => self.exc_store_mem(),
-				x if x == Op::LD_STK as u8 => self.exc_load_stk(),
-				x if x == Op::ST_STK as u8 => self.exc_store_stk(),
+				x if x == Op::LoadMem as u8 => self.exc_load_mem(),
+				x if x == Op::StoreMem as u8 => self.exc_store_mem(),
 
-				x if x == Op::ADD as u8 => self.exc_math_add(),
-				x if x == Op::SUB as u8 => self.exc_math_sub(),
-				x if x == Op::MUL as u8 => self.exc_math_mul(),
-				x if x == Op::DIV as u8 => self.exc_math_div(),
-				x if x == Op::MOD as u8 => self.exc_math_mod(),
-				x if x == Op::POW as u8 => self.exc_math_pow(),
+				x if x == Op::Add as u8 => self.exc_math_add(),
+				x if x == Op::Sub as u8 => self.exc_math_sub(),
+				x if x == Op::Mul as u8 => self.exc_math_mul(),
+				x if x == Op::Div as u8 => self.exc_math_div(),
+				x if x == Op::Mod as u8 => self.exc_math_mod(),
+				x if x == Op::Pow as u8 => self.exc_math_pow(),
 
-				x if x == Op::LESSER as u8 => self.exc_logi_lesser(),
-				x if x == Op::GREATER as u8 => self.exc_logi_greater(),
-				x if x == Op::EQUAL as u8 => self.exc_logi_equal(),
+				x if x == Op::Lesser as u8 => self.exc_logi_lesser(),
+				x if x == Op::Greater as u8 => self.exc_logi_greater(),
+				x if x == Op::Equal as u8 => self.exc_logi_equal(),
 
-				x if x == Op::JP_TO as u8 => self.exc_jump_to(),
-				x if x == Op::JP_BY as u8 => self.exc_jump_by(),
-				x if x == Op::JP_TO_IF as u8 => self.exc_jump_to_if(),
-				x if x == Op::JP_BY_IF as u8 => self.exc_jump_by_if(),
+				x if x == Op::JumpTo as u8 => self.exc_jump_to(),
+				x if x == Op::JumpBy as u8 => self.exc_jump_by(),
+				x if x == Op::JumpToIf as u8 => self.exc_jump_to_if(),
+				x if x == Op::JumpByIf as u8 => self.exc_jump_by_if(),
 
 				x => { println!("{x}"); todo!(); }
 			}
@@ -1103,15 +1319,27 @@ pub fn tokenrule_number(added_so_far:&[char]) -> bool {
 ///	assert!(!qu_script::tokenrule_keyword(chars3));
 /// ```
 pub fn tokenrule_keyword(added_so_far:&[char]) -> bool {
-	return match added_so_far {
-		['v', 'a', 'r',] => true,
-		['f', 'n',] => true,
-		['c', 'l', 'a', 's', 's',] => true,
-		['i', 'f',] => true,
-		['e', 'l', 's', 'e',] => true,
-		['e', 'l', 'i', 'f',] => true,
-		_ => false,
-	};
+	for word in [
+		KEYWORD_VAR,
+		KEYWORD_FUNCTION,
+		KEYWORD_CLASS,
+		KEYWORD_IF,
+		KEYWORD_ELSE,
+		KEYWORD_ELIF,
+	] {
+		let mut mismatched = false;
+		for (char1, char2) in added_so_far.iter().zip(word.chars()) {
+			mismatched = char1 != &char2;
+			if mismatched {
+				break;
+			}
+		}
+		if !mismatched {
+			return true && added_so_far.len() == word.len();
+		}
+	}
+
+	return false;
 }
 
 
@@ -1186,7 +1414,7 @@ pub fn tokenrule_symbols(added_so_far:&[char]) -> bool {
 ///	assert!(tokens[3].text(&script) == ";");
 ///	assert!(tokens[4].text(&script) == "!");
 /// ```
-pub fn tokenize<'a>(script:&'a str, rules:&Rules<'a>) -> Vec<QuToken<'a>> {
+pub fn tokenize<'a>(script:&'a String, rules:&Rules<'a>) -> Vec<QuToken<'a>> {
 	let mut tokens = vec!();
 
 	/* WARNING: This does not account for grapheme clusters. Currently hoping
@@ -1241,6 +1469,7 @@ pub fn tokenize<'a>(script:&'a str, rules:&Rules<'a>) -> Vec<QuToken<'a>> {
 						script,));
 				}
 				tokens[curr_token].end = idx as u64;
+				tokens[curr_token].tk_type = char_type;
 				break;
 				
 			} else if added_so_far.len() == 1 {
@@ -1266,14 +1495,14 @@ pub fn tokenize<'a>(script:&'a str, rules:&Rules<'a>) -> Vec<QuToken<'a>> {
 /// specified in [`RULES`].
 pub fn chars_fit_rule<'a>(chars:&Vec<char>, rules:&Rules<'a>) -> (bool, u8) {
 	let mut fits_rule = false;
-	let mut i = 0;
+	let mut tk_type = u8::MAX;
 	for rule in rules {
 		fits_rule = fits_rule || rule.0(&chars);
 		if fits_rule{
+			tk_type = rule.1;
 			break;
 		}
-		i += rule.1;
 	}
 
-	return (fits_rule, i);
+	return (fits_rule, tk_type);
 }
