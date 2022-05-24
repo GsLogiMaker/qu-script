@@ -17,12 +17,10 @@ fn main() {
 	let expr_str = "
 		vl bike
 		vl car
-		vl plane
 		bike = 5
-		bike = 6
-		bike = 4
-		car = 1
-		plane = 2
+		car = 20
+		car = car + 1
+		car = car * car
 	".to_string();
 
 	let mut tokens = &mut tokenize(&expr_str, RULES);

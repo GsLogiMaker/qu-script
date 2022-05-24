@@ -104,16 +104,22 @@ pub enum Op {
 
 #[derive(Debug, Clone)]
 pub enum QuLeaf {
-	/// Operator, Left expression, Right expression
+	/// A math or logical expression. Contains an operator and two Expressions
+	/// or Values.
 	Expression(Op, Box<QuLeaf>, Box<QuLeaf>),
-	/// Value
-	Value(u64),
-	/// Name
-	VarName(String),
-	/// Name, Type, Value
-	VarDecl(Box<QuLeaf>, Option<Box<QuLeaf>>, Option<Box<QuLeaf>>),
-	/// Name, Value
+	/// A literal int value.
+	LiteralInt(u64),
+	/// A value. Can contain a LiteralInt or a VarValue.
+	Value(Box<QuLeaf>),
+	/// A variable assignment. Contains a VarName and an Expression.
 	VarAssign(Box<QuLeaf>, Box<QuLeaf>),
+	/// A variable declaration. Contains a VarName, Type(TODO), and
+	/// an Expression.
+	VarDecl(Box<QuLeaf>, Option<Box<QuLeaf>>, Option<Box<QuLeaf>>),
+	/// A variable name.
+	VarName(QuToken),
+	/// A variable's value. Contains a VarName.
+	VarValue(Box<QuLeaf>),
 
 } impl Display for QuLeaf {
 
@@ -124,11 +130,13 @@ pub enum QuLeaf {
 				let opstr:&str = string.as_str();
 				return write!(f, "Expr({lft} {opstr} {rht})");
 			}
-			QuLeaf::Value(val) => {
-				return write!(f, "v{val}");
+			QuLeaf::LiteralInt(val) => {
+				return write!(f, "{val}:Int");
 			}
-			QuLeaf::VarName(name) => {
-				return write!(f, "'{name}'");
+			QuLeaf::VarAssign(
+					name,
+					val) => {
+				return write!(f, "VarAssign({} {})", name, val);
 			}
 			QuLeaf::VarDecl(
 					name, 
@@ -136,10 +144,11 @@ pub enum QuLeaf {
 					val) => {
 				return write!(f, "VarDecl({} {} {})", name, "todo", "todo");
 			}
-			QuLeaf::VarAssign(
-					name,
-					val) => {
-				return write!(f, "VarAssign({} {})", name, val);
+			QuLeaf::VarName(name) => {
+				return write!(f, "Var({})", name.text);
+			}
+			QuLeaf::Value(val) => {
+				return write!(f, "Value({val})");
 			}
 			_ => {
 				return write!(f, "<QuLeaf Unimplemented Format>");
@@ -212,17 +221,17 @@ pub struct QuCompiler {
 		
 		// Right hand value code
 		let mut rgh_data = match rgh {
-			QuLeaf::Expression(op, lft, rgh)
-				=> self.cmp_expression(*op, lft, rgh),
-			QuLeaf::Value(v) => self.cmp_value(*v as u8),
+			QuLeaf::Expression(op, lft_, rgh_)
+				=> self.cmp_expression(*op, lft_, rgh_),
+			QuLeaf::Value(_) => self.cmp_value(rgh),
 			_ => {unimplemented!()}
 		};
 
 		// Left hand value code
 		let mut lft_data = match lft {
-			QuLeaf::Expression(op, lft, rgh)
-				=> self.cmp_expression(*op, lft, rgh),
-			QuLeaf::Value(v) => self.cmp_value(*v as u8),
+			QuLeaf::Expression(op, lft_, rgh_)
+				=> self.cmp_expression(*op, lft_, rgh_),
+			QuLeaf::Value(_) => self.cmp_value(lft),
 			_ => {unimplemented!()}
 		};
 
@@ -245,35 +254,71 @@ pub struct QuCompiler {
 
 	/// Reserves a virtual register, stores the literal in it, and returns
 	/// the register.
-	fn cmp_value(&mut self, value:u8) -> (Vec<u8>, u8) {
-		let reg = self.reg_reserve();
-		let mut code = Vec::with_capacity(10);
-		code.push(Op::LoadValU8 as u8);
-		code.append(&mut value.to_be_bytes().to_vec());
-		code.push(reg);
-		return (code, reg);
+	fn cmp_value(&mut self, value_leaf:&QuLeaf) -> (Vec<u8>, u8) {
+		if let QuLeaf::Value(sub_leaf) = value_leaf {
+			match &**sub_leaf {
+				QuLeaf::LiteralInt(value) => {
+					let reg = self.reg_reserve();
+					let mut code = Vec::with_capacity(10);
+					// TODO: Support other int sizes
+					code.push(Op::LoadValU8 as u8);
+					code.append(&mut (*value as u8).to_be_bytes().to_vec());
+					code.push(reg);
+					return (code, reg);
+				}
+				QuLeaf::VarName(var_name) => {
+					let var_ptr
+						= self.get_var_pointer(
+							var_name.text.as_str()).unwrap();
+
+					let reg = self.reg_reserve();
+					let mut code = Vec::with_capacity(10);
+					code.push(Op::LoadMem as u8);
+					code.append(&mut (var_ptr as u32).to_be_bytes().to_vec());
+					code.push(reg);
+					return (code, reg);
+				}
+				_ => {
+					unimplemented!();
+				}
+			}
+		}
+		panic!("");
 	}
 
 
 	fn cmp_var_assign(&mut self,
-			name:String, val:u64) -> Vec<u8> {
+			name_leaf:&QuLeaf, value_leaf:&QuLeaf) -> Vec<u8> {
+		assert!(matches!(&name_leaf, QuLeaf::VarName(_)));
+		assert!(matches!(&value_leaf, QuLeaf::Expression(_,_,_))
+			|| matches!(&value_leaf, QuLeaf::Value(_)));
+
+		// Get name
+		let mut name = "".to_string();
+		if let QuLeaf::VarName(name_) = &(name_leaf) {
+			name = name_.text.clone();
+		}
+
 		// Get variable pointer
-		let var_ptr
-				= self.get_var_pointer(name.as_str());
-		let var_ptr = var_ptr.expect(format!(
-				"No variable with name {} has been defined", 
-				name).as_str());
+		let var_ptr= self.get_var_pointer(
+				name.as_str()
+			).expect(format!(
+			"No variable with name {} has been defined", name).as_str());
 		
-		// Construct code
+		// Compile
 		let mut code = Vec::with_capacity(10);
-		// Get default val
-		let rg_set_val = self.reg_reserve();
-		code.push(Op::LoadValU8 as u8); // TODO: Support u64
-		code.push(val as u8); // TODO: Support u64
-		code.push(rg_set_val);
-		// Store in mem
+		// Compile value code
+		let (mut value_code, value_reg)
+				= match value_leaf {
+			QuLeaf::Value(_) => {self.cmp_value(value_leaf)}
+			QuLeaf::Expression(op,l,r) 
+					=> {self.cmp_expression(*op,l,r)}
+			_ => panic!(""),
+		};
+		code.append(&mut value_code);
+		// Compile store mem code
 		code.push(Op::StoreMem as u8);
-		code.push(rg_set_val);
+		code.push(value_reg);
 		code.append(&mut (var_ptr as u32).to_be_bytes().to_vec());
 
 		return code;
@@ -329,7 +374,7 @@ pub struct QuCompiler {
 					// Get name
 					let mut name = "".to_string();
 					if let QuLeaf::VarName(name_) = &(**name_leaf) {
-						name = name_.clone();
+						name = name_.text.clone();
 					}
 
 					// Add code
@@ -341,24 +386,9 @@ pub struct QuCompiler {
 						name_leaf,
 						value_leaf
 						) => {
-					assert!(matches!(&(**name_leaf), QuLeaf::VarName(_)));
-					assert!(matches!(&(**value_leaf), QuLeaf::Value(_)));
-					
-					// Get name
-					let mut name = "".to_string();
-					if let QuLeaf::VarName(name_) = &(**name_leaf) {
-						name = name_.clone();
-					}
-
-					// Get value
-					let mut val:u64 = 0;
-					if let QuLeaf::Value(val_) = &(**value_leaf) {
-						val = *val_;
-					}
-					
 					// Add code
 					code.append(
-						&mut self.cmp_var_assign(name, val)
+						&mut self.cmp_var_assign(&**name_leaf, &**value_leaf)
 					);
 			}
 				_ => {unimplemented!()}
@@ -548,7 +578,7 @@ pub struct QuParser<'a> {
 		if tk.tk_type != TOKEN_TYPE_NAME {
 			return None;
 		}
-		return Some(QuLeaf::VarName( self.tk_next().text.clone() ));
+		return Some(QuLeaf::VarName( self.tk_next().clone() ));
 	}
 
 
@@ -633,7 +663,7 @@ pub struct QuParser<'a> {
 	/// Returns a QuLeaf
 	fn ck_operation(
 			&mut self, operator:&str,
-			next:&dyn Fn(&mut Self)->Option<(QuLeaf)>,
+			next:&dyn Fn(&mut Self)->Option<QuLeaf>,
 			) -> Option<QuLeaf> {
 
 		self.tk_push();
@@ -676,13 +706,18 @@ pub struct QuParser<'a> {
 	}
 
 
-	fn ck_value(&mut self) -> Option<(QuLeaf)> {
+	fn ck_value(&mut self) -> Option<QuLeaf> {
 		self.tk_push();
 		return match self.tk_next().text.parse::<u64>() {
-			Ok(x) => Some(QuLeaf::Value(x)),
-			Err(x) => {
+			Ok(x) => Some(QuLeaf::Value(
+				Box::new(QuLeaf::LiteralInt(x))
+			)),
+			Err(_) => {
 				self.tk_pop();
-				None
+				match self.ck_var_name() {
+					Some(data) => Some(QuLeaf::Value(Box::new(data))),
+					None => None,
+				}
 			},
 		};
 	}
@@ -963,7 +998,7 @@ pub struct QuVm {
 
 	/// Makes a new [`Vm`].
 	pub fn new() -> Self {
-		let mut vm = QuVm { 
+		let vm = QuVm { 
 			pc:0,
 			source:vec![],
 			registers:[0;16],
