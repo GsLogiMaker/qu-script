@@ -111,6 +111,27 @@ pub enum QuLeafExpr {
 	Int(u64),
 	/// A variable name.
 	Var(QuToken),
+} impl Display for QuLeafExpr {
+
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			QuLeafExpr::Equation(op, lft, rht) => {
+				let string = format!("{}", op);
+				let opstr:&str = string.as_str();
+				return write!(f, "Equate({lft} {opstr} {rht})");
+			}
+			QuLeafExpr::Int(val) => {
+				return write!(f, "{val}:Int");
+			}
+			QuLeafExpr::Var(name) => {
+				return write!(f, "{}:Var", name.text);
+			}
+			_ => {
+				return write!(f, "<QuLeafExpr Unimplemented Format>");
+			}
+		}
+	}
+
 }
 
 #[derive(Debug, Clone)]
@@ -125,31 +146,17 @@ pub enum QuLeaf {
 
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
-			//QuLeaf::Expression(op, lft, rht) => {
-			//	let string = format!("{}", op);
-			//	let opstr:&str = string.as_str();
-			//	return write!(f, "Expr({lft} {opstr} {rht})");
-			//}
-			//QuLeaf::LiteralInt(val) => {
-			//	return write!(f, "{val}:Int");
-			//}
-			//QuLeaf::VarAssign(
-			//		name,
-			//		val) => {
-			//	return write!(f, "VarAssign({} {})", name, val);
-			//}
+			QuLeaf::VarAssign(
+					name,
+					val) => {
+				return write!(f, "VarAssign({} {})", name.text, val);
+			}
 			QuLeaf::VarDecl(
 					name, 
 					var_type, 
 					val) => {
-				return write!(f, "VarDecl({} {} {})", name, "todo", "todo");
+				return write!(f, "VarDecl({} {} {})", name.text, "todo", "todo");
 			}
-			//QuLeaf::VarName(name) => {
-			//	return write!(f, "Var({})", name.text);
-			//}
-			//QuLeaf::Value(val) => {
-			//	return write!(f, "Value({val})");
-			//}
 			_ => {
 				return write!(f, "<QuLeaf Unimplemented Format>");
 			}
