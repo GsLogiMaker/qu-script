@@ -15,12 +15,11 @@ fn main() {
 	let expr_str = "2 + 2 + 2 + 2 + 2 + 2 + 2 + 2 + 2 + 2 + 2 + 2 + 2".to_string();
 	//let expr_str = "1 + 2 * 3 / 4 + 5 * 6 - 7".to_string();
 	let expr_str = "
-		vl bike
 		vl car
-		bike = 5
-		car = 20
-		car = car + 1
-		car = car * car
+		vl bike
+		car = 1
+		bike = car + 1
+		car = car * bike
 	".to_string();
 
 	let mut tokens = &mut tokenize(&expr_str, RULES);

@@ -28,6 +28,8 @@ pub enum Op {
 	Lesser,
 	Greater,
 	Equal,
+	NotEqual,
+	Not,
 	JumpTo,
 	JumpBy,
 	JumpToIf,
@@ -36,15 +38,15 @@ pub enum Op {
 
 	fn from(x:&str) -> Self {
 		match x.to_uppercase().as_str() {
-			"ADD" => Op::Add,
-			"SUB" => Op::Sub,
-			"MUL" => Op::Mul,
-			"DIV" => Op::Div,
-			"MOD" => Op::Mod,
-			"POW" => Op::Pow,
-			"GRT" => Op::Greater,
-			"LES" => Op::Lesser,
-			"EQL" => Op::Equal,
+			"ADD" => {panic!("DEPRICATED")},
+			"SUB" => {panic!("DEPRICATED")},
+			"MUL" => {panic!("DEPRICATED")},
+			"DIV" => {panic!("DEPRICATED")},
+			"MOD" => {panic!("DEPRICATED")},
+			"POW" => {panic!("DEPRICATED")},
+			"GRT" => {panic!("DEPRICATED")},
+			"LES" => {panic!("DEPRICATED")},
+			"EQL" => {panic!("DEPRICATED")},
 
 			"+"   => Op::Add,
 			"-"   => Op::Sub,
@@ -76,7 +78,7 @@ pub enum Op {
 			","   => {unimplemented!(); Op::End},
 			OP_ASSIGN_WORD   => {unimplemented!(); Op::End},
 			
-			"!="  => {unimplemented!(); Op::End},
+			"!="  => Op::NotEqual,
 			">="  => {unimplemented!(); Op::End},
 			"<="  => {unimplemented!(); Op::End},
 
@@ -136,6 +138,9 @@ pub enum QuLeafExpr {
 
 #[derive(Debug, Clone)]
 pub enum QuLeaf {
+	/// An if statement. Contains an assertion statement and a [`Vec`] of
+	/// instructions.
+	IfStatement(QuLeafExpr, Vec<QuLeaf>),
 	/// A variable assignment. Contains a VarName and an Expression.
 	VarAssign(QuToken, QuLeafExpr),
 	/// A variable declaration. Contains a VarName, Type(TODO), and
@@ -284,6 +289,19 @@ pub struct QuCompiler {
 	}
 
 
+	fn cmp_if_statement(&mut self, expr:&QuLeafExpr, leafs:&Vec<QuLeaf>
+	) -> Vec<u8> {
+		let (mut expr_code, expr_reg) = self.cmp_expr(expr);
+		let block_code = self.cmp_vec(leafs);
+
+		let mut jump_code = Vec::with_capacity(10);
+		jump_code.push(Op::Not as u8);
+
+
+		return vec![]
+	}
+
+
 	fn cmp_var_assign(&mut self,
 			name_tk:&QuToken, value_leaf:&QuLeafExpr) -> Vec<u8> {
 		// Get variable pointer
@@ -339,32 +357,50 @@ pub struct QuCompiler {
 	}
 
 
-	pub fn compile(&mut self, leafs:&mut Vec<QuLeaf>) -> Vec<u8> {
+	fn cmp_vec(&mut self, leafs:&Vec<QuLeaf>) -> Vec<u8> {
 		let mut code:Vec<u8> = vec![];
 		for leaf in leafs {
 			match leaf {
+				QuLeaf::IfStatement(
+					expr,
+					statements
+				) => {
+					code.append(
+						&mut self.cmp_if_statement(expr, statements)
+					);
+				}
+
 				QuLeaf::VarDecl(
 						name_tk,
 						_type_tk,
 						value_leaf
-						) => {
+				) => {
 					code.append(
 						&mut self.cmp_var_decl(
 								name_tk, 0, value_leaf)
 					);
 				}
+
 				QuLeaf::VarAssign(
 						name_rk,
 						value_leaf
-						) => {
+				) => {
 					// Add code
 					code.append(
 						&mut self.cmp_var_assign(name_rk, value_leaf)
 					);
-			}
+				}
+
 				_ => {unimplemented!()}
 			}
 		}
+		
+		return code;
+	}
+
+
+	pub fn compile(&mut self, leafs:&mut Vec<QuLeaf>) -> Vec<u8> {
+		let mut code:Vec<u8> = self.cmp_vec(leafs);
 		code.push(Op::End as u8);
 		return code;
 	}
@@ -563,7 +599,12 @@ pub struct QuParser<'a> {
 
 
 	fn ck_op_eql(&mut self) -> Option<QuLeafExpr> {
-		return self.ck_operation("==", &Self::ck_op_sub);
+		return self.ck_operation("==", &Self::ck_op_not_eql);
+	}
+
+
+	fn ck_op_not_eql(&mut self) -> Option<QuLeafExpr> {
+		return self.ck_operation("!=", &Self::ck_op_sub);
 	}
 
 
@@ -923,6 +964,16 @@ const OP_DATA:&OpData = &[
 		&[("r", 1), ("r", 1), ("r", 1)]
 	),
 	(
+		Op::NotEqual,
+		"not_equal",
+		&[("r", 1), ("r", 1), ("r", 1)]
+	),
+	(
+		Op::Not,
+		"not",
+		&[("r", 1), ("r", 1)]
+	),
+	(
 		Op::JumpTo,
 		"jump",
 		&[("", 4)]),
@@ -1181,6 +1232,23 @@ pub struct QuVm {
 	}
 
 
+	fn exc_logi_not_equal(&mut self) {
+		let rg_left = self.next_u8() as usize;
+		let rg_result = self.next_u8() as usize;
+		self.registers[rg_result] = 
+				(!self.registers[rg_left]) as u64;
+	}
+
+
+	fn exc_logi_not(&mut self) {
+		let rg_left = self.next_u8() as usize;
+		let rg_right = self.next_u8() as usize;
+		let rg_result = self.next_u8() as usize;
+		self.registers[rg_result] = 
+				(self.registers[rg_left] != self.registers[rg_right]) as u64;
+	}
+
+
 	/// Gets the next byte in the source code as a u8 int.
 	fn next_u8(&mut self) -> u8 {
 		let val = self.source[self.pc];
@@ -1247,6 +1315,8 @@ pub struct QuVm {
 				x if x == Op::Lesser as u8 => self.exc_logi_lesser(),
 				x if x == Op::Greater as u8 => self.exc_logi_greater(),
 				x if x == Op::Equal as u8 => self.exc_logi_equal(),
+				x if x == Op::NotEqual as u8 => self.exc_logi_not_equal(),
+				x if x == Op::Not as u8 => self.exc_logi_not(),
 
 				x if x == Op::JumpTo as u8 => self.exc_jump_to(),
 				x if x == Op::JumpBy as u8 => self.exc_jump_by(),
@@ -1405,21 +1475,15 @@ pub fn tokenrule_keyword(added_so_far:&[char]) -> bool {
 /// ```
 pub fn tokenrule_symbols(added_so_far:&[char]) -> bool {
 	return match added_so_far {
-		['+',] => true,
-		['-',] => true,
 		['*',] => true,
 		['/',] => true,
-		['%',] => true,
-		['&',] => true,
-		['|',] => true,
-		['^',] => true,
-		[':',] => true,
-		[',',] => true,
 		['=',] => true,
-		['(',] => true,
-		[')',] => true,
+		['!',] => true,
 		['>',] => true,
 		['<',] => true,
+		['+',] => true,
+		['-',] => true,
+		['%',] => true,
 		['*', '*',] => true,
 		['/', '/',] => true,
 		['=', '=',] => true,
@@ -1431,6 +1495,13 @@ pub fn tokenrule_symbols(added_so_far:&[char]) -> bool {
 		['*', '=',] => true,
 		['/', '=',] => true,
 		['%', '=',] => true,
+		['&',] => true,
+		['|',] => true,
+		['^',] => true,
+		[':',] => true,
+		[',',] => true,
+		['(',] => true,
+		[')',] => true,
 		_ => false,
 	};
 }
