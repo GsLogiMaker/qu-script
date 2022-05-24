@@ -103,53 +103,53 @@ pub enum Op {
 
 
 #[derive(Debug, Clone)]
-pub enum QuLeaf {
+pub enum QuLeafExpr {
 	/// A math or logical expression. Contains an operator and two Expressions
 	/// or Values.
-	Expression(Op, Box<QuLeaf>, Box<QuLeaf>),
+	Equation(Op, Box<QuLeafExpr>, Box<QuLeafExpr>),
 	/// A literal int value.
-	LiteralInt(u64),
-	/// A value. Can contain a LiteralInt or a VarValue.
-	Value(Box<QuLeaf>),
+	Int(u64),
+	/// A variable name.
+	Var(QuToken),
+}
+
+#[derive(Debug, Clone)]
+pub enum QuLeaf {
 	/// A variable assignment. Contains a VarName and an Expression.
-	VarAssign(Box<QuLeaf>, Box<QuLeaf>),
+	VarAssign(QuToken, QuLeafExpr),
 	/// A variable declaration. Contains a VarName, Type(TODO), and
 	/// an Expression.
-	VarDecl(Box<QuLeaf>, Option<Box<QuLeaf>>, Option<Box<QuLeaf>>),
-	/// A variable name.
-	VarName(QuToken),
-	/// A variable's value. Contains a VarName.
-	VarValue(Box<QuLeaf>),
+	VarDecl(QuToken, Option<QuToken>, Option<QuLeafExpr>),
 
 } impl Display for QuLeaf {
 
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
-			QuLeaf::Expression(op, lft, rht) => {
-				let string = format!("{}", op);
-				let opstr:&str = string.as_str();
-				return write!(f, "Expr({lft} {opstr} {rht})");
-			}
-			QuLeaf::LiteralInt(val) => {
-				return write!(f, "{val}:Int");
-			}
-			QuLeaf::VarAssign(
-					name,
-					val) => {
-				return write!(f, "VarAssign({} {})", name, val);
-			}
+			//QuLeaf::Expression(op, lft, rht) => {
+			//	let string = format!("{}", op);
+			//	let opstr:&str = string.as_str();
+			//	return write!(f, "Expr({lft} {opstr} {rht})");
+			//}
+			//QuLeaf::LiteralInt(val) => {
+			//	return write!(f, "{val}:Int");
+			//}
+			//QuLeaf::VarAssign(
+			//		name,
+			//		val) => {
+			//	return write!(f, "VarAssign({} {})", name, val);
+			//}
 			QuLeaf::VarDecl(
 					name, 
 					var_type, 
 					val) => {
 				return write!(f, "VarDecl({} {} {})", name, "todo", "todo");
 			}
-			QuLeaf::VarName(name) => {
-				return write!(f, "Var({})", name.text);
-			}
-			QuLeaf::Value(val) => {
-				return write!(f, "Value({val})");
-			}
+			//QuLeaf::VarName(name) => {
+			//	return write!(f, "Var({})", name.text);
+			//}
+			//QuLeaf::Value(val) => {
+			//	return write!(f, "Value({val})");
+			//}
 			_ => {
 				return write!(f, "<QuLeaf Unimplemented Format>");
 			}
@@ -214,26 +214,26 @@ pub struct QuCompiler {
 	}
 
 
+	fn cmp_expr(&mut self, leaf:&QuLeafExpr) -> (Vec<u8>, u8) {
+		return match leaf {
+			QuLeafExpr::Equation(
+				op,
+				left,
+				right
+			) => self.cmp_expr_equate(op, &**left, &**right),
+			QuLeafExpr::Int(val) => self.cmp_expr_int(*val),
+			QuLeafExpr::Var(token) => self.cmp_expr_val(token),
+		};
+	}
+
+
 	/// Calculates an expression and returns the virtual register to the result.
-	fn cmp_expression(
-			&mut self, op_code:Op, lft:&QuLeaf, rgh:&QuLeaf
-			) -> (Vec<u8>, u8) {
+	fn cmp_expr_equate(&mut self, op:&Op, left:&QuLeafExpr, right:&QuLeafExpr)
+			-> (Vec<u8>, u8) {
 		
 		// Right hand value code
-		let mut rgh_data = match rgh {
-			QuLeaf::Expression(op, lft_, rgh_)
-				=> self.cmp_expression(*op, lft_, rgh_),
-			QuLeaf::Value(_) => self.cmp_value(rgh),
-			_ => {unimplemented!()}
-		};
-
-		// Left hand value code
-		let mut lft_data = match lft {
-			QuLeaf::Expression(op, lft_, rgh_)
-				=> self.cmp_expression(*op, lft_, rgh_),
-			QuLeaf::Value(_) => self.cmp_value(lft),
-			_ => {unimplemented!()}
-		};
+		let mut rgh_data = self.cmp_expr(right);
+		let mut lft_data = self.cmp_expr(left);
 
 		let mut code:Vec<u8> = Vec::with_capacity(
 				lft_data.0.len()+rgh_data.0.len() + 4);
@@ -241,7 +241,7 @@ pub struct QuCompiler {
 		code.append(&mut rgh_data.0);
 		code.append(&mut lft_data.0);
 		code.append(&mut vec![
-			op_code as u8, lft_data.1, rgh_data.1, to_reg
+			*op as u8, lft_data.1, rgh_data.1, to_reg
 		]);
 
 		// Free registers
@@ -252,73 +252,48 @@ pub struct QuCompiler {
 	}
 
 
-	/// Reserves a virtual register, stores the literal in it, and returns
-	/// the register.
-	fn cmp_value(&mut self, value_leaf:&QuLeaf) -> (Vec<u8>, u8) {
-		if let QuLeaf::Value(sub_leaf) = value_leaf {
-			match &**sub_leaf {
-				QuLeaf::LiteralInt(value) => {
-					let reg = self.reg_reserve();
-					let mut code = Vec::with_capacity(10);
-					// TODO: Support other int sizes
-					code.push(Op::LoadValU8 as u8);
-					code.append(&mut (*value as u8).to_be_bytes().to_vec());
-					code.push(reg);
-					return (code, reg);
-				}
-				QuLeaf::VarName(var_name) => {
-					let var_ptr
-						= self.get_var_pointer(
-							var_name.text.as_str()).unwrap();
+	fn cmp_expr_int(&mut self, val:u64) -> (Vec<u8>, u8) {
+		let reg = self.reg_reserve();
+		let mut code = Vec::with_capacity(10);
+		// TODO: Support other int sizes
+		code.push(Op::LoadValU8 as u8);
+		code.append(&mut (val as u8).to_be_bytes().to_vec());
+		code.push(reg);
+		return (code, reg);
+	}
 
-					let reg = self.reg_reserve();
-					let mut code = Vec::with_capacity(10);
-					code.push(Op::LoadMem as u8);
-					code.append(&mut (var_ptr as u32).to_be_bytes().to_vec());
-					code.push(reg);
-					return (code, reg);
-				}
-				_ => {
-					unimplemented!();
-				}
-			}
-		}
-		panic!("");
+
+	fn cmp_expr_val(&mut self, token:&QuToken) -> (Vec<u8>, u8) {
+		let var_ptr
+			= self.get_var_pointer(
+				token.text.as_str()).unwrap();
+
+		let reg = self.reg_reserve();
+		let mut code = Vec::with_capacity(10);
+		code.push(Op::LoadMem as u8);
+		code.append(&mut (var_ptr as u32).to_be_bytes().to_vec());
+		code.push(reg);
+		return (code, reg);
 	}
 
 
 	fn cmp_var_assign(&mut self,
-			name_leaf:&QuLeaf, value_leaf:&QuLeaf) -> Vec<u8> {
-		assert!(matches!(&name_leaf, QuLeaf::VarName(_)));
-		assert!(matches!(&value_leaf, QuLeaf::Expression(_,_,_))
-			|| matches!(&value_leaf, QuLeaf::Value(_)));
-
-		// Get name
-		let mut name = "".to_string();
-		if let QuLeaf::VarName(name_) = &(name_leaf) {
-			name = name_.text.clone();
-		}
-
+			name_tk:&QuToken, value_leaf:&QuLeafExpr) -> Vec<u8> {
 		// Get variable pointer
 		let var_ptr= self.get_var_pointer(
-				name.as_str()
-			).expect(format!(
-			"No variable with name {} has been defined", name).as_str());
+				&name_tk.text
+				).expect(format!(
+				"No variable with name {} has been defined",
+				&name_tk.text).as_str());
 		
 		// Compile
 		let mut code = Vec::with_capacity(10);
 		// Compile value code
-		let (mut value_code, value_reg)
-				= match value_leaf {
-			QuLeaf::Value(_) => {self.cmp_value(value_leaf)}
-			QuLeaf::Expression(op,l,r) 
-					=> {self.cmp_expression(*op,l,r)}
-			_ => panic!(""),
-		};
-		code.append(&mut value_code);
+		let (mut val_code, val_reg) = self.cmp_expr(value_leaf);
+		code.append(&mut val_code);
 		// Compile store mem code
 		code.push(Op::StoreMem as u8);
-		code.push(value_reg);
+		code.push(val_reg);
 		code.append(&mut (var_ptr as u32).to_be_bytes().to_vec());
 
 		return code;
@@ -326,22 +301,31 @@ pub struct QuCompiler {
 
 
 	fn cmp_var_decl(&mut self,
-			name:String, var_type:usize, val:usize) -> Vec<u8> {
+			name:&QuToken, var_type:usize, val_leaf_op:&Option<QuLeafExpr>)
+			-> Vec<u8> {
 		let stk = self.stack_reserve();
 		self.variables.push(
-			(name.clone(), var_type, stk)
+			(name.text.clone(), var_type, stk)
 		);
 
-		// Construct code
-		let mut code = Vec::with_capacity(10);
-		// Get default val
-		let rg_default_val = self.reg_reserve();
-		code.push(Op::LoadValU8 as u8); // TODO: Support u64
-		code.push(val as u8); // TODO: Support u64
-		code.push(rg_default_val);
+		// Compile variable assign
+		let (mut val_code, val_reg) = match val_leaf_op {
+			Some(val_leaf) => self.cmp_expr(&val_leaf),
+			None => {
+				let mut code = Vec::with_capacity(3);
+				let reg = self.reg_reserve();
+				code.push(Op::LoadValU8 as u8); // TODO: Support u64
+				code.push(0); // TODO: Support u64
+				code.push(reg);
+				(code, reg)
+			},
+		};
+		let mut code = Vec::with_capacity(val_code.len() + 6);
+		code.append(&mut val_code);
+
 		// Store in mem
 		code.push(Op::StoreMem as u8);
-		code.push(rg_default_val);
+		code.push(val_reg);
 		code.append(&mut (stk as u32).to_be_bytes().to_vec());
 
 		return code;
@@ -352,43 +336,23 @@ pub struct QuCompiler {
 		let mut code:Vec<u8> = vec![];
 		for leaf in leafs {
 			match leaf {
-				QuLeaf::Expression(
-						op, 
-						lft, 
-						rgh) => {
-					let (mut expr_code,_reg) = self.cmp_expression(
-							*op, lft, rgh);
-					code.append(&mut expr_code);
-				}
-				QuLeaf::Value(_val) => {
-					panic!(
-						"QuLeaf::Value probobly should not be compiled alone!");
-				}
 				QuLeaf::VarDecl(
-						name_leaf,
-						_static_type_leaf,
-						_value_leaf
+						name_tk,
+						_type_tk,
+						value_leaf
 						) => {
-					assert!(matches!(&(**name_leaf), QuLeaf::VarName(_name)));
-					
-					// Get name
-					let mut name = "".to_string();
-					if let QuLeaf::VarName(name_) = &(**name_leaf) {
-						name = name_.text.clone();
-					}
-
-					// Add code
 					code.append(
-						&mut self.cmp_var_decl(name, 0, 0)
+						&mut self.cmp_var_decl(
+								name_tk, 0, value_leaf)
 					);
 				}
 				QuLeaf::VarAssign(
-						name_leaf,
+						name_rk,
 						value_leaf
 						) => {
 					// Add code
 					code.append(
-						&mut self.cmp_var_assign(&**name_leaf, &**value_leaf)
+						&mut self.cmp_var_assign(name_rk, value_leaf)
 					);
 			}
 				_ => {unimplemented!()}
@@ -489,7 +453,7 @@ pub struct QuParser<'a> {
 			self.tk_pop();
 			return Ok(None);
 		}
-		let name_data = name_data.unwrap();
+		let name_tk = name_data.unwrap();
 		
 		
 		// Match assign operator
@@ -504,10 +468,10 @@ pub struct QuParser<'a> {
 			self.tk_pop();
 			return Err("Expected variable to be assigned to an expression");
 		}
-		let expr_data = expr_data.unwrap();
+		let expr_leaf = expr_data.unwrap();
 
 		return Ok(Some(
-			QuLeaf::VarAssign(Box::new(name_data), Box::new(expr_data))
+			QuLeaf::VarAssign(name_tk, expr_leaf)
 		));
 	}
 
@@ -529,42 +493,31 @@ pub struct QuParser<'a> {
 		if let None = name_data {
 			return Err("Token after 'var' does not match a name.");
 		}
-		let name_data = name_data.unwrap();
+		let name_tk = name_data.unwrap();
 
 		// Match variable type
-		let type_data = self.ck_type_name();
+		let type_tk_opt = self.ck_type_name();
 
 		// Match assign operator
 		let keyword_tk = self.tk_spy(0);
-		let mut assign_data = None;
+		let mut assign_leaf_opt = None;
 		if keyword_tk == OP_ASSIGN_WORD {
 			self.tk_next();
-			assign_data = self.ck_expr();
-			if let None = assign_data {
+			assign_leaf_opt = self.ck_expr();
+			if let None = assign_leaf_opt {
 				return Err("Expected expression after '='.");
 			}
 		}
-
-		// Create leaf boxes
-		let name_box = Box::new(name_data);
-		let mut type_box = None;
-		if let Some(type_data) = type_data {
-			type_box = Some(Box::new(type_data));
-		}
-		let mut assign_box = None;
-		if let Some(assign_data) = assign_data {
-			assign_box = Some(Box::new(assign_data));
-		}
 		
 		return Ok(Some(QuLeaf::VarDecl(
-			name_box,
-			type_box,
-			assign_box,
+			name_tk,
+			type_tk_opt,
+			assign_leaf_opt,
 		)));
 	}
 
 
-	fn ck_var_name(&mut self) -> Option<QuLeaf> {
+	fn ck_var_name(&mut self) -> Option<QuToken> {
 		let tk = self.tk_spy(0);
 		let tk_row = tk.row;
 		let tk_indent = tk.indent;
@@ -578,12 +531,12 @@ pub struct QuParser<'a> {
 		if tk.tk_type != TOKEN_TYPE_NAME {
 			return None;
 		}
-		return Some(QuLeaf::VarName( self.tk_next().clone() ));
+		return Some(self.tk_next().clone());
 	}
 
 
 	/// Checks for an expression
-	fn ck_expr(&mut self) -> Option<QuLeaf> {
+	fn ck_expr(&mut self) -> Option<QuLeafExpr> {
 		if let Some(check) = self.ck_op_les() {
 			return Some(check);
 		}
@@ -592,42 +545,42 @@ pub struct QuParser<'a> {
 	}
 
 
-	fn ck_op_les(&mut self) -> Option<QuLeaf> {
+	fn ck_op_les(&mut self) -> Option<QuLeafExpr> {
 		return self.ck_operation("<", &Self::ck_op_grt);
 	}
 
 
-	fn ck_op_grt(&mut self) -> Option<QuLeaf> {
+	fn ck_op_grt(&mut self) -> Option<QuLeafExpr> {
 		return self.ck_operation(">", &Self::ck_op_eql);
 	}
 
 
-	fn ck_op_eql(&mut self) -> Option<QuLeaf> {
+	fn ck_op_eql(&mut self) -> Option<QuLeafExpr> {
 		return self.ck_operation("==", &Self::ck_op_sub);
 	}
 
 
-	fn ck_op_sub(&mut self) -> Option<QuLeaf> {
+	fn ck_op_sub(&mut self) -> Option<QuLeafExpr> {
 		return self.ck_operation("-", &Self::ck_op_add);
 	}
 
 
-	fn ck_op_add(&mut self) -> Option<QuLeaf> {
+	fn ck_op_add(&mut self) -> Option<QuLeafExpr> {
 		return self.ck_operation("+", &Self::ck_op_div);
 	}
 
 
-	fn ck_op_div(&mut self) -> Option<QuLeaf> {
+	fn ck_op_div(&mut self) -> Option<QuLeafExpr> {
 		return self.ck_operation("/", &Self::ck_op_mul);
 	}
 
 
-	fn ck_op_mul(&mut self) -> Option<QuLeaf> {
+	fn ck_op_mul(&mut self) -> Option<QuLeafExpr> {
 		return self.ck_operation("*", &Self::ck_op_paren_expr);
 	}
 
 
-	fn ck_op_paren_expr(&mut self) -> Option<QuLeaf> {
+	fn ck_op_paren_expr(&mut self) -> Option<QuLeafExpr> {
 		self.tk_push();
 
 		let tk = self.tk_next();
@@ -663,8 +616,8 @@ pub struct QuParser<'a> {
 	/// Returns a QuLeaf
 	fn ck_operation(
 			&mut self, operator:&str,
-			next:&dyn Fn(&mut Self)->Option<QuLeaf>,
-			) -> Option<QuLeaf> {
+			next:&dyn Fn(&mut Self)->Option<QuLeafExpr>,
+			) -> Option<QuLeafExpr> {
 
 		self.tk_push();
 
@@ -692,7 +645,7 @@ pub struct QuParser<'a> {
 		let data_r = data_r.unwrap();
 
 		return Some(
-			QuLeaf::Expression(
+			QuLeafExpr::Equation(
 				Op::from(operator),
 				Box::new(data_l),
 				Box::new(data_r)
@@ -701,21 +654,19 @@ pub struct QuParser<'a> {
 	}
 
 
-	fn ck_type_name(&mut self) -> Option<QuLeaf> {
+	fn ck_type_name(&mut self) -> Option<QuToken> {
 		return self.ck_var_name();
 	}
 
 
-	fn ck_value(&mut self) -> Option<QuLeaf> {
+	fn ck_value(&mut self) -> Option<QuLeafExpr> {
 		self.tk_push();
 		return match self.tk_next().text.parse::<u64>() {
-			Ok(x) => Some(QuLeaf::Value(
-				Box::new(QuLeaf::LiteralInt(x))
-			)),
+			Ok(x) => Some(QuLeafExpr::Int(x)),
 			Err(_) => {
 				self.tk_pop();
 				match self.ck_var_name() {
-					Some(data) => Some(QuLeaf::Value(Box::new(data))),
+					Some(data) => Some(QuLeafExpr::Var(data)),
 					None => None,
 				}
 			},
@@ -737,9 +688,9 @@ pub struct QuParser<'a> {
 				leafs.push(data);
 			}
 			// Expression
-			else if let Some(data) = self.ck_expr() {
-				leafs.push(data);
-			}
+			//else if let Some(data) = self.ck_expr() {
+			//	leafs.push(data);
+			//}
 			// No more matches
 			else {
 				break;
