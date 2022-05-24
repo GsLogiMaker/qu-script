@@ -104,13 +104,18 @@ pub enum Op {
 
 #[derive(Debug, Clone)]
 pub enum QuLeaf {
+	/// Operator, Left expression, Right expression
 	Expression(Op, Box<QuLeaf>, Box<QuLeaf>),
+	/// Value
 	Value(u64),
+	/// Name
 	VarName(String),
 	/// Name, Type, Value
 	VarDecl(Box<QuLeaf>, Option<Box<QuLeaf>>, Option<Box<QuLeaf>>),
+	/// Name, Value
+	VarAssign(Box<QuLeaf>, Box<QuLeaf>),
 
-} impl<'a> Display for QuLeaf {
+} impl Display for QuLeaf {
 
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
@@ -130,6 +135,11 @@ pub enum QuLeaf {
 					var_type, 
 					val) => {
 				return write!(f, "VarDecl({} {} {})", name, "todo", "todo");
+			}
+			QuLeaf::VarAssign(
+					name,
+					val) => {
+				return write!(f, "VarAssign({} {})", name, val);
 			}
 			_ => {
 				return write!(f, "<QuLeaf Unimplemented Format>");
@@ -181,7 +191,8 @@ pub const ASM_RULES:&Rules = &[
 
 pub struct QuCompiler {
 	reserved_vregs:[bool;16],
-	variables:Vec<(String, usize)>,
+	/// Name, Type, Pointer
+	variables:Vec<(String, usize, usize)>,
 	stack_ptr:usize,
 } impl QuCompiler {
 
@@ -244,18 +255,44 @@ pub struct QuCompiler {
 	}
 
 
-	fn cmp_var_decl(&mut self, name:String, var_type:u8, val:u8) -> Vec<u8> {
+	fn cmp_var_assign(&mut self,
+			name:String, val:u64) -> Vec<u8> {
+		// Get variable pointer
+		let var_ptr
+				= self.get_var_pointer(name.as_str());
+		let var_ptr = var_ptr.expect(format!(
+				"No variable with name {} has been defined", 
+				name).as_str());
+		
+		// Construct code
+		let mut code = Vec::with_capacity(10);
+		// Get default val
+		let rg_set_val = self.reg_reserve();
+		code.push(Op::LoadValU8 as u8); // TODO: Support u64
+		code.push(val as u8); // TODO: Support u64
+		code.push(rg_set_val);
+		// Store in mem
+		code.push(Op::StoreMem as u8);
+		code.push(rg_set_val);
+		code.append(&mut (var_ptr as u32).to_be_bytes().to_vec());
+
+		return code;
+	}
+
+
+	fn cmp_var_decl(&mut self,
+			name:String, var_type:usize, val:usize) -> Vec<u8> {
 		let stk = self.stack_reserve();
 		self.variables.push(
-			(name.clone(), stk)
+			(name.clone(), var_type, stk)
 		);
 
 		// Construct code
 		let mut code = Vec::with_capacity(10);
 		// Get default val
 		let rg_default_val = self.reg_reserve();
-		code.push(Op::LoadValU8 as u8);
-		code.push(0);
+		code.push(Op::LoadValU8 as u8); // TODO: Support u64
+		code.push(val as u8); // TODO: Support u64
 		code.push(rg_default_val);
 		// Store in mem
 		code.push(Op::StoreMem as u8);
@@ -278,33 +315,68 @@ pub struct QuCompiler {
 							*op, lft, rgh);
 					code.append(&mut expr_code);
 				}
-				QuLeaf::Value(val) => {
+				QuLeaf::Value(_val) => {
 					panic!(
 						"QuLeaf::Value probobly should not be compiled alone!");
-					code.push(Op::LoadValU8 as u8);
-					code.append(&mut val.to_be_bytes().to_vec());
-					code.push(self.reg_reserve());
 				}
 				QuLeaf::VarDecl(
 						name_leaf,
-						static_type_leaf,
-						value_leaf
+						_static_type_leaf,
+						_value_leaf
 						) => {
-					assert!(matches!(&(**name_leaf), QuLeaf::VarName(name)));
+					assert!(matches!(&(**name_leaf), QuLeaf::VarName(_name)));
 					
+					// Get name
 					let mut name = "".to_string();
 					if let QuLeaf::VarName(name_) = &(**name_leaf) {
-						name = name_.clone()
+						name = name_.clone();
 					}
+
+					// Add code
 					code.append(
 						&mut self.cmp_var_decl(name, 0, 0)
 					);
 				}
+				QuLeaf::VarAssign(
+						name_leaf,
+						value_leaf
+						) => {
+					assert!(matches!(&(**name_leaf), QuLeaf::VarName(_)));
+					assert!(matches!(&(**value_leaf), QuLeaf::Value(_)));
+					
+					// Get name
+					let mut name = "".to_string();
+					if let QuLeaf::VarName(name_) = &(**name_leaf) {
+						name = name_.clone();
+					}
+
+					// Get value
+					let mut val:u64 = 0;
+					if let QuLeaf::Value(val_) = &(**value_leaf) {
+						val = *val_;
+					}
+					
+					// Add code
+					code.append(
+						&mut self.cmp_var_assign(name, val)
+					);
+			}
 				_ => {unimplemented!()}
 			}
 		}
 		code.push(Op::End as u8);
 		return code;
+	}
+
+
+	/// Gets the pointer to a variable by the variable's name.
+	fn get_var_pointer(&self, var_name:&str) -> Option<usize> {
+		for (name_, _type_, pointer_) in &self.variables {
+			if name_ == var_name {
+				return Some(*pointer_);
+			}
+		}
+		return None;
 	}
 
 
@@ -351,18 +423,22 @@ pub struct QuCompiler {
 
 
 pub struct QuParser<'a> {
+	indent:u8,
+	line:usize,
 	tk_idx:usize,
 	tk_stack:Vec<usize>,
-	tokens:&'a Vec<QuToken<'a>>,
+	tokens:&'a Vec<QuToken>,
 
 } impl<'a> QuParser<'a> {
 
-	pub fn new(tokens:&'a mut Vec<QuToken<'a>>) -> Self {
+	pub fn new(tokens:&'a mut Vec<QuToken>) -> Self {
 		tokens.push(
 			QuToken::new(tokens.len() as u64, tokens.len() as u64, 
-			0, 0, 0, u8::MAX, "")
+			0, 0, 0, u8::MAX)
 		);
 		return QuParser {
+			indent:0,
+			line:0,
 			tk_idx:0,
 			tk_stack:vec![],
 			tokens:tokens,
@@ -370,12 +446,52 @@ pub struct QuParser<'a> {
 	}
 
 
+	/// Matches tokens to a variable assignment.
+	fn ck_var_assign(&mut self) -> Result<Option<QuLeaf>, &str> {
+		self.tk_push();
+
+		// Match variable name
+		let tk = self.tk_spy(0);
+		self.line = tk.row as usize;
+		self.indent = tk.indent as u8;
+		let name_data = self.ck_var_name();
+		if let None = name_data {
+			self.tk_pop();
+			return Ok(None);
+		}
+		let name_data = name_data.unwrap();
+		
+		
+		// Match assign operator
+		if self.tk_next() != OP_ASSIGN_WORD {
+			self.tk_pop();
+			return Ok(None);
+		}
+
+		// Match expression
+		let expr_data = self.ck_expr();
+		if let None = expr_data {
+			self.tk_pop();
+			return Err("Expected variable to be assigned to an expression");
+		}
+		let expr_data = expr_data.unwrap();
+
+		return Ok(Some(
+			QuLeaf::VarAssign(Box::new(name_data), Box::new(expr_data))
+		));
+	}
+
+
 	fn ck_var_decl(&mut self) -> Result<Option<QuLeaf>, &str> {
 		// Match keyword
 		let keyword_tk = self.tk_spy(0);
+		let tk_line = keyword_tk.row as usize;
+		let tk_indent = keyword_tk.indent as usize;
 		if keyword_tk != KEYWORD_VAR {
 			return Ok(None);
 		}
+		self.line = tk_line as usize;
+		self.indent = tk_indent as u8;
 		self.tk_next();
 
 		// Match variable name
@@ -420,10 +536,19 @@ pub struct QuParser<'a> {
 
 	fn ck_var_name(&mut self) -> Option<QuLeaf> {
 		let tk = self.tk_spy(0);
+		let tk_row = tk.row;
+		let tk_indent = tk.indent;
+
+		if tk_row != self.line as u64 {
+			if tk_indent != self.indent+2 {
+				return None;
+			}
+		}
+
 		if tk.tk_type != TOKEN_TYPE_NAME {
 			return None;
 		}
-		return Some(QuLeaf::VarName( self.tk_next().text() ));
+		return Some(QuLeaf::VarName( self.tk_next().text.clone() ));
 	}
 
 
@@ -553,7 +678,7 @@ pub struct QuParser<'a> {
 
 	fn ck_value(&mut self) -> Option<(QuLeaf)> {
 		self.tk_push();
-		return match self.tk_next().text().parse::<u64>() {
+		return match self.tk_next().text.parse::<u64>() {
 			Ok(x) => Some(QuLeaf::Value(x)),
 			Err(x) => {
 				self.tk_pop();
@@ -571,14 +696,19 @@ pub struct QuParser<'a> {
 			// Variable declaration
 			if let Some(data) = self.ck_var_decl().unwrap() {
 				leafs.push(data);
-			// Expression
-			} else if let Some(data) = self.ck_expr() {
+			}
+			// Variable assignment
+			else if let Some(data) = self.ck_var_assign().unwrap() {
 				leafs.push(data);
+			}
+			// Expression
+			else if let Some(data) = self.ck_expr() {
+				leafs.push(data);
+			}
 			// No more matches
-			} else {
+			else {
 				break;
 			}
-			
 		}
 
 		return leafs;
@@ -602,11 +732,11 @@ pub struct QuParser<'a> {
 	}
 
 
-	fn tk_spy(&mut self, at:usize) -> &QuToken {
+	fn tk_spy(&mut self, at:usize) -> QuToken {
 		if self.tk_idx+at >= self.tokens.len() {
-			return &self.tokens[self.tokens.len()-1];
+			return self.tokens[self.tokens.len()-1].clone();
 		}
-		return &self.tokens[self.tk_idx+at];
+		return self.tokens[self.tk_idx+at].clone();
 	}
 
 }
@@ -614,52 +744,62 @@ pub struct QuParser<'a> {
 
 /// A slice of a script file with information on the row, column, and indent of
 /// the slice.
-pub struct QuToken<'a> {
+pub struct QuToken {
 	pub begin:u64,
 	pub end:u64,
 	pub row:u64,
 	pub _col:u64,
 	pub indent:u8,
-	pub source:&'a str,
+	pub text:String,
 	pub tk_type:u8,
 
-} impl<'a> QuToken<'a> {
+} impl QuToken {
 
 	/// Makes a new [`Token`].
 	pub fn new(
 			begin:u64, end:u64, row:u64, col:u64, indent:u8,
-			varient:u8, source:&'a str,) -> QuToken {
+			varient:u8,) -> QuToken {
 		return QuToken{
 			begin,
 			end,
 			row,
 			_col:col,
 			indent,
-			source:&source,
+			text:String::new(),
 			tk_type:varient
 		};
 	}
 
-
-	/// Returns a ['String'] copy of this ['Token']'s slice of
-	/// the ['source'] text.
-	pub fn text(&self) -> String {
-		if self.tk_type == u8::MAX {
-			return "".to_string();
+	pub fn text(&self, source:&str) -> String {
+		let mut text = String::new();
+		if source.len() > 0 {
+			text = source[self.begin as usize..=self.end as usize].to_string();
 		}
-		return self.source[self.begin as usize..=self.end as usize].to_string();
+		return text;
 	}
 
-} impl<'a> Display for QuToken<'a> {
+} impl Clone for QuToken {
+    fn clone(&self) -> Self {
+        Self { 
+			begin:self.begin.clone(),
+			end:self.end.clone(),
+			row:self.row.clone(),
+			_col:self._col.clone(),
+			indent:self.indent.clone(),
+			text:self.text.clone(),
+			tk_type:self.tk_type.clone()
+		}
+    }
+} impl Display for QuToken {
 	
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		return write!(
 				f, "<'{}' row:{}  indent:{}>",
-				self.text(),
+				self.text,
 				self.row,
 				self.indent,);
 	}
-} impl<'a> Debug for QuToken<'a> {
+} impl Debug for QuToken {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		return write!(f, "Hi: {}", 0);
 		//f.debug_struct("QuToken")
@@ -671,29 +811,33 @@ pub struct QuToken<'a> {
 		//	.field("source", &self.source)
 		//	.field("tk_type", &self.tk_type).finish()
 	}
-} impl<'a> PartialEq for QuToken<'a> {
+} impl PartialEq for QuToken {
 	fn eq(&self, other:&Self) -> bool {
 		if self.tk_type == u8::MAX {
 			return false;
 		}
-		return self.source[self.begin as usize..self.end as usize]
-			== other.source[other.begin as usize..=other.end as usize];
+		return self.text == other.text;
 	}
-} impl<'a> PartialEq<str> for QuToken<'a> {
+} impl PartialEq<str> for QuToken {
 	fn eq(&self, other:&str) -> bool {
 		if self.tk_type == u8::MAX {
 			return false;
 		}
-		return &self.source[self.begin as usize..=self.end as usize]
-			== other;
+		return &self.text == other;
 	}
-} impl<'a> PartialEq<String> for QuToken<'a> {
+} impl<'a> PartialEq<&str> for QuToken {
+	fn eq(&self, other:&&str) -> bool {
+		if self.tk_type == u8::MAX {
+			return false;
+		}
+		return &self.text == *other;
+	}
+} impl PartialEq<String> for QuToken {
 	fn eq(&self, other:&String) -> bool {
 		if self.tk_type == u8::MAX {
 			return false;
 		}
-		return &self.source[self.begin as usize..=self.end as usize]
-			== other;
+		return &self.text == other;
 	}
 }
 
@@ -743,47 +887,47 @@ const OP_DATA:&OpData = &[
 	(
 		Op::Add,
 		"add",
-		&[("r", 1), ("r", 1)]
+		&[("r", 1), ("r", 1), ("r", 1)]
 	),
 	(
 		Op::Sub,
 		"sub",
-		&[("r", 1), ("r", 1)]
+		&[("r", 1), ("r", 1), ("r", 1)]
 	),
 	(
 		Op::Mul,
 		"mul",
-		&[("r", 1), ("r", 1)]
+		&[("r", 1), ("r", 1), ("r", 1)]
 	),
 	(
 		Op::Div,
 		"div",
-		&[("r", 1), ("r", 1)]
+		&[("r", 1), ("r", 1), ("r", 1)]
 	),
 	(
 		Op::Mod,
 		"mod",
-		&[("r", 1), ("r", 1)]
+		&[("r", 1), ("r", 1), ("r", 1)]
 	),
 	(
 		Op::Pow,
 		"pow",
-		&[("r", 1), ("r", 1)]
+		&[("r", 1), ("r", 1), ("r", 1)]
 	),
 	(
 		Op::Lesser,
 		"lesser",
-		&[("r", 1), ("r", 1)]
+		&[("r", 1), ("r", 1), ("r", 1)]
 	),
 	(
 		Op::Greater,
 		"greater",
-		&[("r", 1), ("r", 1)]
+		&[("r", 1), ("r", 1), ("r", 1)]
 	),
 	(
 		Op::Equal,
 		"equal",
-		&[("r", 1), ("r", 1)]
+		&[("r", 1), ("r", 1), ("r", 1)]
 	),
 	(
 		Op::JumpTo,
@@ -828,100 +972,6 @@ pub struct QuVm {
 		};
 
 		return vm;
-	}
-
-
-	/// Compiles byte code from low level VM instructions.
-	pub fn compile_asm(&mut self, code:&String) -> Vec<u8> {
-		let mut bcode = vec![];
-
-		let tokens = tokenize(code, ASM_RULES);
-		
-
-		// Look for flags
-		let mut flags = vec![];
-		let mut next_is_flag = false;
-		let mut i = 0;
-		for tk in &tokens {
-			let tk_string = tk.text();
-
-			if tk_string == "flag" {
-				next_is_flag = true;
-				continue;
-
-			} else if next_is_flag {
-				next_is_flag = false;
-				flags.push(
-					(tk_string, i)
-				);
-				continue;
-			}
-
-			i += 1;
-		}
-
-		// Compile
-		let mut i = 0;
-		while i < tokens.len() {
-			let tk = &tokens[i];
-			let a = tk.text().to_lowercase();
-			let tk_str = a.as_str();
-
-			// Flag reference
-			if tk_str.chars().next() == Some('$') {
-				for (flag, idx) in &flags {
-					let mut flag2 = "$".to_string();
-					flag2.push_str(flag);
-					if tk_str == flag2 {
-						bcode.push(*idx as u8);
-					}
-				}
-				continue;
-			}
-
-			// Keyword
-			let mut is_oper:bool = false;
-			for oper in OP_DATA {
-				if tk_str == oper.1 {
-					bcode.push(oper.0 as u8);
-					is_oper = true;
-					break;
-				}
-
-				// Parameters
-				for (_p_prefix, p_size) in oper.2 {
-					i += 1;
-					let tk = &tokens[i];
-					match p_size {
-						1 => bcode.push(tk.text().parse::<u8>().unwrap()),
-						2 => bcode.append(
-							&mut tk.text()
-								.parse::<u16>()
-								.unwrap()
-								.to_be_bytes()
-								.to_vec()),
-						4 => bcode.append(
-							&mut tk.text()
-								.parse::<u32>()
-								.unwrap()
-								.to_be_bytes()
-								.to_vec()),
-						8 => bcode.append(
-							&mut tk.text()
-								.parse::<u64>()
-								.unwrap()
-								.to_be_bytes()
-								.to_vec()),
-						_ => panic!(),
-					}
-					
-				}
-			}
-
-			i += 1;
-		}
-
-		return bcode;
 	}
 
 
@@ -1414,7 +1464,7 @@ pub fn tokenrule_symbols(added_so_far:&[char]) -> bool {
 ///	assert!(tokens[3].text(&script) == ";");
 ///	assert!(tokens[4].text(&script) == "!");
 /// ```
-pub fn tokenize<'a>(script:&'a String, rules:&Rules<'a>) -> Vec<QuToken<'a>> {
+pub fn tokenize<'a>(script:&'a String, rules:&Rules<'a>) -> Vec<QuToken> {
 	let mut tokens = vec!();
 
 	/* WARNING: This does not account for grapheme clusters. Currently hoping
@@ -1466,7 +1516,7 @@ pub fn tokenize<'a>(script:&'a String, rules:&Rules<'a>) -> Vec<QuToken<'a>> {
 						col,
 						indent,
 						char_type,
-						script,));
+					));
 				}
 				tokens[curr_token].end = idx as u64;
 				tokens[curr_token].tk_type = char_type;
@@ -1477,6 +1527,8 @@ pub fn tokenize<'a>(script:&'a String, rules:&Rules<'a>) -> Vec<QuToken<'a>> {
 				break;
 			}else {
 				if curr_token+1 == tokens.len() {
+					tokens[curr_token].text
+							= tokens[curr_token].text(script);
 					curr_token += 1;
 				}
 				added_so_far.clear();

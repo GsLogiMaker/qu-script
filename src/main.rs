@@ -16,15 +16,19 @@ fn main() {
 	//let expr_str = "1 + 2 * 3 / 4 + 5 * 6 - 7".to_string();
 	let expr_str = "
 		vl bike
-		vl bike2
-		vl bike3
-		(5 == 5) + 20
+		vl car
+		vl plane
+		bike = 5
+		bike = 6
+		bike = 4
+		car = 1
+		plane = 2
 	".to_string();
 
 	let mut tokens = &mut tokenize(&expr_str, RULES);
 	println!("Tokens: ");
 	for tk in tokens.iter() {
-		println!("	'{}' {} {}", tk.text(), tk.row, tk._col);
+		println!("	'{}' {} {}", tk.text, tk.row, tk._col);
 	}
 
 	let mut parser = QuParser::new(tokens);
