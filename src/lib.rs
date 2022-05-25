@@ -105,6 +105,34 @@ pub enum Op {
 
 
 #[derive(Debug, Clone)]
+/// An error enum for the QuParser
+pub enum QuErrorParser {
+	/// A line has an incorrect indentation level.
+	BadIndentation,
+	BadIndentation2,
+	/// A code block was started, but no code was written to it.
+	EmptyCodeBlock,
+} impl Display for QuErrorParser {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			QuErrorParser::BadIndentation => {
+				return write!(f, "Bad indentation");
+			}
+			QuErrorParser::BadIndentation2 => {
+				return write!(f, "Bad indentation 2");
+			}
+			QuErrorParser::EmptyCodeBlock => {
+				return write!(f, "Empty code block");
+			}
+			_ => {
+				unimplemented!();
+			}
+		}
+	}
+}
+
+
+#[derive(Debug, Clone)]
 pub enum QuLeafExpr {
 	/// A calculable expression. Contains an operator and two [`QuLeafExpr`]s.
 	Equation(Op, Box<QuLeafExpr>, Box<QuLeafExpr>),
@@ -484,10 +512,11 @@ pub struct QuParser<'a> {
 	tk_idx:usize,
 	tk_stack:Vec<usize>,
 	tokens:&'a Vec<QuToken>,
+	script:&'a String,
 
 } impl<'a> QuParser<'a> {
 
-	pub fn new(tokens:&'a mut Vec<QuToken>) -> Self {
+	pub fn new(tokens:&'a mut Vec<QuToken>, script:&'a String) -> Self {
 		tokens.push(
 			QuToken::new(tokens.len() as u64, tokens.len() as u64, 
 			0, 0, 0, u8::MAX)
@@ -498,7 +527,58 @@ pub struct QuParser<'a> {
 			tk_idx:0,
 			tk_stack:vec![],
 			tokens:tokens,
+			script:script,
 		}
+	}
+
+
+	/// Returns a Qu error message as a [`String`]
+	fn err_msg_make(&self, kind:QuErrorParser, tk:&QuToken) -> String {
+		// Line numbers
+		let line_nm_pre_pre = (tk.row as usize).saturating_sub(1);
+		let line_nm_pre = (tk.row as usize).saturating_sub(0);
+		let line_nm = (tk.row as usize).saturating_add(1);
+		let line_nm_post = (tk.row as usize).saturating_add(2);
+		let line_nm_post_post = (tk.row as usize).saturating_add(3);
+
+		// Line text
+		let mut script_lines = self.script.split("\n");
+		let line_pre_pre = if tk.row > 1 {
+			script_lines.nth(line_nm_pre_pre-1).unwrap_or("").to_string()
+		} else {
+			"".to_string()
+		};
+		let line_pre = if tk.row > 0 {
+			script_lines.next().unwrap_or("").to_string()
+		} else {
+			"".to_string()
+		};
+		let line = script_lines.next().unwrap_or("");
+		let line_post =
+				script_lines.next().unwrap_or("");
+		let line_post_post =
+				script_lines.next().unwrap_or("");
+
+		// Build code view
+		let code_view = format!(
+"    {:0>4}:{}\n    {:0>4}:{}\n >> {:0>4}:{}\n    {:0>4}:{}\n    {:0>4}:{}",
+			line_nm_pre_pre,
+			line_pre_pre,
+			line_nm_pre,
+			line_pre,
+			line_nm,
+			line,
+			line_nm_post,
+			line_post,
+			line_nm_post_post,
+			line_post_post,
+		);
+
+		// Build error message
+		let msg =  format!("ERROR on line {row}, col {col}: {kind}\n{script}",
+				row=tk.row+1, col=tk._col, script=code_view);
+		return msg;
+		
 	}
 
 
@@ -515,6 +595,7 @@ pub struct QuParser<'a> {
 					}
 				}
 				Err(msg) => {
+					self.utl_block_end();
 					return Err(format!("{}", msg));
 				}
 			}
@@ -528,6 +609,7 @@ pub struct QuParser<'a> {
 					}
 				}
 				Err(msg) => {
+					self.utl_block_end();
 					return Err(format!("{}", msg));
 				}
 			}
@@ -542,6 +624,7 @@ pub struct QuParser<'a> {
 					}
 				}
 				Err(msg) => {
+					self.utl_block_end();
 					return Err(format!("{}", msg));
 				}
 			}
@@ -551,10 +634,13 @@ pub struct QuParser<'a> {
 		}
 
 		if leafs.len() == 0 {
-			return Err("Empty code block 'TODO: Better error messages'"
-					.to_string());
+			self.utl_block_end();
+			return Err(self.err_msg_make(
+						QuErrorParser::EmptyCodeBlock,
+						&self.tokens[self.tk_idx-1]));
 		}
 
+		self.utl_block_end();
 		return Ok(Some(leafs));
 	}
 
@@ -576,7 +662,7 @@ pub struct QuParser<'a> {
 
 
 	fn ck_if_statment(&mut self) -> Result<Option<QuLeaf>, String> {
-		match self.statement_start() {
+		match self.utl_statement_start() {
 			Ok(_) => (),
 			Err(msg) => return Err(msg),
 		}
@@ -619,7 +705,7 @@ pub struct QuParser<'a> {
 
 	/// Matches tokens to a variable assignment.
 	fn ck_var_assign(&mut self) -> Result<Option<QuLeaf>, String> {
-		match self.statement_start() {
+		match self.utl_statement_start() {
 			Ok(_) => (),
 			Err(msg) => return Err(msg),
 		}
@@ -660,7 +746,7 @@ pub struct QuParser<'a> {
 
 
 	fn ck_var_decl(&mut self) -> Result<Option<QuLeaf>, String> {
-		match self.statement_start() {
+		match self.utl_statement_start() {
 			Ok(_) => (),
 			Err(msg) => return Err(msg),
 		}
@@ -870,24 +956,51 @@ pub struct QuParser<'a> {
 		self.tk_idx = 0;
 		self.line = 0;
 		self.indent = u8::MAX;
-		return self.ck_code_block().unwrap().unwrap();
+
+		let res = self.ck_code_block();
+		if let Err(msg) = res {
+			println!("{}", msg);
+			panic!("^^^ Encountered Qu error ^^^");
+		}
+		else if let Ok(data_opt) = res{
+			return data_opt.unwrap();
+		}
+		unreachable!();
 	}
 
 
-	/// A helper function. Use whenever starting to parse a statement.
-	fn statement_start(&mut self) -> Result<(), String> {
+	/// A utility function. Used whenever ending a code block.
+	fn utl_block_end(&mut self) {
+		self.indent = self.indent.saturating_sub(1);
+	}
+
+
+	/// A utility function. Used whenever starting to parse a statement.
+	fn utl_statement_start(&mut self) -> Result<(), String> {
 		let tk = self.tk_spy(0);
-		let tk_row = tk.row;
-		let tk_indent = tk.indent;
-		self.line = tk_row as usize;
+		let tk_row = tk.row as usize;
+		let tk_indent = tk.indent as u8;
 
 		if self.indent == u8::MAX {
-			self.indent = tk_indent as u8;
+			self.indent = tk_indent;
 		}
-		else if self.indent != tk_indent as u8 {
-			return Err("Bad indentation 'TODO: Better message'".to_string());
+		else if self.indent != tk_indent {
+
+			if self.line == tk_row {
+				let tk = self.tokens[self.tk_idx].clone();
+				return Err(self.err_msg_make(
+					QuErrorParser::BadIndentation2, 
+					&tk));
+			}
+
+			let tk = self.tokens[self.tk_idx-0].clone();
+			self.line = tk_row;
+			return Err(self.err_msg_make(
+					QuErrorParser::BadIndentation, 
+					&tk));
 		}
 		
+		self.line = tk_row;
 		return Ok(());
 	}
 
@@ -1775,6 +1888,11 @@ pub fn tokenize<'a>(script:&'a String, rules:&Rules<'a>) -> Vec<QuToken> {
 				}
 				tokens[curr_token].end = idx as u64;
 				tokens[curr_token].tk_type = char_type;
+
+				if idx+1 == script.len() {
+					tokens[curr_token].text
+							= tokens[curr_token].text(script);
+				}
 				break;
 				
 			} else if added_so_far.len() == 1 {

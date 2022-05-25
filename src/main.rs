@@ -14,13 +14,12 @@ fn main() {
 	println!("---START---");
 	println!("");
 
-
-	let expr_str = "
-		vl car =
-				2 + 5
-		if 0:
-			vl bus = 200
-	".to_string();
+	let expr_str = "if 
+		0:
+	vl f
+	vl h
+vl j".to_string();
+	println!("Script: {}", expr_str);
 
 	// Tokens
 	let tokens = &mut tokenize(&expr_str, RULES);
@@ -30,7 +29,7 @@ fn main() {
 	}
 
 	// Parser
-	let mut parser = QuParser::new(tokens);
+	let mut parser = QuParser::new(tokens, &expr_str);
 	let mut instruction_vec = parser.parse();
 	println!("Tree:");
 	for line in &instruction_vec {
