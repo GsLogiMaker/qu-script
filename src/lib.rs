@@ -248,6 +248,7 @@ pub struct QuCompiler {
 	reserved_vregs:[bool;16],
 	/// Name, Type, Pointer
 	variables:Vec<(String, usize, usize)>,
+	stack_frames:Vec<usize>,
 	stack_ptr:usize,
 } impl QuCompiler {
 
@@ -255,6 +256,7 @@ pub struct QuCompiler {
 		return Self{
 			reserved_vregs:[false;16],
 			variables:vec![],
+			stack_frames:vec![],
 			stack_ptr:0,
 		};
 	}
@@ -326,7 +328,7 @@ pub struct QuCompiler {
 	fn cmp_if_statement(&mut self, expr:&QuLeafExpr, leafs:&Vec<QuLeaf>
 	) -> Vec<u8> {
 		let (mut expr_code, expr_reg) = self.cmp_expr(expr);
-		let mut block_code = self.cmp_vec(leafs);
+		let mut block_code = self.cmp_block(leafs);
 
 		let mut jump_code = Vec::with_capacity(7);
 		let jump_assert_reg = self.reg_reserve();
@@ -334,10 +336,12 @@ pub struct QuCompiler {
 		jump_code.push(Op::Not as u8);
 		jump_code.push(expr_reg);
 		jump_code.push(jump_assert_reg);
+		self.reg_free(expr_reg);
 		// Jump instruction
 		jump_code.push(Op::JumpByIf as u8);
 		jump_code.push(jump_assert_reg);
 		jump_code.append(&mut (block_code.len() as u16).to_be_bytes().to_vec());
+		self.reg_free(jump_assert_reg);
 
 		// Compile code together
 		let mut code = Vec::with_capacity(
@@ -368,6 +372,7 @@ pub struct QuCompiler {
 		code.push(Op::StoreMem as u8);
 		code.push(val_reg);
 		code.append(&mut (var_ptr as u32).to_be_bytes().to_vec());
+		self.reg_free(val_reg);
 
 		return code;
 	}
@@ -400,12 +405,15 @@ pub struct QuCompiler {
 		code.push(Op::StoreMem as u8);
 		code.push(val_reg);
 		code.append(&mut (stk as u32).to_be_bytes().to_vec());
+		self.reg_free(val_reg);
 
 		return code;
 	}
 
 
-	fn cmp_vec(&mut self, leafs:&Vec<QuLeaf>) -> Vec<u8> {
+	fn cmp_block(&mut self, leafs:&Vec<QuLeaf>) -> Vec<u8> {
+		self.stack_frame_push();
+
 		let mut code:Vec<u8> = vec![];
 		for leaf in leafs {
 			match leaf {
@@ -443,13 +451,27 @@ pub struct QuCompiler {
 			}
 		}
 		
+		self.stack_frame_pop();
 		return code;
 	}
 
 
 	pub fn compile(&mut self, leafs:&mut Vec<QuLeaf>) -> Vec<u8> {
-		let mut code:Vec<u8> = self.cmp_vec(leafs);
+		let mut code:Vec<u8> = self.cmp_block(leafs);
 		code.push(Op::End as u8);
+
+		// Check for leaked registers
+		let mut leaked_regs = vec![];
+		for (idx, x) in self.reserved_vregs.iter().enumerate() {
+			if *x {
+				leaked_regs.push(idx);
+			}
+		}
+		if leaked_regs.len() > 0 {
+			panic!("COMPILER ERROR: Registers were leaked while compiling: \
+					{:?}", leaked_regs);
+		}
+
 		return code;
 	}
 
@@ -495,13 +517,13 @@ pub struct QuCompiler {
 
 	/// Closes the current stack frame.
 	fn stack_frame_pop(&mut self) {
-		unimplemented!()
+		self.stack_ptr = self.stack_frames.pop().unwrap();
 	}
 
 
 	/// Starts a new stack frame.
 	fn stack_frame_push(&mut self) {
-		unimplemented!()
+		self.stack_frames.push(self.stack_ptr);
 	}
 
 }

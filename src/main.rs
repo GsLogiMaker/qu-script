@@ -14,17 +14,19 @@ fn main() {
 	println!("---START---");
 	println!("");
 
-	let expr_str = "
+	let expr_str = r#"
 
 vl a = 20
 
 if 1:
+	vl f = 250
 	if 1 :
 		vl e = 5
+		a = a + e
 
 vl j = 42
 
-".to_string();
+"#.to_string();
 	println!("Script: {}", expr_str);
 
 	// Tokens
