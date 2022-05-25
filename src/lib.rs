@@ -150,16 +150,21 @@ pub enum QuLeaf {
 
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
+			QuLeaf::IfStatement(
+					expr,
+					block) => {
+				return write!(f, "(If {}, {:?})", expr, block);
+			}
 			QuLeaf::VarAssign(
 					name,
 					val) => {
-				return write!(f, "VarAssign({} {})", name.text, val);
+				return write!(f, "VarAssign({}, {})", name.text, val);
 			}
 			QuLeaf::VarDecl(
 					name, 
 					var_type, 
 					val) => {
-				return write!(f, "VarDecl({} {} {})", name.text, "todo", "todo");
+				return write!(f, "VarDecl({}, {}, {})", name.text, "todo", "todo");
 			}
 			_ => {
 				return write!(f, "<QuLeaf Unimplemented Format>");
@@ -180,6 +185,7 @@ const KEYWORD_VAR:&str = "vl";
 const KEYWORD_WHILE:&str = "while";
 
 const OP_ASSIGN_WORD:&str = "=";
+const OP_BLOCK_START_WORD:&str = ":";
 
 const TOKEN_TYPE_KEYWORD:u8 = 1;
 const TOKEN_TYPE_SYMBOL:u8 = 2;
@@ -487,7 +493,7 @@ pub struct QuParser<'a> {
 			0, 0, 0, u8::MAX)
 		);
 		return QuParser {
-			indent:0,
+			indent:u8::MAX,
 			line:0,
 			tk_idx:0,
 			tk_stack:vec![],
@@ -496,9 +502,128 @@ pub struct QuParser<'a> {
 	}
 
 
+	fn ck_code_block(&mut self) -> Result<Option<Vec<QuLeaf>>, String> {
+		let mut leafs = vec![];
+
+		while self.tk_idx < self.tokens.len()-1 {
+			// Variable declaration
+			match self.ck_var_decl() {
+				Ok(data_opt) => {
+					if let Some(data) = data_opt {
+						leafs.push(data);
+						continue;
+					}
+				}
+				Err(msg) => {
+					return Err(format!("{}", msg));
+				}
+			}
+
+			// Variable assignment
+			match self.ck_var_assign() {
+				Ok(data_opt) => {
+					if let Some(data) = data_opt {
+						leafs.push(data);
+						continue;
+					}
+				}
+				Err(msg) => {
+					return Err(format!("{}", msg));
+				}
+			}
+
+
+			// If Statement
+			match self.ck_if_statment() {
+				Ok(data_opt) => {
+					if let Some(data) = data_opt {
+						leafs.push(data);
+						continue;
+					}
+				}
+				Err(msg) => {
+					return Err(format!("{}", msg));
+				}
+			}
+
+			// Error
+			break;
+		}
+
+		if leafs.len() == 0 {
+			return Err("Empty code block 'TODO: Better error messages'"
+					.to_string());
+		}
+
+		return Ok(Some(leafs));
+	}
+
+
+	fn ck_code_scope(&mut self) -> Result<Option<Vec<QuLeaf>>, String> {
+		self.tk_push();
+
+		// Check operator
+		let start_tk = self.tk_next()
+				.expect("Improper indentation TODO: Bette message");
+		if start_tk != OP_BLOCK_START_WORD {
+			self.tk_pop();
+			return Ok(None);
+		}
+
+		self.indent += 1;
+		return self.ck_code_block();
+	}
+
+
+	fn ck_if_statment(&mut self) -> Result<Option<QuLeaf>, String> {
+		match self.statement_start() {
+			Ok(_) => (),
+			Err(msg) => return Err(msg),
+		}
+
+		self.tk_push();
+
+		// Check 'if' keyword
+		let keyword_tk = self.tk_next()
+				.expect("Improper indentation TODO: Bette message");
+		if keyword_tk != KEYWORD_IF {
+			self.tk_pop();
+			return Ok(None);
+		}
+
+		// Check expression
+		let expr_data = self.ck_expr();
+		if let Some(expr) = expr_data {
+			// Check scope
+			let scope_data_opt = match self.ck_code_scope() {
+				Ok(data_opt) => data_opt,
+				Err(msg) => {return Err(msg);},
+			};
+			if let Some(scope_data) = scope_data_opt {
+				// Success!
+				return Ok(Some(
+					QuLeaf::IfStatement(expr, scope_data)
+				));
+			}
+
+			self.tk_pop();
+			return Err("If statement expected scope 'TODO: Better message'"
+					.to_string());
+		}
+
+		self.tk_pop();
+		return Err("If statement expected expression 'TODO: Better message'"
+				.to_string());
+	}
+
+
 	/// Matches tokens to a variable assignment.
-	fn ck_var_assign(&mut self) -> Result<Option<QuLeaf>, &str> {
-		self.statement_start();
+	fn ck_var_assign(&mut self) -> Result<Option<QuLeaf>, String> {
+		match self.statement_start() {
+			Ok(_) => (),
+			Err(msg) => return Err(msg),
+		}
+
 		self.tk_push();
 
 		// Match variable name
@@ -522,7 +647,9 @@ pub struct QuParser<'a> {
 		let expr_data = self.ck_expr();
 		if let None = expr_data {
 			self.tk_pop();
-			return Err("Expected variable to be assigned to an expression");
+			return Err(
+				"Expected variable to be assigned to expr TODO:Better Msg"
+				.to_string());
 		}
 		let expr_leaf = expr_data.unwrap();
 
@@ -532,20 +659,25 @@ pub struct QuParser<'a> {
 	}
 
 
-	fn ck_var_decl(&mut self) -> Result<Option<QuLeaf>, &str> {
-		self.statement_start();
+	fn ck_var_decl(&mut self) -> Result<Option<QuLeaf>, String> {
+		match self.statement_start() {
+			Ok(_) => (),
+			Err(msg) => return Err(msg),
+		}
 		
 		// Match keyword
 		let keyword_tk = self.tk_spy(0);
 		if keyword_tk != KEYWORD_VAR {
 			return Ok(None);
 		}
-		self.tk_next().expect("Improper indentation TODO: Bette message");
+		self.tk_next().expect("Improper indentation TODO:Better msg");
 
 		// Match variable name
 		let name_data = self.ck_var_name();
 		if let None = name_data {
-			return Err("Token after 'var' does not match a name.");
+			return Err(
+				"Token after 'var' does not match a name. 'TODO:Better msg'"
+				.to_string());
 		}
 		let name_tk = name_data.unwrap();
 
@@ -557,10 +689,10 @@ pub struct QuParser<'a> {
 		let mut assign_leaf_opt = None;
 		if keyword_tk == OP_ASSIGN_WORD {
 			self.tk_next()
-					.expect("Improper indentation TODO: Bette message");
+					.expect("Improper indentation TODO:Better msg");
 			assign_leaf_opt = self.ck_expr();
 			if let None = assign_leaf_opt {
-				return Err("Expected expression after '='.");
+				return Err("Expected expression after '='. TODO:Better msg".to_string());
 			}
 		}
 		
@@ -736,38 +868,27 @@ pub struct QuParser<'a> {
 
 	pub fn parse(&mut self) -> Vec<QuLeaf> {
 		self.tk_idx = 0;
-		let mut leafs = vec![];
-
-		while self.tk_idx < self.tokens.len() {
-			// Variable declaration
-			if let Some(data) = self.ck_var_decl().unwrap() {
-				leafs.push(data);
-			}
-			// Variable assignment
-			else if let Some(data) = self.ck_var_assign().unwrap() {
-				leafs.push(data);
-			}
-			// Expression
-			//else if let Some(data) = self.ck_expr() {
-			//	leafs.push(data);
-			//}
-			// No more matches
-			else {
-				break;
-			}
-		}
-
-		return leafs;
+		self.line = 0;
+		self.indent = u8::MAX;
+		return self.ck_code_block().unwrap().unwrap();
 	}
 
 
 	/// A helper function. Use whenever starting to parse a statement.
-	fn statement_start(&mut self) {
+	fn statement_start(&mut self) -> Result<(), String> {
 		let tk = self.tk_spy(0);
 		let tk_row = tk.row;
 		let tk_indent = tk.indent;
 		self.line = tk_row as usize;
-		self.indent = tk_indent as u8;
+
+		if self.indent == u8::MAX {
+			self.indent = tk_indent as u8;
+		}
+		else if self.indent != tk_indent as u8 {
+			return Err("Bad indentation 'TODO: Better message'".to_string());
+		}
+		
+		return Ok(());
 	}
 
 

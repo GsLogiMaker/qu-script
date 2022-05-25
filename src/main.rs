@@ -17,8 +17,9 @@ fn main() {
 
 	let expr_str = "
 		vl car =
-				5 + 5
-		vl bus
+				2 + 5
+		if 0:
+			vl bus = 200
 	".to_string();
 
 	// Tokens
