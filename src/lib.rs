@@ -106,8 +106,7 @@ pub enum Op {
 
 #[derive(Debug, Clone)]
 pub enum QuLeafExpr {
-	/// A math or logical expression. Contains an operator and two Expressions
-	/// or Values.
+	/// A calculable expression. Contains an operator and two [`QuLeafExpr`]s.
 	Equation(Op, Box<QuLeafExpr>, Box<QuLeafExpr>),
 	/// A literal int value.
 	Int(u64),
@@ -141,10 +140,10 @@ pub enum QuLeaf {
 	/// An if statement. Contains an assertion statement and a [`Vec`] of
 	/// instructions.
 	IfStatement(QuLeafExpr, Vec<QuLeaf>),
-	/// A variable assignment. Contains a VarName and an Expression.
+	/// A variable assignment. Contains a var name and a [`QuLeafExpr`].
 	VarAssign(QuToken, QuLeafExpr),
-	/// A variable declaration. Contains a VarName, Type(TODO), and
-	/// an Expression.
+	/// A variable declaration. Contains a var name, type(TODO), and
+	/// [`QuLeafExpr`].
 	VarDecl(QuToken, Option<QuToken>, Option<QuLeafExpr>),
 
 } impl Display for QuLeaf {
@@ -292,13 +291,27 @@ pub struct QuCompiler {
 	fn cmp_if_statement(&mut self, expr:&QuLeafExpr, leafs:&Vec<QuLeaf>
 	) -> Vec<u8> {
 		let (mut expr_code, expr_reg) = self.cmp_expr(expr);
-		let block_code = self.cmp_vec(leafs);
+		let mut block_code = self.cmp_vec(leafs);
 
-		let mut jump_code = Vec::with_capacity(10);
+		let mut jump_code = Vec::with_capacity(7);
+		let jump_assert_reg = self.reg_reserve();
+		// Negate expression
 		jump_code.push(Op::Not as u8);
+		jump_code.push(expr_reg);
+		jump_code.push(jump_assert_reg);
+		// Jump instruction
+		jump_code.push(Op::JumpByIf as u8);
+		jump_code.push(jump_assert_reg);
+		jump_code.append(&mut (block_code.len() as u16).to_be_bytes().to_vec());
 
+		// Compile code together
+		let mut code = Vec::with_capacity(
+				expr_code.len() + jump_code.len() + block_code.len());
+		code.append(&mut expr_code);
+		code.append(&mut jump_code);
+		code.append(&mut block_code);
 
-		return vec![]
+		return code;
 	}
 
 
@@ -485,12 +498,10 @@ pub struct QuParser<'a> {
 
 	/// Matches tokens to a variable assignment.
 	fn ck_var_assign(&mut self) -> Result<Option<QuLeaf>, &str> {
+		self.statement_start();
 		self.tk_push();
 
 		// Match variable name
-		let tk = self.tk_spy(0);
-		self.line = tk.row as usize;
-		self.indent = tk.indent as u8;
 		let name_data = self.ck_var_name();
 		if let None = name_data {
 			self.tk_pop();
@@ -500,7 +511,9 @@ pub struct QuParser<'a> {
 		
 		
 		// Match assign operator
-		if self.tk_next() != OP_ASSIGN_WORD {
+		let assign_op_tk = self.tk_next()
+				.expect("Improper indentation TODO: Bette message");
+		if assign_op_tk != OP_ASSIGN_WORD {
 			self.tk_pop();
 			return Ok(None);
 		}
@@ -520,16 +533,14 @@ pub struct QuParser<'a> {
 
 
 	fn ck_var_decl(&mut self) -> Result<Option<QuLeaf>, &str> {
+		self.statement_start();
+		
 		// Match keyword
 		let keyword_tk = self.tk_spy(0);
-		let tk_line = keyword_tk.row as usize;
-		let tk_indent = keyword_tk.indent as usize;
 		if keyword_tk != KEYWORD_VAR {
 			return Ok(None);
 		}
-		self.line = tk_line as usize;
-		self.indent = tk_indent as u8;
-		self.tk_next();
+		self.tk_next().expect("Improper indentation TODO: Bette message");
 
 		// Match variable name
 		let name_data = self.ck_var_name();
@@ -545,7 +556,8 @@ pub struct QuParser<'a> {
 		let keyword_tk = self.tk_spy(0);
 		let mut assign_leaf_opt = None;
 		if keyword_tk == OP_ASSIGN_WORD {
-			self.tk_next();
+			self.tk_next()
+					.expect("Improper indentation TODO: Bette message");
 			assign_leaf_opt = self.ck_expr();
 			if let None = assign_leaf_opt {
 				return Err("Expected expression after '='.");
@@ -562,19 +574,14 @@ pub struct QuParser<'a> {
 
 	fn ck_var_name(&mut self) -> Option<QuToken> {
 		let tk = self.tk_spy(0);
-		let tk_row = tk.row;
-		let tk_indent = tk.indent;
-
-		if tk_row != self.line as u64 {
-			if tk_indent != self.indent+2 {
-				return None;
-			}
-		}
 
 		if tk.tk_type != TOKEN_TYPE_NAME {
 			return None;
 		}
-		return Some(self.tk_next().clone());
+		let tk = tk.clone();
+
+		self.tk_next().expect("Improper indentation TODO: Bette message");
+		return Some(tk);
 	}
 
 
@@ -631,7 +638,8 @@ pub struct QuParser<'a> {
 	fn ck_op_paren_expr(&mut self) -> Option<QuLeafExpr> {
 		self.tk_push();
 
-		let tk = self.tk_next();
+		let tk = self.tk_next()
+				.expect("Improper indentation TODO: Bette message");
 		if tk != "(" {
 			self.tk_pop();
 			self.tk_push();
@@ -651,7 +659,9 @@ pub struct QuParser<'a> {
 			return None;
 		}
 
-		if self.tk_next() != ")" {
+		let closing_tk = self.tk_next()
+				.expect("Improper indentation TODO: Bette message");
+		if closing_tk != ")" {
 			panic!("Parenthesis expression ended without closing parenthesis.");
 			self.tk_pop();
 			return None;
@@ -682,7 +692,7 @@ pub struct QuParser<'a> {
 		if tk_op != operator {
 			return Some(data_l);
 		}
-		self.tk_next();
+		self.tk_next().expect("Improper indentation TODO: Bette message");
 
 		// Check right side for expression
 		let data_r = self.ck_operation(operator, next);//next(self);
@@ -709,7 +719,9 @@ pub struct QuParser<'a> {
 
 	fn ck_value(&mut self) -> Option<QuLeafExpr> {
 		self.tk_push();
-		return match self.tk_next().text.parse::<u64>() {
+		let tk = self.tk_next()
+				.expect("Improper indentation TODO: Bette message");
+		return match tk.text.parse::<u64>() {
 			Ok(x) => Some(QuLeafExpr::Int(x)),
 			Err(_) => {
 				self.tk_pop();
@@ -749,10 +761,56 @@ pub struct QuParser<'a> {
 	}
 
 
-	fn tk_next(&mut self) -> &QuToken {
-		let a = &self.tokens[self.tk_idx];
+	/// A helper function. Use whenever starting to parse a statement.
+	fn statement_start(&mut self) {
+		let tk = self.tk_spy(0);
+		let tk_row = tk.row;
+		let tk_indent = tk.indent;
+		self.line = tk_row as usize;
+		self.indent = tk_indent as u8;
+	}
+
+
+	/// Returns a [`Result<&QuToken, &QuToken>`] and increments the token index.
+	/// 
+	/// Returns [`Err`] if the token breaks indentation rules, Although the
+	/// token can still be accessed from the [`Err`] if the indentation rules
+	/// need to be ignored.
+	/// 
+	/// For a [`QuToken`] to follow the indentation rules it must be on
+	/// the same line as its statement, unless the token is indented two times
+	/// more than the statement.
+	/// 
+	/// Example:
+	/// 
+	/// ``` qu
+	/// # Allowed
+	/// vl counter = 1 + 2
+	/// 
+	/// # Allowed
+	/// vl counter = 1
+	/// 		+ 2
+	/// 
+	/// # Not allowed
+	/// vl counter = 1
+	/// 	+ 2
+	/// 
+	/// # Not allowed
+	/// vl counter = 1
+	/// + 2
+	/// ```
+	fn tk_next(&mut self) -> Result<&QuToken, &QuToken> {
+		let tk = &self.tokens[self.tk_idx];
+
+		// Check for proper indentation
+		if tk.row != self.line as u64 {
+			if tk.indent != self.indent+2 {
+				return Err(tk);
+			}
+		}
+
 		self.tk_idx += 1;
-		return a;
+		return Ok(tk);
 	}
 
 
@@ -766,11 +824,14 @@ pub struct QuParser<'a> {
 	}
 
 
-	fn tk_spy(&mut self, at:usize) -> QuToken {
+	/// Returns a &[`QuToken`] relative to the current token index.
+	/// 
+	/// This function will not check if the token follows indentation rules.
+	fn tk_spy(&mut self, at:usize) -> &QuToken {
 		if self.tk_idx+at >= self.tokens.len() {
-			return self.tokens[self.tokens.len()-1].clone();
+			return &self.tokens[self.tokens.len()-1];
 		}
-		return self.tokens[self.tk_idx+at].clone();
+		return &self.tokens[self.tk_idx+at];
 	}
 
 }
@@ -1072,21 +1133,29 @@ pub struct QuVm {
 
 
 	fn exc_jump_by(&mut self) {
+		unimplemented!()
 	}
 
 
 	fn exc_jump_by_if(&mut self) {
+		let rg_if = self.next_u8() as usize;
+		let val_by = self.next_u16() as usize;
+		println!("{}", self.registers[rg_if] as i64);
+		if self.registers[rg_if] as i64 > 0 {
+			self.pc += val_by as usize;
+		}
 	}
 
 
 	fn exc_jump_to(&mut self) {
+		unimplemented!()
 	}
 
 
 	fn exc_jump_to_if(&mut self) {
 		let rg_if = self.next_u8() as usize;
 		let val_to = self.next_u32() as usize;
-		if self.registers[rg_if] != 0 {
+		if self.registers[rg_if] > 0 {
 			self.pc = val_to as usize;
 		}
 	}
@@ -1234,18 +1303,19 @@ pub struct QuVm {
 
 	fn exc_logi_not_equal(&mut self) {
 		let rg_left = self.next_u8() as usize;
+		let rg_right = self.next_u8() as usize;
 		let rg_result = self.next_u8() as usize;
 		self.registers[rg_result] = 
-				(!self.registers[rg_left]) as u64;
+				(self.registers[rg_left] != self.registers[rg_right]) as u64;
 	}
 
 
 	fn exc_logi_not(&mut self) {
 		let rg_left = self.next_u8() as usize;
-		let rg_right = self.next_u8() as usize;
 		let rg_result = self.next_u8() as usize;
+		let x = self.registers[rg_left];
 		self.registers[rg_result] = 
-				(self.registers[rg_left] != self.registers[rg_right]) as u64;
+				(x*0 == x) as u64;
 	}
 
 
