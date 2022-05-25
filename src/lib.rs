@@ -109,6 +109,7 @@ pub enum Op {
 pub enum QuErrorParser {
 	/// A line has an incorrect indentation level.
 	BadIndentation,
+	/// A code block and flow statement are on the same line.
 	BadIndentation2,
 	/// A code block was started, but no code was written to it.
 	EmptyCodeBlock,
@@ -595,7 +596,6 @@ pub struct QuParser<'a> {
 					}
 				}
 				Err(msg) => {
-					self.utl_block_end();
 					return Err(format!("{}", msg));
 				}
 			}
@@ -609,11 +609,9 @@ pub struct QuParser<'a> {
 					}
 				}
 				Err(msg) => {
-					self.utl_block_end();
 					return Err(format!("{}", msg));
 				}
 			}
-
 
 			// If Statement
 			match self.ck_if_statment() {
@@ -624,23 +622,20 @@ pub struct QuParser<'a> {
 					}
 				}
 				Err(msg) => {
-					self.utl_block_end();
 					return Err(format!("{}", msg));
 				}
 			}
 
-			// Error
+			// End block
 			break;
 		}
 
 		if leafs.len() == 0 {
-			self.utl_block_end();
 			return Err(self.err_msg_make(
 						QuErrorParser::EmptyCodeBlock,
 						&self.tokens[self.tk_idx-1]));
 		}
 
-		self.utl_block_end();
 		return Ok(Some(leafs));
 	}
 
@@ -657,13 +652,20 @@ pub struct QuParser<'a> {
 		}
 
 		self.indent += 1;
-		return self.ck_code_block();
+		let block_data = self.ck_code_block();
+		self.indent -= 1;
+		return block_data;
 	}
 
 
 	fn ck_if_statment(&mut self) -> Result<Option<QuLeaf>, String> {
 		match self.utl_statement_start() {
-			Ok(_) => (),
+			Ok(opt) => (
+				match opt {
+					Some(_) => {/*pass*/},
+					None => return Ok(None),
+				}
+			),
 			Err(msg) => return Err(msg),
 		}
 
@@ -706,7 +708,12 @@ pub struct QuParser<'a> {
 	/// Matches tokens to a variable assignment.
 	fn ck_var_assign(&mut self) -> Result<Option<QuLeaf>, String> {
 		match self.utl_statement_start() {
-			Ok(_) => (),
+			Ok(opt) => (
+				match opt {
+					Some(_) => {/*pass*/},
+					None => return Ok(None),
+				}
+			),
 			Err(msg) => return Err(msg),
 		}
 
@@ -747,7 +754,12 @@ pub struct QuParser<'a> {
 
 	fn ck_var_decl(&mut self) -> Result<Option<QuLeaf>, String> {
 		match self.utl_statement_start() {
-			Ok(_) => (),
+			Ok(opt) => (
+				match opt {
+					Some(_) => {/*pass*/},
+					None => return Ok(None),
+				}
+			),
 			Err(msg) => return Err(msg),
 		}
 		
@@ -969,14 +981,8 @@ pub struct QuParser<'a> {
 	}
 
 
-	/// A utility function. Used whenever ending a code block.
-	fn utl_block_end(&mut self) {
-		self.indent = self.indent.saturating_sub(1);
-	}
-
-
 	/// A utility function. Used whenever starting to parse a statement.
-	fn utl_statement_start(&mut self) -> Result<(), String> {
+	fn utl_statement_start(&mut self) -> Result<Option<()>, String> {
 		let tk = self.tk_spy(0);
 		let tk_row = tk.row as usize;
 		let tk_indent = tk.indent as u8;
@@ -985,6 +991,10 @@ pub struct QuParser<'a> {
 			self.indent = tk_indent;
 		}
 		else if self.indent != tk_indent {
+
+			if tk_indent < self.indent && tk_row != self.line {
+				return Ok(None);
+			}
 
 			if self.line == tk_row {
 				let tk = self.tokens[self.tk_idx].clone();
@@ -1001,7 +1011,7 @@ pub struct QuParser<'a> {
 		}
 		
 		self.line = tk_row;
-		return Ok(());
+		return Ok(Some(()));
 	}
 
 

@@ -14,11 +14,17 @@ fn main() {
 	println!("---START---");
 	println!("");
 
-	let expr_str = "if 
-		0:
-	vl f
-	vl h
-vl j".to_string();
+	let expr_str = "
+
+vl a = 20
+
+if 1:
+	if 1 :
+		vl e = 5
+
+vl j = 42
+
+".to_string();
 	println!("Script: {}", expr_str);
 
 	// Tokens
