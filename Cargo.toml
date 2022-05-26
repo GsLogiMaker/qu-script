@@ -7,3 +7,10 @@ edition = "2021"
 # https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+
+[dev-dependencies]
+criterion = "0.3"
+
+[[bench]]
+name = "qu_script"
+harness = false
