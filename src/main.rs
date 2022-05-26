@@ -16,15 +16,18 @@ fn main() {
 
 	let expr_str = r#"
 
-vl a = 20
+vl nterms = 50
 
-if 1:
-	vl f = 250
-	if 1 :
-		vl e = 5
-		a = a + e
+vl n1 = 0
+vl n2 = 1
+vl count = 0
 
-vl j = 42
+vl nth = 0
+while count < nterms:
+	nth = n1 + n2
+	n1 = n2
+	n2 = nth
+	count = count + 1
 
 "#.to_string();
 	println!("Script: {}", expr_str);
@@ -43,15 +46,11 @@ vl j = 42
 	for line in &instruction_vec {
 		println!("	{}", line);
 	}
-	let if_tree = QuLeaf::IfStatement(
-		QuLeafExpr::Int(1),
-		instruction_vec
-	);
 
 	// Compiler
 	let mut c = QuCompiler::new();
 	//let compiled = c.compile(&mut instruction_vec);
-	let compiled = c.compile(&mut vec![if_tree]);
+	let compiled = c.compile(&mut instruction_vec);
 	println!("Code: {:?}", compiled);
 	
 	// Vm
@@ -67,3 +66,4 @@ vl j = 42
 	println!("{} {} {}", !0, !-1, !-2);
 
 }
+

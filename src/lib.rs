@@ -168,7 +168,7 @@ pub enum QuLeafExpr {
 pub enum QuLeaf {
 	/// An if statement. Contains an assertion statement and a [`Vec`] of
 	/// instructions.
-	IfStatement(QuLeafExpr, Vec<QuLeaf>),
+	FlowStatement(u8, QuLeafExpr, Vec<QuLeaf>),
 	/// A variable assignment. Contains a var name and a [`QuLeafExpr`].
 	VarAssign(QuToken, QuLeafExpr),
 	/// A variable declaration. Contains a var name, type(TODO), and
@@ -179,7 +179,8 @@ pub enum QuLeaf {
 
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
-			QuLeaf::IfStatement(
+			QuLeaf::FlowStatement(
+					flow_type,
 					expr,
 					block) => {
 				return write!(f, "(If {}, {:?})", expr, block);
@@ -202,6 +203,12 @@ pub enum QuLeaf {
 	}
 
 }
+
+const FLOW_IF:u8 = 0;
+const FLOW_WHILE:u8 = 1;
+const FLOW_FOR:u8 = 2;
+const FLOW_ELIF:u8 = 3;
+const FLOW_ELSE:u8 = 4;
 
 const KEYWORD_CLASS:&str = "cl";
 const KEYWORD_ELSE:&str = "else";
@@ -325,11 +332,13 @@ pub struct QuCompiler {
 	}
 
 
-	fn cmp_if_statement(&mut self, expr:&QuLeafExpr, leafs:&Vec<QuLeaf>
+	fn cmp_flow_if(&mut self, expr:&QuLeafExpr, leafs:&Vec<QuLeaf>
 	) -> Vec<u8> {
+		// Compile expression and code block
 		let (mut expr_code, expr_reg) = self.cmp_expr(expr);
 		let mut block_code = self.cmp_block(leafs);
 
+		// Compile if's jump
 		let mut jump_code = Vec::with_capacity(7);
 		let jump_assert_reg = self.reg_reserve();
 		// Negate expression
@@ -340,7 +349,7 @@ pub struct QuCompiler {
 		// Jump instruction
 		jump_code.push(Op::JumpByIf as u8);
 		jump_code.push(jump_assert_reg);
-		jump_code.append(&mut (block_code.len() as u16).to_be_bytes().to_vec());
+		jump_code.append(&mut (block_code.len() as i32).to_be_bytes().to_vec());
 		self.reg_free(jump_assert_reg);
 
 		// Compile code together
@@ -349,6 +358,46 @@ pub struct QuCompiler {
 		code.append(&mut expr_code);
 		code.append(&mut jump_code);
 		code.append(&mut block_code);
+
+		return code;
+	}
+
+
+	fn cmp_flow_while(&mut self, expr:&QuLeafExpr, leafs:&Vec<QuLeaf>
+	) -> Vec<u8> {
+		// Structure
+		// - Jump to Loopback Expression
+		// - Code Block
+		// - Loopback Expression
+		// - Loopback to Code Block
+
+		// Compile expression and code block
+		let (mut expr_code, expr_reg) = self.cmp_expr(expr);
+		let mut block_code = self.cmp_block(leafs);
+
+		// Compile while's prejump
+		let prejump_travel = block_code.len() as i32;
+		let mut prejump_code = Vec::with_capacity(5);
+		prejump_code.push(Op::JumpBy as u8);
+		prejump_code.append(&mut prejump_travel.to_be_bytes().to_vec());
+
+		// Compile while's loopback
+		let loopback_travel = 
+				-((block_code.len() + expr_code.len() + 6) as i32);
+		let mut loopback_code = Vec::with_capacity(7);
+		loopback_code.push(Op::JumpByIf as u8);
+		loopback_code.push(expr_reg);
+		loopback_code.append(&mut loopback_travel.to_be_bytes().to_vec());
+		self.reg_free(expr_reg);
+
+		// Compile code together
+		let mut code = Vec::with_capacity(
+				expr_code.len() + loopback_code.len()
+				+ block_code.len() + prejump_code.len());
+		code.append(&mut prejump_code);
+		code.append(&mut block_code);
+		code.append(&mut expr_code);
+		code.append(&mut loopback_code);
 
 		return code;
 	}
@@ -417,13 +466,24 @@ pub struct QuCompiler {
 		let mut code:Vec<u8> = vec![];
 		for leaf in leafs {
 			match leaf {
-				QuLeaf::IfStatement(
+				QuLeaf::FlowStatement(
+					flow_type,
 					expr,
-					statements
+					statements,
 				) => {
-					code.append(
-						&mut self.cmp_if_statement(expr, statements)
-					);
+					match *flow_type{
+						FLOW_IF => {
+							code.append(
+								&mut self.cmp_flow_if(expr, statements)
+							);
+						},
+						FLOW_WHILE => {
+							code.append(
+								&mut self.cmp_flow_while(expr, statements)
+							);
+						}
+						_ => unimplemented!(),
+					}
 				}
 
 				QuLeaf::VarDecl(
@@ -636,7 +696,20 @@ pub struct QuParser<'a> {
 			}
 
 			// If Statement
-			match self.ck_if_statment() {
+			match self.ck_flow_if() {
+				Ok(data_opt) => {
+					if let Some(data) = data_opt {
+						leafs.push(data);
+						continue;
+					}
+				}
+				Err(msg) => {
+					return Err(format!("{}", msg));
+				}
+			}
+
+			// while Statement
+			match self.ck_flow_while() {
 				Ok(data_opt) => {
 					if let Some(data) = data_opt {
 						leafs.push(data);
@@ -680,7 +753,7 @@ pub struct QuParser<'a> {
 	}
 
 
-	fn ck_if_statment(&mut self) -> Result<Option<QuLeaf>, String> {
+	fn ck_flow(&mut self, token_type:u8) -> Result<Option<QuLeaf>, String> {
 		match self.utl_statement_start() {
 			Ok(opt) => (
 				match opt {
@@ -693,10 +766,15 @@ pub struct QuParser<'a> {
 
 		self.tk_push();
 
-		// Check 'if' keyword
+		// Check keyword
+		let keyword = match token_type {
+			FLOW_IF => "if",
+			FLOW_WHILE => "while",
+			_ => unimplemented!(),
+		};
 		let keyword_tk = self.tk_next()
 				.expect("Improper indentation TODO: Bette message");
-		if keyword_tk != KEYWORD_IF {
+		if keyword_tk != keyword {
 			self.tk_pop();
 			return Ok(None);
 		}
@@ -712,7 +790,7 @@ pub struct QuParser<'a> {
 			if let Some(scope_data) = scope_data_opt {
 				// Success!
 				return Ok(Some(
-					QuLeaf::IfStatement(expr, scope_data)
+					QuLeaf::FlowStatement(token_type, expr, scope_data)
 				));
 			}
 
@@ -724,6 +802,16 @@ pub struct QuParser<'a> {
 		self.tk_pop();
 		return Err("If statement expected expression 'TODO: Better message'"
 				.to_string());
+	}
+
+
+	fn ck_flow_if(&mut self) -> Result<Option<QuLeaf>, String> {
+		return self.ck_flow(FLOW_IF);
+	}
+
+
+	fn ck_flow_while(&mut self) -> Result<Option<QuLeaf>, String> {
+		return self.ck_flow(FLOW_WHILE);
 	}
 
 
@@ -1308,7 +1396,7 @@ const OP_DATA:&OpData = &[
 		
 		Op::JumpBy,
 		"jump_by",
-		&[("", 2)]),
+		&[("", 4)]),
 	(
 		
 		Op::JumpToIf,
@@ -1318,7 +1406,7 @@ const OP_DATA:&OpData = &[
 	(
 		Op::JumpByIf,
 		"jump_by_if",
-		&[("r", 1), ("", 2)]
+		&[("r", 1), ("", 4)]
 	),
 ];
 
@@ -1358,7 +1446,8 @@ pub struct QuVm {
 			assert!(op as u8 == op_code);
 
 			// Add command text
-			asm.push_str(format!("\n{}", name.to_uppercase()).as_str());
+			asm.push_str(format!("\n{:.>8}-{:.<8} {}",
+					i, i+params.len(), name.to_uppercase()).as_str());
 
 			// Add parameter text
 			for (prefix, size) in params {
@@ -1399,16 +1488,29 @@ pub struct QuVm {
 
 
 	fn exc_jump_by(&mut self) {
-		unimplemented!()
+		let val_by = self.next_u32() as usize;
+		// Add
+		if val_by as isize > 0 {
+			self.pc += val_by;
+		// Subtract
+		} else {
+			self.pc = self.pc.wrapping_add(val_by);
+		}
+		
 	}
 
 
 	fn exc_jump_by_if(&mut self) {
 		let rg_if = self.next_u8() as usize;
-		let val_by = self.next_u16() as usize;
-		println!("{}", self.registers[rg_if] as i64);
+		let val_by = self.next_u32() as i32;
 		if self.registers[rg_if] as i64 > 0 {
-			self.pc += val_by as usize;
+			// Add
+			if val_by > 0 {
+				self.pc += val_by as usize;
+			// Subtract
+			} else {
+				self.pc -= val_by.abs() as usize;
+			}
 		}
 	}
 
@@ -1630,7 +1732,7 @@ pub struct QuVm {
 		loop {
 			
 			match self.next_u8() {
-				x if x == Op::End as u8 => {println!("Halting"); break;},
+				x if x == Op::End as u8 => {break;},
 
 				x if x == Op::LoadConst as u8 => self.exc_load_const_u8(),
 				x if x == Op::LoadValU8 as u8 => self.exc_load_val_u8(),
