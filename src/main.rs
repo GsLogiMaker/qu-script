@@ -13,22 +13,18 @@ fn main() {
 	println!("");
 
 	let expr_str = r#"
-
-vl nterms = 50
-
 vl n1 = 0
 vl n2 = 1
-vl count = 0
-
 vl nth = 0
+
+vl nterms = 50
+vl count = 0
 while count < nterms:
 	nth = n1 + n2
 	n1 = n2
 	n2 = nth
+	print nth
 	count = count + 1
-	while count < nterms:
-		count = count + 1
-
 "#.to_string();
 	println!("Script: {}", expr_str);
 
@@ -57,10 +53,9 @@ while count < nterms:
 		println!("	{}", line);
 	}
 
-	//vm.run_bytes( compiled.as_slice() );
-	//println!("Regs: {:?}", vm.registers);
-	//println!("Mem: {:?}", vm.mem);
-	//println!("{} {} {}", !0, !-1, !-2);
+	vm.run_bytes( compiled.as_slice() );
+	println!("Regs: {:?}", vm.registers);
+	println!("Mem: {:?}", vm.mem);
 
 }
 

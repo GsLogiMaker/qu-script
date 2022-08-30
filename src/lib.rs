@@ -76,6 +76,8 @@ pub enum QuLeaf {
 	/// An if statement. Contains an assertion statement and a [`Vec`] of
 	/// instructions.
 	FlowStatement(u8, QuLeafExpr, Box<QuLeaf>),
+	/// Prints a register to the console.
+	Print(QuLeafExpr),
 	/// A variable assignment. Contains a var name and a [`QuLeafExpr`].
 	VarAssign(QuToken, QuLeafExpr),
 	/// A variable declaration. Contains a var name, type(TODO), and
@@ -106,6 +108,9 @@ pub enum QuLeaf {
 				body) => {
 					let mut bodystr = body.tree_fmt(indent + 1);
 					return format!("{}FLOW {} {} {}", indentstr, op, cond, bodystr);
+			}
+			QuLeaf::Print(register) => {
+				return format!("{}PRINT {}", indentstr, register);
 			}
 			QuLeaf::VarAssign(
 				name, 
@@ -145,6 +150,7 @@ const KEYWORD_ELSE:&str = "else";
 const KEYWORD_ELIF:&str = "elif";
 const KEYWORD_FUNCTION:&str = "fn";
 const KEYWORD_IF:&str = "if";
+const KEYWORD_PRINT:&str = "print";
 const KEYWORD_TRAIT:&str = "tr";
 const KEYWORD_TRAIT_IMPL:&str = "does";
 const KEYWORD_VAR:&str = "vl";
@@ -226,7 +232,9 @@ pub struct QuOpLibrary {
 	jump_by:u8,
 	jump_to_if:u8,
 	jump_by_if:u8,
+	print:u8,
 } impl QuOpLibrary {
+
 	fn new() -> Self {
 		let mut obj = Self{
 			ops:vec![],
@@ -254,15 +262,18 @@ pub struct QuOpLibrary {
 			jump_by:0,
 			jump_to_if:0,
 			jump_by_if:0,
+			print:0,
 		};
 		obj.generate();
 		return obj;
 	}
 
+
 	fn add_next(&self, mut op:QuOperation) -> QuOperation {
 		op.id = self.ops.len() as u8;
 		return op;
 	}
+
 
 	fn generate(&mut self) {
 		self.new_op("END", "End", &[]); self.end = self.ops.len() as u8 - 1;
@@ -288,14 +299,17 @@ pub struct QuOpLibrary {
 		self.new_op("JB", "JumpBy", &[(4,)]); self.jump_by = self.ops.len() as u8 - 1;
 		self.new_op("JPI", "JumpIf", &[(4,), (1,)]); self.jump_to_if = self.ops.len() as u8 - 1;
 		self.new_op("JBI", "JumpByIf", &[(4,), (1,)]); self.jump_by_if = self.ops.len() as u8 - 1;
+		self.new_op("PRT", "Print", &[(1,)]); self.print = self.ops.len() as u8 - 1;
 		
 	}
 
-	fn new_op(&mut self, asm_op:&str, name:&str, args:&[CommandArg]) {
+
+	fn new_op(&mut self, asm:&str, name:&str, args:&[CommandArg]) {
 		self.ops.push(
-			self.add_next(QuOperation::new(asm_op, name, args.to_vec() ))
+			self.add_next(QuOperation::new(asm, name, args.to_vec() ))
 		);
 	}
+
 
 	fn op_id_from_symbol(&self, symbol:&str) -> u8 {
 		return match symbol {
@@ -312,6 +326,7 @@ pub struct QuOpLibrary {
 			_ => panic!("Unknown symbol: {}", symbol),
 		};
 	}
+
 }
 
 pub struct QuCompiler {
@@ -514,7 +529,14 @@ pub struct QuCompiler {
 					_ => unimplemented!(),
 				}
 			}
-
+			QuLeaf::Print(leaf_expr) => {
+				let mut code = vec![];
+				let print_reg = self.stack_reserve();
+				code.append(&mut self.cmp_expr(leaf_expr, print_reg));
+				code.push(self.ops.print);
+				code.push(print_reg);
+				return code;
+			},
 			QuLeaf::VarDecl(
 					name_tk,
 					_type_tk,
@@ -764,6 +786,19 @@ pub struct QuParser<'a> {
 				}
 			}
 
+			// Print Statement
+			match self.ch_print() {
+				Ok(data_opt) => {
+					if let Some(data) = data_opt {
+						leafs.push(data);
+						continue;
+					}
+				}
+				Err(msg) => {
+					return Err(format!("{}", msg));
+				}
+			}
+
 			// End block
 			break;
 		}
@@ -855,6 +890,31 @@ pub struct QuParser<'a> {
 
 	fn ck_flow_while(&mut self) -> Result<Option<QuLeaf>, String> {
 		return self.ck_flow(FLOW_WHILE);
+	}
+
+
+	fn ch_print(&mut self) -> Result<Option<QuLeaf>, String> {
+		match self.utl_statement_start() {
+			Ok(opt) => (
+				match opt {
+					Some(_) => {/*pass*/},
+					None => return Ok(None),
+				}
+			),
+			Err(msg) => return Err(msg),
+		}
+
+		// Match keyword
+		let keyword_tk = self.tk_spy(0);
+		if keyword_tk != KEYWORD_PRINT {
+			return Ok(None);
+		}
+		self.tk_next().expect("Improper indentation TODO:Better msg");
+
+		// Match register
+		let reg_tk = self.ck_value().expect("Print needs number TODO: Better msg");
+
+		return Ok(Some(QuLeaf::Print(reg_tk)));
 	}
 
 
@@ -1209,11 +1269,13 @@ pub struct QuParser<'a> {
 	}
 
 
+	/// Returns to a previously saved token index.
 	fn tk_pop(&mut self) {
 		self.tk_idx = self.tk_stack.pop().unwrap();
 	}
 
 
+	/// Saves a return point for if a check fails.
 	fn tk_push(&mut self) {
 		self.tk_stack.push(self.tk_idx);
 	}
@@ -1377,11 +1439,6 @@ pub struct QuVm {
 			}
 			let op
 					= &self.op_lib.ops[op_code as usize];
-			// HACK: Skip commands if there are not enough arguments in the code.
-			//if i+op.args.len() >= self.op_lib.ops.len() {
-			//	i += 1;
-			//	continue;
-			//}
 			assert!(op.id == op_code);
 
 			// Add command text
@@ -1426,6 +1483,13 @@ pub struct QuVm {
 	}
 
 
+	fn exc_copy_reg(&mut self) {
+		let from_reg = self.next_u8() as usize;
+		let to_reg = self.next_u8() as usize;
+		self.registers[to_reg] = self.registers[from_reg];
+	}
+
+
 	fn exc_jump_by(&mut self) {
 		let val_by = self.next_u32() as usize;
 		// Add
@@ -1440,8 +1504,8 @@ pub struct QuVm {
 
 
 	fn exc_jump_by_if(&mut self) {
-		let rg_if = self.next_u8() as usize;
 		let val_by = self.next_u32() as i32;
+		let rg_if = self.next_u8() as usize;
 		if self.registers[rg_if] as i64 > 0 {
 			// Add
 			if val_by > 0 {
@@ -1460,8 +1524,8 @@ pub struct QuVm {
 
 
 	fn exc_jump_to_if(&mut self) {
-		let rg_if = self.next_u8() as usize;
 		let val_to = self.next_u32() as usize;
+		let rg_if = self.next_u8() as usize;
 		if self.registers[rg_if] > 0 {
 			self.pc = val_to as usize;
 		}
@@ -1508,6 +1572,13 @@ pub struct QuVm {
 		let mem_from = self.next_u32() as usize;
 		let rg_to = self.next_u8() as usize;
 		self.registers[rg_to] = self.mem[mem_from] as u64;
+	}
+
+
+	fn exc_print(&mut self) {
+		let read_from_reg = self.next_u8() as usize;
+		let val = self.registers[read_from_reg];
+		println!("Qu Print: {}", val);
 	}
 
 
@@ -1681,6 +1752,7 @@ pub struct QuVm {
 				x if x == ops.load_val_u64 => self.exc_load_val_u64(),
 				x if x == ops.load_mem => self.exc_load_mem(),
 				x if x == ops.store_mem => self.exc_store_mem(),
+				x if x == ops.copy_reg => self.exc_copy_reg(),
 				x if x == ops.add => self.exc_math_add(),
 				x if x == ops.sub => self.exc_math_sub(),
 				x if x == ops.mul => self.exc_math_mul(),
@@ -1696,6 +1768,7 @@ pub struct QuVm {
 				x if x == ops.jump_by => self.exc_jump_by(),
 				x if x == ops.jump_to_if => self.exc_jump_to_if(),
 				x if x == ops.jump_by_if => self.exc_jump_by_if(),
+				x if x == ops.print => self.exc_print(),
 
 				x => { println!("{x}"); todo!(); }
 			}
