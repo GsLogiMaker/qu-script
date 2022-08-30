@@ -1,11 +1,9 @@
 
 use qu_script::QuLeaf;
-use qu_script::QuLeafExpr;
 use qu_script::tokenize;
 use qu_script::QuCompiler;
 use qu_script::QuVm;
 use qu_script::QuParser;
-use qu_script::Op;
 use qu_script::RULES;
 
 
@@ -28,6 +26,8 @@ while count < nterms:
 	n1 = n2
 	n2 = nth
 	count = count + 1
+	while count < nterms:
+		count = count + 1
 
 "#.to_string();
 	println!("Script: {}", expr_str);
@@ -42,15 +42,12 @@ while count < nterms:
 	// Parser
 	let mut parser = QuParser::new(tokens, &expr_str);
 	let mut instruction_vec = parser.parse();
-	println!("Tree:");
-	for line in &instruction_vec {
-		println!("	{}", line);
-	}
+	let leaf_block = QuLeaf::Block(instruction_vec);
+	println!("Tree: \n{}", &leaf_block.tree_fmt(0));
 
 	// Compiler
 	let mut c = QuCompiler::new();
-	//let compiled = c.compile(&mut instruction_vec);
-	let compiled = c.compile(&mut instruction_vec);
+	let compiled = c.compile(&leaf_block);
 	println!("Code: {:?}", compiled);
 	
 	// Vm
@@ -60,10 +57,10 @@ while count < nterms:
 		println!("	{}", line);
 	}
 
-	vm.run_bytes( compiled.as_slice() );
-	println!("Regs: {:?}", vm.registers);
-	println!("Mem: {:?}", vm.mem);
-	println!("{} {} {}", !0, !-1, !-2);
+	//vm.run_bytes( compiled.as_slice() );
+	//println!("Regs: {:?}", vm.registers);
+	//println!("Mem: {:?}", vm.mem);
+	//println!("{} {} {}", !0, !-1, !-2);
 
 }
 

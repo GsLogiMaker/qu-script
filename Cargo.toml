@@ -11,6 +11,6 @@ edition = "2021"
 [dev-dependencies]
 criterion = "0.3"
 
-[[bench]]
-name = "qu_script"
-harness = false
+#[[bench]]
+#name = "qu_script"
+#harness = false
