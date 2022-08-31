@@ -5,28 +5,37 @@
 #![warn(rustdoc::missing_doc_code_examples)]
 #![warn(rustdoc::broken_intra_doc_links)]
 
-use std::{fmt::{self, Display, Debug}, vec};
+use std::{fmt::{self, Display, Debug}, vec, iter::Map, collections::HashMap};
 
 
 #[derive(Debug, Clone)]
 /// An error enum for the QuParser
-pub enum QuErrorParser {
-	/// A line has an incorrect indentation level.
-	BadIndentation,
-	/// A code block and flow statement are on the same line.
-	BadIndentation2,
-	/// A code block was started, but no code was written to it.
-	EmptyCodeBlock,
-} impl Display for QuErrorParser {
+pub enum QuError {
+	/// Compiler error: A type was referenced that was not defined.
+	CmpNonexistentType,
+
+	/// Parser error: A line has an incorrect indentation level.
+	PrsBadIndentation,
+	/// Parser error: A code block and flow statement are on the same line.
+	PrsBadIndentation2,
+	/// Parser error: A code block was started, but no code was written to it.
+	PrsEmptyCodeBlock,
+
+} impl Display for QuError {
+
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
-			QuErrorParser::BadIndentation => {
+			QuError::CmpNonexistentType => {
+				return write!(f, "Referenced type does not exist");
+			}
+
+			QuError::PrsBadIndentation => {
 				return write!(f, "Bad indentation");
 			}
-			QuErrorParser::BadIndentation2 => {
+			QuError::PrsBadIndentation2 => {
 				return write!(f, "Bad indentation 2");
 			}
-			QuErrorParser::EmptyCodeBlock => {
+			QuError::PrsEmptyCodeBlock => {
 				return write!(f, "Empty code block");
 			}
 			_ => {
@@ -34,6 +43,7 @@ pub enum QuErrorParser {
 			}
 		}
 	}
+
 }
 
 
@@ -67,6 +77,9 @@ pub enum QuLeafExpr {
 	}
 
 }
+
+
+
 
 #[derive(Debug, Clone)]
 /// A Qu instruction.
@@ -329,21 +342,35 @@ pub struct QuOpLibrary {
 
 }
 
-pub struct QuCompiler {
+pub struct QuCompiler<'a> {
 	/// Name, Type, Pointer
 	variables:Vec<(String, usize, u8)>,
+	script:&'a String,
 	stack_layers:Vec<u8>,
 	stack_idx:u8,
+	types:Vec<QuType>,
+	types_map:HashMap<String, usize>,
 	ops:QuOpLibrary,
-} impl QuCompiler {
+} impl<'a> QuCompiler<'a> {
 
-	pub fn new() -> Self {
-		return Self{
+	pub fn new(script:&'a String) -> Self {
+		let mut inst = Self{
 			variables:vec![],
+			script:script,
 			stack_layers:vec![],
 			stack_idx:0,
+			types:vec![QuType::int(), QuType::uint(), QuType::bool()],
+			types_map:HashMap::new(),
 			ops:QuOpLibrary::new(),
 		};
+
+		let mut i:usize = 0;
+		for tp in &inst.types {
+			inst.types_map.insert(tp.name.clone(), i);
+			i += 1;
+		}
+
+		return inst;
 	}
 
 
@@ -427,14 +454,23 @@ pub struct QuCompiler {
 	/// Compiles code to calculate an if expression and jump code. Returns the
 	/// resulting code.
 	fn cmp_flow_if(&mut self, expr:&QuLeafExpr, leafs:&Box<QuLeaf>
-	) -> Vec<u8> {
+	) -> Result<Vec<u8>, String> {
 		self.stack_frame_push();
 		let if_expr_reg = self.stack_reserve();
 
 		// Compile expression and code block
 		let mut expr_code
 			= self.cmp_expr(expr, if_expr_reg);
-		let mut block_code = self.cmp_block(leafs);
+
+		// Compile code block
+		let mut block_code_result
+			= self.cmp_block(leafs);
+		let mut block_code = match block_code_result {
+			// Set block_code to compiled bytecode
+			Ok(code) => code,
+			// Propagate error
+			Err(_) => return block_code_result,
+		};
 
 		// Compile if's jump
 		let mut jump_code = Vec::with_capacity(7);
@@ -457,26 +493,30 @@ pub struct QuCompiler {
 
 		self.stack_frame_pop();
 
-		return code;
+		return Ok(code);
 	}
 
 
 	/// Compiles code to calculate a while expression and jump code. Returns the
 	/// resulting code.
 	fn cmp_flow_while(&mut self, expr:&QuLeafExpr, leafs:&Box<QuLeaf>
-	) -> Vec<u8> {
-		// Structure
-		// - Jump to Loopback Expression
-		// - Code Block
-		// - Loopback Expression
-		// - Loopback to Code Block
+	) -> Result<Vec<u8>, String> {
 		self.stack_frame_push();
 		let while_expr_reg = self.stack_reserve();
 
 		// Compile expression and code block
 		let mut expr_code
 			= self.cmp_expr(expr, while_expr_reg);
-		let mut block_code = self.cmp_block(leafs);
+		// Compile code block
+		let block_code_result
+			= self.cmp_block(leafs);
+		let mut block_code
+			= match self.cmp_block(leafs) {
+				// Set block code to returned code value
+				Ok(code) => code,
+				// Propogate error
+				Err(err) => return block_code_result,
+		};
 
 		// Compile while's prejump
 		let prejump_travel = block_code.len() as i32;
@@ -501,18 +541,27 @@ pub struct QuCompiler {
 
 		self.stack_frame_pop();
 		
-		return code;
+		return Ok(code);
 	}
 
 
-	fn cmp_leaf(&mut self, leaf:&QuLeaf) -> Vec<u8> {
+	fn cmp_leaf(&mut self, leaf:&QuLeaf) -> Result<Vec<u8>, String> {
 		return match leaf {
 			QuLeaf::Block(leafs) => {
 				let mut code = vec![];
 				for block_leaf in leafs {
-					code.append(&mut self.cmp_leaf(block_leaf));
+					match self.cmp_leaf(block_leaf) {
+						// Add compiled code to Vector
+						Ok(mut block_code) => {
+							code.append(&mut block_code);
+						},
+						// Propagate error
+						Err(err) => {
+							return Err(err);
+						}
+					}
 				}
-				return code;
+				return Ok(code);
 			},
 			QuLeaf::FlowStatement(
 				flow_type,
@@ -530,30 +579,35 @@ pub struct QuCompiler {
 				}
 			}
 			QuLeaf::Print(leaf_expr) => {
+				// TODO Handle errors for compiling Print
 				let mut code = vec![];
 				let print_reg = self.stack_reserve();
 				code.append(&mut self.cmp_expr(leaf_expr, print_reg));
 				code.push(self.ops.print);
 				code.push(print_reg);
-				return code;
+				return Ok(code);
 			},
 			QuLeaf::VarDecl(
 					name_tk,
-					_type_tk,
+					type_tk,
 					value_leaf
 			) => {
 				return self.cmp_var_decl(
-					name_tk, 0, value_leaf);
+					name_tk, type_tk, value_leaf);
 			}
 
 			QuLeaf::VarAssign(
 					name_rk,
 					value_leaf
 			) => {
-				return  self.cmp_var_assign(name_rk, value_leaf);
+				// TODO: Make cmp_var_assign return Result and remove this
+				// Ok wrapper
+				return  Ok(self.cmp_var_assign(name_rk, value_leaf));
 			}
 
-			_ => {unimplemented!()}
+			_ => {
+				unimplemented!()
+			}
 		}
 	}
 
@@ -574,8 +628,31 @@ pub struct QuCompiler {
 	}
 
 
-	fn cmp_var_decl(&mut self, name:&QuToken, var_type:usize,
-			val_leaf_op:&Option<QuLeafExpr>) -> Vec<u8> {
+	fn cmp_var_decl(&mut self, name:&QuToken, type_token:&Option<QuToken>,
+			val_leaf_op:&Option<QuLeafExpr>) -> Result<Vec<u8>, String> {
+
+		// Get var type
+		let mut var_type:usize = 0;
+		if let Some(type_tk) = type_token {
+			let var_type_str = type_tk.text.as_str();
+			if var_type_str != "" {
+				match self.types_map.get(var_type_str) {
+					// Set variable's type
+					Some(type_id) => {
+						var_type = *type_id;
+					},
+					// Return an error if the type is not defined
+					None => {
+						return Err(err_msg_make(
+							QuError::CmpNonexistentType,
+							type_tk,
+							self.script
+						));
+					}
+				}
+			}
+		}
+
 		// Create variable
 		let var_reg = self.stack_reserve();
 		self.variables.push(
@@ -583,7 +660,7 @@ pub struct QuCompiler {
 		);
 
 		// Compile variable assignment
-		return match val_leaf_op {
+		return Ok(match val_leaf_op {
 			// Compile variable value
 			Some(val_leaf)
 				=> self.cmp_expr(&val_leaf, var_reg),
@@ -597,25 +674,42 @@ pub struct QuCompiler {
 				code.push(var_reg);
 				code
 			},
-		};
+		});
 	}
 
 
-	fn cmp_block(&mut self, leaf:&QuLeaf) -> Vec<u8> {
+	fn cmp_block(&mut self, leaf:&QuLeaf) -> Result<Vec<u8>, String> {
 		self.stack_frame_push();
 
-		let mut code:Vec<u8> = self.cmp_leaf(leaf);
-		
-		self.stack_frame_pop();
-		return code;
+		match self.cmp_leaf(leaf) {
+			// Return compiled code
+			Ok(code) => {
+				self.stack_frame_pop();
+				return Ok(code);
+			},
+			// Propagate error
+			Err(err) => {
+				self.stack_frame_pop();
+				return Err(err);
+			}
+		}
 	}
 
 
-	pub fn compile(&mut self, leafs:&QuLeaf) -> Vec<u8> {
-		let mut code:Vec<u8> = self.cmp_block(leafs);
-		code.push(self.ops.end);
+	/// Compiles from a [QuLeaf] instruction into bytecode (into a [Vec]<[u8]>.)
+	pub fn compile(&mut self, leafs:&QuLeaf) -> Result<Vec<u8>, String> {
+		match self.cmp_block(leafs) {
+			// Add exit code and return code
+			Ok(mut code) => {
+				code.push(self.ops.end);
+				return Ok(code);
+			},
 
-		return code;
+			// Propgate error
+			Err(err) => {
+				return Err(err);
+			}
+		}
 	}
 
 
@@ -681,7 +775,7 @@ pub struct QuParser<'a> {
 
 
 	/// Returns a Qu error message as a [`String`]
-	fn err_msg_make(&self, kind:QuErrorParser, tk:&QuToken) -> String {
+	fn err_msg_make(&self, kind:QuError, tk:&QuToken) -> String {
 		// Line numbers
 		let line_nm_pre_pre = (tk.row as usize).saturating_sub(1);
 		let line_nm_pre = (tk.row as usize).saturating_sub(0);
@@ -804,9 +898,11 @@ pub struct QuParser<'a> {
 		}
 
 		if leafs.len() == 0 {
-			return Err(self.err_msg_make(
-						QuErrorParser::EmptyCodeBlock,
-						&self.tokens[self.tk_idx-1]));
+			return Err(err_msg_make(
+				QuError::PrsEmptyCodeBlock,
+				&self.tokens[self.tk_idx-1],
+				&self.script
+			));
 		}
 
 		return Ok(Some(leafs));
@@ -1209,16 +1305,20 @@ pub struct QuParser<'a> {
 
 			if self.line == tk_row {
 				let tk = self.tokens[self.tk_idx].clone();
-				return Err(self.err_msg_make(
-					QuErrorParser::BadIndentation2, 
-					&tk));
+				return Err(err_msg_make(
+					QuError::PrsBadIndentation2, 
+					&tk,
+					&self.script
+				));
 			}
 
 			let tk = self.tokens[self.tk_idx-0].clone();
 			self.line = tk_row;
-			return Err(self.err_msg_make(
-					QuErrorParser::BadIndentation, 
-					&tk));
+			return Err(err_msg_make(
+				QuError::PrsBadIndentation, 
+				&tk,
+				&self.script
+			));
 		}
 		
 		self.line = tk_row;
@@ -1226,7 +1326,7 @@ pub struct QuParser<'a> {
 	}
 
 
-	/// Returns a [`Result<&QuToken, &QuToken>`] and increments the token index.
+	/// Returns a [Result]<&[QuToken], &[QuToken]> and increments the token index.
 	/// 
 	/// Returns [`Err`] if the token breaks indentation rules, Although the
 	/// token can still be accessed from the [`Err`] if the indentation rules
@@ -1391,6 +1491,43 @@ pub struct QuToken {
 		}
 		return &self.text == other;
 	}
+}
+
+
+pub struct QuType {
+	name:String,
+	size:usize,
+} impl QuType {
+
+	/// Makes a new [`QuType`].
+	fn new(name:String, size:usize) -> QuType {
+		return QuType{
+			name,
+			size,
+		};
+	}
+
+
+	/// Makes a boolean [`QuType`].
+	fn bool() -> QuType {
+		// TODO:: Make "bool" string a constant
+		return QuType::new("bool".to_string(), 1);
+	}
+
+
+	/// Makes an integer [`QuType`].
+	fn int() -> QuType {
+		// TODO: Make "int" string a constant
+		return QuType::new("int".to_string(), 1);
+	}
+
+
+	/// Makes an unsigned integer [`QuType`].
+	fn uint() -> QuType {
+		// TODO:: Make "uint" string a constant
+		return QuType::new("uint".to_string(), 1);
+	}
+
 }
 
 
@@ -1777,6 +1914,57 @@ pub struct QuVm {
 	}
 
 }
+
+
+/// Returns a Qu error message as a [`String`]
+fn err_msg_make(kind:QuError, tk:&QuToken, script:&String) -> String {
+	// Line numbers
+	let line_nm_pre_pre = (tk.row as usize).saturating_sub(1);
+	let line_nm_pre = (tk.row as usize).saturating_sub(0);
+	let line_nm = (tk.row as usize).saturating_add(1);
+	let line_nm_post = (tk.row as usize).saturating_add(2);
+	let line_nm_post_post = (tk.row as usize).saturating_add(3);
+
+	// Line text
+	let mut script_lines = script.split("\n");
+	let line_pre_pre = if tk.row > 1 {
+		script_lines.nth(line_nm_pre_pre-1).unwrap_or("").to_string()
+	} else {
+		"".to_string()
+	};
+	let line_pre = if tk.row > 0 {
+		script_lines.next().unwrap_or("").to_string()
+	} else {
+		"".to_string()
+	};
+	let line = script_lines.next().unwrap_or("");
+	let line_post =
+			script_lines.next().unwrap_or("");
+	let line_post_post =
+			script_lines.next().unwrap_or("");
+
+	// Build code view
+	let code_view = format!(
+"    {:0>4}:{}\n    {:0>4}:{}\n >> {:0>4}:{}\n    {:0>4}:{}\n    {:0>4}:{}",
+		line_nm_pre_pre,
+		line_pre_pre,
+		line_nm_pre,
+		line_pre,
+		line_nm,
+		line,
+		line_nm_post,
+		line_post,
+		line_nm_post_post,
+		line_post_post,
+	);
+
+	// Build error message
+	let msg =  format!("ERROR on line {row}, col {col}: {kind}\n{script}",
+			row=tk.row+1, col=tk._col, script=code_view);
+	return msg;
+	
+}
+
 
 
 pub fn tokenrule_flagref(added_so_far:&[char]) -> bool {

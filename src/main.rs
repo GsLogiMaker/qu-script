@@ -37,13 +37,18 @@ while count < nterms:
 
 	// Parser
 	let mut parser = QuParser::new(tokens, &expr_str);
-	let mut instruction_vec = parser.parse();
+	let instruction_vec = parser.parse();
 	let leaf_block = QuLeaf::Block(instruction_vec);
 	println!("Tree: \n{}", &leaf_block.tree_fmt(0));
 
 	// Compiler
-	let mut c = QuCompiler::new();
-	let compiled = c.compile(&leaf_block);
+	let mut c = QuCompiler::new(&expr_str);
+	let compiled = match c.compile(&leaf_block) {
+		Ok(compiled) => compiled,
+		Err(e) => {
+			panic!("Qu Error: {}", e);
+		}
+	};
 	println!("Code: {:?}", compiled);
 	
 	// Vm
