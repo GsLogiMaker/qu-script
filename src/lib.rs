@@ -10,7 +10,7 @@ use std::{fmt::{self, Display, Debug}, vec, collections::HashMap};
 
 mod qu_error {
 
-	use crate::QuToken;
+	use crate::qu_tokens::QuToken;
 
 	type QuErrorMessage = (String, String);
 
@@ -220,38 +220,505 @@ mod qu_error {
 }
 
 
-#[derive(Debug, Clone)]
-/// Defines an expression in a Qu program tree.
-pub enum QuLeafExpr {
-	/// A calculable expression. Contains an operator and two [`QuLeafExpr`]s.
-	Equation(u8, Box<QuLeafExpr>, Box<QuLeafExpr>),
-	/// A literal int value.
-	Int(u64),
-	/// A variable name.
-	Var(QuToken),
-} impl Display for QuLeafExpr {
+mod qu_tokens {
 
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		match self {
-			QuLeafExpr::Equation(op, lft, rht) => {
-				let string = format!("{}", op);
-				let opstr:&str = string.as_str();
-				return write!(f, "Equate({lft} {opstr} {rht})");
+	//use std::{fmt::{self, Display, Debug}, vec, collections::HashMap};
+	use std::fmt::{self, Display, Debug};
+
+	use super::{
+		KEYWORD_VAR,
+		KEYWORD_FUNCTION,
+		KEYWORD_CLASS,
+		KEYWORD_IF,
+		KEYWORD_ELSE,
+		KEYWORD_ELIF
+	};
+
+
+	pub const TOKEN_TYPE_KEYWORD:u8 = 1;
+	pub const TOKEN_TYPE_SYMBOL:u8 = 2;
+	pub const TOKEN_TYPE_NUMBER:u8 = 3;
+	pub const TOKEN_TYPE_NAME:u8 = 4;
+
+
+	/// Base token rules for the Qu language.
+	pub const RULES:&Rules = &[
+		(&tokenrule_keyword, TOKEN_TYPE_KEYWORD),
+		(&tokenrule_symbols, TOKEN_TYPE_SYMBOL),
+		(&tokenrule_number, TOKEN_TYPE_NUMBER),
+		(&tokenrule_name, TOKEN_TYPE_NAME),
+	];
+
+	/// Token rules for Qu assembly.
+	pub const ASM_RULES:&Rules = &[
+		(&tokenrule_symbols, TOKEN_TYPE_KEYWORD),
+		(&tokenrule_flagref, 0),
+		(&tokenrule_number, TOKEN_TYPE_NUMBER),
+		(&tokenrule_name, TOKEN_TYPE_NAME),
+	];
+
+
+	/// A [Vec] of tokenfule_* functions and their types.
+	///
+	/// This is used by [chars_fit_rule] to determin if a pattern of
+	/// characters should be turned into a [QuToken]. See [tokenrule_name] or 
+	/// [tokenrule_keyword] for examples of how a `tokenrule_*` function should
+	/// be structured.
+	pub type Rules<'a> = [(&'a dyn Fn(&[char])->bool, u8)];
+
+
+	/// Returns *true* if the passed characters matches to an assembly line-flag.
+	pub fn tokenrule_flagref(added_so_far:&[char]) -> bool {
+		if added_so_far[0] != '$' {
+			return false;
+		}
+
+		let mut i = 1; // Set to 1 because first checked previously
+		while i < added_so_far.len() {
+			if added_so_far[i] == ' ' {
+				return false
 			}
-			QuLeafExpr::Int(val) => {
-				return write!(f, "{val}:Int");
+			if !added_so_far[i].is_alphanumeric() && added_so_far[i] != '_' {
+				return false;
 			}
-			QuLeafExpr::Var(name) => {
-				return write!(f, "{}:Var", name.text);
+			i += 1;
+		}
+
+		return true;
+	}
+
+
+	/// Returns *true* if the passed characters match to a name.
+	///
+	/// A name could be a type, class, function name, or variable name.
+	/// 
+	/// Examples
+	/// ```
+	/// use qu_script::tokenrule_name;
+	///
+	///	let chars1:&[char] = &['_', '_', 'i', 'n', 'i', 't', '_', '_',];
+	///	assert!(qu_script::tokenrule_name(chars1));
+	///
+	///	let chars2:&[char] = &['a', 'b', '1', ];
+	///	assert!(qu_script::tokenrule_name(chars2));
+	///
+	///	let chars3:&[char] = &['a', '+', '=', ];
+	///	assert!(!qu_script::tokenrule_name(chars3));
+	/// ```
+	pub fn tokenrule_name(added_so_far:&[char]) -> bool {
+		for char in  added_so_far {
+			if *char == ' ' {
+				return false
 			}
-			_ => {
-				return write!(f, "<QuLeafExpr Unimplemented Format>");
+			if !char.is_alphanumeric() && *char != '_' {
+				return false;
 			}
+		}
+
+		return true;
+	}
+
+
+	/// Returns *true* if the passed characters match to a number (like *int* or
+	/// *float*).
+	/// 
+	/// Examples
+	/// ```
+	/// use qu_script::tokenrule_number;
+	///
+	///	let chars1:&[char] = &['5', '.', '6',];
+	///	assert!(qu_script::tokenrule_number(chars1));
+	///
+	///	let chars2:&[char] = &['1','0',];
+	///	assert!(qu_script::tokenrule_number(chars2));
+	///
+	///	let chars3:&[char] = &['a', ];
+	///	assert!(!qu_script::tokenrule_number(chars3));
+	/// ```
+	pub fn tokenrule_number(added_so_far:&[char]) -> bool {
+		
+		for char in  added_so_far {
+			if char == &' ' {
+				return false
+			}
+			if !(char.is_numeric() || char == &'.') {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+
+	/// Returns *true* if the passed characters match to a keyword. 
+	/// 
+	/// Some examples of keywords are *var*, *if*, and *fn*.
+	/// 
+	/// Example
+	/// ```
+	/// use qu_script::tokenrule_keyword;
+	///
+	///	let chars1:&[char] = &['v', 'a', 'r',];
+	///	assert!(qu_script::tokenrule_keyword(chars1));
+	///
+	///	let chars2:&[char] = &['i','f',];
+	///	assert!(qu_script::tokenrule_keyword(chars2));
+	///
+	///	let chars3:&[char] = &['d', 'u', 'd', 'e',];
+	///	assert!(!qu_script::tokenrule_keyword(chars3));
+	/// ```
+	pub fn tokenrule_keyword(added_so_far:&[char]) -> bool {
+		for word in [
+			KEYWORD_VAR,
+			KEYWORD_FUNCTION,
+			KEYWORD_CLASS,
+			KEYWORD_IF,
+			KEYWORD_ELSE,
+			KEYWORD_ELIF,
+		] {
+			let mut mismatched = false;
+			for (char1, char2) in added_so_far.iter().zip(word.chars()) {
+				mismatched = char1 != &char2;
+				if mismatched {
+					break;
+				}
+			}
+			if !mismatched {
+				return true && added_so_far.len() == word.len();
+			}
+		}
+
+		return false;
+	}
+
+
+	/// Returns *true* if the passed characters match to a symbol.
+	/// 
+	/// Some examples of operators are *+*, *-*, and *+=*.
+	/// 
+	/// Examples
+	/// ```
+	/// use qu_script::tokenrule_symbols;
+	///
+	///	let chars1:&[char] = &['*',];
+	///	assert!(qu_script::tokenrule_symbols(chars1));
+	///
+	///	let chars2:&[char] = &['=','=',];
+	///	assert!(qu_script::tokenrule_symbols(chars2));
+	///
+	///	let chars3:&[char] = &['+', '1'];
+	///	assert!(!qu_script::tokenrule_symbols(chars3));
+	/// ```
+	pub fn tokenrule_symbols(added_so_far:&[char]) -> bool {
+		return match added_so_far {
+			['*',] => true,
+			['/',] => true,
+			['\\',] => true, // This is just '\'
+			['=',] => true,
+			['!',] => true,
+			['?',] => true,
+			['>',] => true,
+			['<',] => true,
+			['+',] => true,
+			['-',] => true,
+			['%',] => true,
+			['*', '*',] => true,
+			['/', '/',] => true,
+			['=', '=',] => true,
+			['!', '=',] => true,
+			['>', '=',] => true,
+			['<', '=',] => true,
+			['+', '=',] => true,
+			['-', '=',] => true,
+			['*', '=',] => true,
+			['/', '=',] => true,
+			['%', '=',] => true,
+			['&',] => true,
+			['@',] => true,
+			['|',] => true,
+			['^',] => true,
+			[':',] => true,
+			[';',] => true,
+			[',',] => true,
+			['(',] => true,
+			[')',] => true,
+			['[',] => true,
+			[']',] => true,
+			['{',] => true,
+			['}',] => true,
+			['`',] => true,
+			['"',] => true,
+			['\'',] => true,
+			_ => false,
+		};
+	}
+
+
+	/// Tokenizes a [String] according to the passed [Rules].
+	/// 
+	/// Examples
+	/// ```
+	/// use qu_script::Token;
+	/// use qu_script::tokenize;
+	/// use qu_script::tokenrule_name;
+	/// use qu_script::tokenrule_symbols;
+	/// use qu_script::TOKEN_TYPE_NAME;
+	/// use qu_script::TOKEN_TYPE_SYMBOL;
+	/// 
+	/// let script:&str = " hello=world ;! ";
+	/// 
+	/// let tokens:Vec<Token> = tokenize(
+	/// 	&script,
+	/// 	&[
+	/// 		(&tokenrule_name, TOKEN_TYPE_NAME),
+	/// 		(&tokenrule_symbols, TOKEN_TYPE_SYMBOL),
+	/// 	]
+	/// );
+	/// 
+	///	assert!(tokens.len() == 5);
+	///	assert!(tokens[0].text(&script) == "hello");
+	///	assert!(tokens[1].text(&script) == "=");
+	///	assert!(tokens[2].text(&script) == "world");
+	///	assert!(tokens[3].text(&script) == ";");
+	///	assert!(tokens[4].text(&script) == "!");
+	/// ```
+	pub fn tokenize<'a>(script:&'a String, rules:&Rules<'a>) -> Vec<QuToken> {
+		let mut tokens = vec!();
+
+		/* WARNING: This does not account for grapheme clusters. Currently hoping
+		This won't be a problem. */
+		let mut row:u64 = 0;
+		let mut col:u64 = 0;
+		let mut indent:u8 = 0;
+		let mut in_begining:bool = true;
+		let mut added_so_far:Vec<char> = Vec::with_capacity(20);
+		let mut curr_token = 0;
+		for (idx, char) in script.char_indices() {
+			col += 1;
+
+			if char != '\t' && char != ' ' {
+				in_begining = false;
+			}
+
+			// Check tab
+			if char == '\t' {
+				if in_begining {
+					indent += 1;
+					added_so_far.clear();
+				}
+				
+			// Check newline
+			} else if char == '\n' {
+				col = 0;
+				row += 1;
+				indent = 0;
+				in_begining = true;		
+			}
+
+			// Any other characters
+			added_so_far.push(char);
+			
+			// Update token end if it fits rule, 
+			// otherwise clear the added so far
+			loop {
+				let (does_fit, char_type) = chars_fit_rule(
+					&added_so_far,
+					rules,
+				);
+				if does_fit{
+					if curr_token <= tokens.len() && added_so_far.len() == 1 {
+						tokens.push(QuToken::new(
+							idx as u64,
+							idx as u64,
+							row,
+							col,
+							indent,
+							char_type,
+						));
+					}
+					tokens[curr_token].end = idx as u64;
+					tokens[curr_token].tk_type = char_type;
+
+					if idx+1 == script.len() {
+						tokens[curr_token].text
+								= tokens[curr_token].text(script);
+					}
+					break;
+					
+				} else if added_so_far.len() == 1 {
+					added_so_far.clear();
+					break;
+				}else {
+					if curr_token+1 == tokens.len() {
+						tokens[curr_token].text
+								= tokens[curr_token].text(script);
+						curr_token += 1;
+					}
+					added_so_far.clear();
+					added_so_far.push(char);
+				}
+			}
+		}
+
+		return tokens;
+	}
+
+
+	/// Checks a [`Vec`] of [`char`]s against [`RULES`].
+	/// 
+	/// Returns *true* if the [`Vec`] of [`char`]s fits at least one of the rules
+	/// specified in [`RULES`].
+	pub fn chars_fit_rule<'a>(chars:&Vec<char>, rules:&Rules<'a>) -> (bool, u8) {
+		let mut fits_rule = false;
+		let mut tk_type = u8::MAX;
+		for rule in rules {
+			fits_rule = fits_rule || rule.0(&chars);
+			if fits_rule{
+				tk_type = rule.1;
+				break;
+			}
+		}
+
+		return (fits_rule, tk_type);
+	}
+
+
+	/// A slice of a script file with information on the row, column, and indent of
+	/// the slice.
+	pub struct QuToken {
+		/// Where in the script this token starts.
+		pub begin:u64,
+		/// Where in the script this token ends.
+		pub end:u64,
+		/// The row this token is on.
+		pub row:u64,
+		/// The column this token starts on.
+		pub _col:u64,
+		/// The indentation of this token.
+		pub indent:u8,
+		/// The text of this token.
+		pub text:String,
+		/// The type of this token.
+		pub tk_type:u8,
+
+	} impl QuToken {
+
+		/// Makes a new [`Token`].
+		pub fn new(
+				begin:u64, end:u64, row:u64, col:u64, indent:u8,
+				varient:u8,) -> QuToken {
+			return QuToken{
+				begin,
+				end,
+				row,
+				_col:col,
+				indent,
+				text:String::new(),
+				tk_type:varient
+			};
+		}
+
+		// TODO: Replace this function with the text parameter of the struct.
+		/// Returns the text of this token.
+		pub fn text(&self, source:&str) -> String {
+			let mut text = String::new();
+			if source.len() > 0 {
+				text = source[self.begin as usize..=self.end as usize].to_string();
+			}
+			return text;
+		}
+
+	} impl Clone for QuToken {
+		fn clone(&self) -> Self {
+			Self { 
+				begin:self.begin.clone(),
+				end:self.end.clone(),
+				row:self.row.clone(),
+				_col:self._col.clone(),
+				indent:self.indent.clone(),
+				text:self.text.clone(),
+				tk_type:self.tk_type.clone()
+			}
+		}
+	} impl Display for QuToken {
+		
+		fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+			return write!(
+					f, "<'{}' row:{}  indent:{}>",
+					self.text,
+					self.row,
+					self.indent,);
+		}
+	} impl Debug for QuToken {
+		fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+			return write!(f, "Hi: {}", 0);
+			//f.debug_struct("QuToken")
+			//	.field("begin", &self.begin)
+			//	.field("end", &self.end)
+			//	.field("row", &self.row)
+			//	.field("_col", &self._col)
+			//	.field("indent", &self.indent)
+			//	.field("source", &self.source)
+			//	.field("tk_type", &self.tk_type).finish()
+		}
+	} impl PartialEq for QuToken {
+		fn eq(&self, other:&Self) -> bool {
+			if self.tk_type == u8::MAX {
+				return false;
+			}
+			return self.text == other.text;
+		}
+	} impl PartialEq<str> for QuToken {
+		fn eq(&self, other:&str) -> bool {
+			if self.tk_type == u8::MAX {
+				return false;
+			}
+			return &self.text == other;
+		}
+	} impl<'a> PartialEq<&str> for QuToken {
+		fn eq(&self, other:&&str) -> bool {
+			if self.tk_type == u8::MAX {
+				return false;
+			}
+			return &self.text == *other;
+		}
+	} impl PartialEq<String> for QuToken {
+		fn eq(&self, other:&String) -> bool {
+			if self.tk_type == u8::MAX {
+				return false;
+			}
+			return &self.text == other;
 		}
 	}
 
 }
 
+use qu_tokens::{RULES, TOKEN_TYPE_NAME, tokenize, QuToken};
+
+
+/// A tuple of for specifying arguments for a [QuOperation].
+type CommandArg = (i8,);
+
+
+const FLOW_IF:u8 = 0;
+const FLOW_WHILE:u8 = 1;
+const FLOW_FOR:u8 = 2;
+const FLOW_ELIF:u8 = 3;
+const FLOW_ELSE:u8 = 4;
+
+const KEYWORD_CLASS:&str = "cl";
+const KEYWORD_ELSE:&str = "else";
+const KEYWORD_ELIF:&str = "elif";
+const KEYWORD_FUNCTION:&str = "fn";
+const KEYWORD_IF:&str = "if";
+const KEYWORD_PRINT:&str = "print";
+const KEYWORD_TRAIT:&str = "tr";
+const KEYWORD_TRAIT_IMPL:&str = "does";
+const KEYWORD_VAR:&str = "vl";
+const KEYWORD_WHILE:&str = "while";
+
+const OP_ASSIGN_WORD:&str = "=";
+const OP_BLOCK_START_WORD:&str = ":";
 
 
 /// The interface for the Qu programming language.
@@ -319,283 +786,6 @@ pub struct Qu {
 	/// Runs Qu bytecode.
 	pub fn run_bytes(&mut self, bytes:&[u8]) -> Result<(), String> {
 		return Ok(self.vm.run_bytes(bytes));
-	}
-
-}
-
-
-#[derive(Debug, Clone)]
-/// A Qu instruction.
-pub enum QuLeaf {
-	/// A Block of leafs.
-	Block(Vec<QuLeaf>),
-	/// An if statement. Contains an assertion statement and a [`Vec`] of
-	/// instructions.
-	FlowStatement(u8, QuLeafExpr, Box<QuLeaf>),
-	/// Prints a register to the console.
-	Print(QuLeafExpr),
-	/// A variable assignment. Contains a var name and a [`QuLeafExpr`].
-	VarAssign(QuToken, QuLeafExpr),
-	/// A variable declaration. Contains a var name, type(TODO), and
-	/// [`QuLeafExpr`].
-	VarDecl(QuToken, Option<QuToken>, Option<QuLeafExpr>),
-
-} impl QuLeaf {
-
-	/// Returns the [`QuLeaf`] as a [`String`] formatted into a tree.
-	pub fn tree_fmt(&self, indent:u8) -> String {
-		let mut indentstr = "\n".to_string();
-		for _ in 0..indent {
-			indentstr += "  ";
-		}
-		
-		match self {
-			QuLeaf::Block(
-				body) => {
-				let mut bodystr = "".to_string();
-				for leaf in body {
-					bodystr += &leaf.tree_fmt(indent + 1);
-				}
-				return format!("BLOCK:{}", bodystr);
-			}
-			QuLeaf::FlowStatement(
-				op, 
-				cond, 
-				body) => {
-					let bodystr = body.tree_fmt(indent + 1);
-					return format!("{}FLOW {} {} {}", indentstr, op, cond, bodystr);
-			}
-			QuLeaf::Print(register) => {
-				return format!("{}PRINT {}", indentstr, register);
-			}
-			QuLeaf::VarAssign(
-				name, 
-				val) => {
-				return format!("{}ASSIGN {} = {}", indentstr, name.text, val);
-			}
-			QuLeaf::VarDecl(
-				name, 
-				_var_type, 
-				_val) => {
-				let val_str = match _val {
-					Some(val) => format!("{}", val),
-					None => "".to_string(),
-				};
-				// TODO: Add variable declaration type
-				return format!("{}VAR {} {} = {}", indentstr, name.text, "", val_str);
-			}
-		}
-	}
-
-} impl Display for QuLeaf {
-
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		return write!(f, "{}", self.tree_fmt(0));
-	}
-
-}
-
-const FLOW_IF:u8 = 0;
-const FLOW_WHILE:u8 = 1;
-const FLOW_FOR:u8 = 2;
-const FLOW_ELIF:u8 = 3;
-const FLOW_ELSE:u8 = 4;
-
-const KEYWORD_CLASS:&str = "cl";
-const KEYWORD_ELSE:&str = "else";
-const KEYWORD_ELIF:&str = "elif";
-const KEYWORD_FUNCTION:&str = "fn";
-const KEYWORD_IF:&str = "if";
-const KEYWORD_PRINT:&str = "print";
-const KEYWORD_TRAIT:&str = "tr";
-const KEYWORD_TRAIT_IMPL:&str = "does";
-const KEYWORD_VAR:&str = "vl";
-const KEYWORD_WHILE:&str = "while";
-
-const OP_ASSIGN_WORD:&str = "=";
-const OP_BLOCK_START_WORD:&str = ":";
-
-const TOKEN_TYPE_KEYWORD:u8 = 1;
-const TOKEN_TYPE_SYMBOL:u8 = 2;
-const TOKEN_TYPE_NUMBER:u8 = 3;
-const TOKEN_TYPE_NAME:u8 = 4;
-
-/// A [Vec] of tokenfule_* functions and their types.
-///
-/// This is used by [chars_fit_rule] to determin if a pattern of
-/// characters should be turned into a [QuToken]. See [tokenrule_name] or 
-/// [tokenrule_keyword] for examples of how a `tokenrule_*` function should
-/// be structured.
-type Rules<'a> = [(&'a dyn Fn(&[char])->bool, u8)];
-/// A tuple of for specifying arguments for a [QuOperation].
-type CommandArg = (i8,);
-
-/// Base token rules for the Qu language.
-pub const RULES:&Rules = &[
-	(&tokenrule_keyword, TOKEN_TYPE_KEYWORD),
-	(&tokenrule_symbols, TOKEN_TYPE_SYMBOL),
-	(&tokenrule_number, TOKEN_TYPE_NUMBER),
-	(&tokenrule_name, TOKEN_TYPE_NAME),
-];
-
-/// Token rules for Qu assembly.
-pub const ASM_RULES:&Rules = &[
-	(&tokenrule_symbols, TOKEN_TYPE_KEYWORD),
-	(&tokenrule_flagref, 0),
-	(&tokenrule_number, TOKEN_TYPE_NUMBER),
-	(&tokenrule_name, TOKEN_TYPE_NAME),
-];
-
-
-/// A single Qu VM operation.
-pub struct QuOperation {
-	name:String,
-	asm_keyword:String,
-	args:Vec<CommandArg>,
-	id:u8,
-} impl QuOperation {
-	pub fn new(name:&str, asm_keyword:&str, args:Vec<CommandArg>) -> Self {
-		return Self{
-			name:name.to_string(),
-			asm_keyword:asm_keyword.to_string(),
-			args:args,
-			id:0,
-		};
-	}
-}
-
-
-/// A library of all of Qu's VM operations.
-///
-/// Instantiating this struct will create a library of all of Qu's VM operations.
-pub struct QuOpLibrary {
-	ops:Vec<QuOperation>,
-	// Operations
-	end:u8,
-	load_const:u8,
-	load_val_u8:u8,
-	load_val_u16:u8,
-	load_val_u32:u8,
-	load_val_u64:u8,
-	load_mem:u8,
-	store_mem:u8,
-	copy_reg:u8,
-	add:u8,
-	sub:u8,
-	mul:u8,
-	div:u8,
-	modulate:u8,
-	pow:u8,
-	lesser:u8,
-	greater:u8,
-	equal:u8,
-	not_equal:u8,
-	not:u8,
-	jump_to:u8,
-	jump_by:u8,
-	jump_to_if:u8,
-	jump_by_if:u8,
-	print:u8,
-} impl QuOpLibrary {
-
-	/// Create a new [QuOpLibrary].
-	fn new() -> Self {
-		let mut obj = Self{
-			ops:vec![],
-			end:0,
-			load_const:0,
-			load_val_u8:0,
-			load_val_u16:0,
-			load_val_u32:0,
-			load_val_u64:0,
-			load_mem:0,
-			store_mem:0,
-			copy_reg:0,
-			add:0,
-			sub:0,
-			mul:0,
-			div:0,
-			modulate:0,
-			pow:0,
-			lesser:0,
-			greater:0,
-			equal:0,
-			not_equal:0,
-			not:0,
-			jump_to:0,
-			jump_by:0,
-			jump_to_if:0,
-			jump_by_if:0,
-			print:0,
-		};
-		obj.generate();
-		return obj;
-	}
-
-
-	/// Sets the operation id for the given [QuOperation].
-	fn apply_op_id(&self, mut op:QuOperation) -> QuOperation {
-		op.id = self.ops.len() as u8;
-		return op;
-	}
-
-
-	/// Generate the library of Qu VM operations.
-	fn generate(&mut self) {
-		self.new_op("END", "End", &[]); self.end = self.ops.len() as u8 - 1;
-		self.new_op("LDU8", "LoadU8", &[(1,), (1,)]); self.load_val_u8 = self.ops.len() as u8 - 1;
-		self.new_op("LDU16", "LoadU16", &[(2,), (1,)]); self.load_val_u16 = self.ops.len() as u8 - 1;
-		self.new_op("LDU32", "LoadU32", &[(4,), (1,)]); self.load_val_u32 = self.ops.len() as u8 - 1;
-		self.new_op("LDU64", "LoadU64", &[(8,), (1,)]); self.load_val_u64 = self.ops.len() as u8 - 1;
-		self.new_op("LDM", "LoadMem", &[(4,), (1,)]); self.load_mem = self.ops.len() as u8 - 1;
-		self.new_op("STM", "StoreMem", &[(1,), (4,)]); self.store_mem = self.ops.len() as u8 - 1;
-		self.new_op("CPY", "Copy", &[(1,), (1,)]); self.copy_reg = self.ops.len() as u8 - 1;
-		self.new_op("ADD", "Add", &[(1,), (1,), (1,)]); self.add = self.ops.len() as u8 - 1;
-		self.new_op("SUB", "Subtract", &[(1,), (1,), (1,)]); self.sub = self.ops.len() as u8 - 1;
-		self.new_op("MUL", "Multiply", &[(1,), (1,), (1,)]); self.mul = self.ops.len() as u8 - 1;
-		self.new_op("DIV", "Divide", &[(1,), (1,), (1,)]); self.div = self.ops.len() as u8 - 1;
-		self.new_op("MOD", "Modulate", &[(1,), (1,), (1,)]); self.modulate = self.ops.len() as u8 - 1;
-		self.new_op("POW", "Power", &[(1,), (1,), (1,)]); self.pow = self.ops.len() as u8 - 1;
-		self.new_op("LES", "Lesser", &[(1,), (1,), (1,)]); self.lesser = self.ops.len() as u8 - 1;
-		self.new_op("GRT", "Greater", &[(1,), (1,), (1,)]); self.greater = self.ops.len() as u8 - 1;
-		self.new_op("EQ", "Equal", &[(1,), (1,), (1,)]); self.equal = self.ops.len() as u8 - 1;
-		self.new_op("NEQ", "NotEqual", &[(1,), (1,), (1,)]); self.not_equal = self.ops.len() as u8 - 1;
-		self.new_op("NOT", "Not", &[(1,), (1,)]); self.not = self.ops.len() as u8 - 1;
-		self.new_op("JP", "JumpTo", &[(4,)]); self.jump_to = self.ops.len() as u8 - 1;
-		self.new_op("JB", "JumpBy", &[(4,)]); self.jump_by = self.ops.len() as u8 - 1;
-		self.new_op("JPI", "JumpIf", &[(4,), (1,)]); self.jump_to_if = self.ops.len() as u8 - 1;
-		self.new_op("JBI", "JumpByIf", &[(4,), (1,)]); self.jump_by_if = self.ops.len() as u8 - 1;
-		self.new_op("PRT", "Print", &[(1,)]); self.print = self.ops.len() as u8 - 1;
-		
-	}
-
-
-	/// Create a new operation.
-	fn new_op(&mut self, asm:&str, name:&str, args:&[CommandArg]) {
-		self.ops.push(
-			self.apply_op_id(
-				QuOperation::new(name, asm, args.to_vec())
-			)
-		);
-	}
-
-
-	/// Converts a math or logic symbol to the id of the [QuOperation] that will
-	/// perform it.
-	fn op_id_from_symbol(&self, symbol:&str) -> u8 {
-		return match symbol {
-			"+" => self.add,
-			"-" => self.sub,
-			"*" => self.mul,
-			"/" => self.div,
-			"**" => self.pow,
-			"%" => self.modulate,
-			">" => self.greater,
-			"<" => self.lesser,
-			"==" => self.equal,
-			"!=" => self.not_equal,
-			_ => panic!("Unknown Qu VM operation symbol: {}", symbol),
-		};
 	}
 
 }
@@ -798,7 +988,7 @@ pub struct QuCompiler<'a> {
 		let block_code_result
 			= self.cmp_scope(body);
 		let mut block_code
-			= match self.cmp_scope(body) {
+			= match block_code_result {
 				// Set block code to returned code value
 				Ok(code) => code,
 				// Propogate error
@@ -1071,6 +1261,265 @@ pub struct QuCompiler<'a> {
 	/// Starts a new stack frame.
 	fn stack_frame_push(&mut self) {
 		self.stack_layers.push(self.stack_idx);
+	}
+
+}
+
+
+#[derive(Debug, Clone)]
+/// A Qu instruction.
+pub enum QuLeaf {
+	/// A Block of leafs.
+	Block(Vec<QuLeaf>),
+	/// An if statement. Contains an assertion statement and a [`Vec`] of
+	/// instructions.
+	FlowStatement(u8, QuLeafExpr, Box<QuLeaf>),
+	/// Prints a register to the console.
+	Print(QuLeafExpr),
+	/// A variable assignment. Contains a var name and a [`QuLeafExpr`].
+	VarAssign(QuToken, QuLeafExpr),
+	/// A variable declaration. Contains a var name, type(TODO), and
+	/// [`QuLeafExpr`].
+	VarDecl(QuToken, Option<QuToken>, Option<QuLeafExpr>),
+
+} impl QuLeaf {
+
+	/// Returns the [`QuLeaf`] as a [`String`] formatted into a tree.
+	pub fn tree_fmt(&self, indent:u8) -> String {
+		let mut indentstr = "\n".to_string();
+		for _ in 0..indent {
+			indentstr += "  ";
+		}
+		
+		match self {
+			QuLeaf::Block(
+				body) => {
+				let mut bodystr = "".to_string();
+				for leaf in body {
+					bodystr += &leaf.tree_fmt(indent + 1);
+				}
+				return format!("BLOCK:{}", bodystr);
+			}
+			QuLeaf::FlowStatement(
+				op, 
+				cond, 
+				body) => {
+					let bodystr = body.tree_fmt(indent + 1);
+					return format!("{}FLOW {} {} {}", indentstr, op, cond, bodystr);
+			}
+			QuLeaf::Print(register) => {
+				return format!("{}PRINT {}", indentstr, register);
+			}
+			QuLeaf::VarAssign(
+				name, 
+				val) => {
+				return format!("{}ASSIGN {} = {}", indentstr, name.text, val);
+			}
+			QuLeaf::VarDecl(
+				name, 
+				_var_type, 
+				_val) => {
+				let val_str = match _val {
+					Some(val) => format!("{}", val),
+					None => "".to_string(),
+				};
+				// TODO: Add variable declaration type
+				return format!("{}VAR {} {} = {}", indentstr, name.text, "", val_str);
+			}
+		}
+	}
+
+} impl Display for QuLeaf {
+
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		return write!(f, "{}", self.tree_fmt(0));
+	}
+
+}
+
+
+#[derive(Debug, Clone)]
+/// Defines an expression in a Qu program tree.
+pub enum QuLeafExpr {
+	/// A calculable expression. Contains an operator and two [`QuLeafExpr`]s.
+	Equation(u8, Box<QuLeafExpr>, Box<QuLeafExpr>),
+	/// A literal int value.
+	Int(u64),
+	/// A variable name.
+	Var(QuToken),
+} impl Display for QuLeafExpr {
+
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			QuLeafExpr::Equation(op, lft, rht) => {
+				let string = format!("{}", op);
+				let opstr:&str = string.as_str();
+				return write!(f, "Equate({lft} {opstr} {rht})");
+			}
+			QuLeafExpr::Int(val) => {
+				return write!(f, "{val}:Int");
+			}
+			QuLeafExpr::Var(name) => {
+				return write!(f, "{}:Var", name.text);
+			}
+			_ => {
+				return write!(f, "<QuLeafExpr Unimplemented Format>");
+			}
+		}
+	}
+
+}
+
+
+/// A single Qu VM operation.
+pub struct QuOperation {
+	name:String,
+	asm_keyword:String,
+	args:Vec<CommandArg>,
+	id:u8,
+} impl QuOperation {
+	pub fn new(name:&str, asm_keyword:&str, args:Vec<CommandArg>) -> Self {
+		return Self{
+			name:name.to_string(),
+			asm_keyword:asm_keyword.to_string(),
+			args:args,
+			id:0,
+		};
+	}
+}
+
+
+/// A library of all of Qu's VM operations.
+///
+/// Instantiating this struct will create a library of all of Qu's VM operations.
+pub struct QuOpLibrary {
+	ops:Vec<QuOperation>,
+	// Operations
+	end:u8,
+	load_const:u8,
+	load_val_u8:u8,
+	load_val_u16:u8,
+	load_val_u32:u8,
+	load_val_u64:u8,
+	load_mem:u8,
+	store_mem:u8,
+	copy_reg:u8,
+	add:u8,
+	sub:u8,
+	mul:u8,
+	div:u8,
+	modulate:u8,
+	pow:u8,
+	lesser:u8,
+	greater:u8,
+	equal:u8,
+	not_equal:u8,
+	not:u8,
+	jump_to:u8,
+	jump_by:u8,
+	jump_to_if:u8,
+	jump_by_if:u8,
+	print:u8,
+} impl QuOpLibrary {
+
+	/// Create a new [QuOpLibrary].
+	fn new() -> Self {
+		let mut obj = Self{
+			ops:vec![],
+			end:0,
+			load_const:0,
+			load_val_u8:0,
+			load_val_u16:0,
+			load_val_u32:0,
+			load_val_u64:0,
+			load_mem:0,
+			store_mem:0,
+			copy_reg:0,
+			add:0,
+			sub:0,
+			mul:0,
+			div:0,
+			modulate:0,
+			pow:0,
+			lesser:0,
+			greater:0,
+			equal:0,
+			not_equal:0,
+			not:0,
+			jump_to:0,
+			jump_by:0,
+			jump_to_if:0,
+			jump_by_if:0,
+			print:0,
+		};
+		obj.generate();
+		return obj;
+	}
+
+
+	/// Sets the operation id for the given [QuOperation].
+	fn apply_op_id(&self, mut op:QuOperation) -> QuOperation {
+		op.id = self.ops.len() as u8;
+		return op;
+	}
+
+
+	/// Generate the library of Qu VM operations.
+	fn generate(&mut self) {
+		self.new_op("END", "End", &[]); self.end = self.ops.len() as u8 - 1;
+		self.new_op("LDU8", "LoadU8", &[(1,), (1,)]); self.load_val_u8 = self.ops.len() as u8 - 1;
+		self.new_op("LDU16", "LoadU16", &[(2,), (1,)]); self.load_val_u16 = self.ops.len() as u8 - 1;
+		self.new_op("LDU32", "LoadU32", &[(4,), (1,)]); self.load_val_u32 = self.ops.len() as u8 - 1;
+		self.new_op("LDU64", "LoadU64", &[(8,), (1,)]); self.load_val_u64 = self.ops.len() as u8 - 1;
+		self.new_op("LDM", "LoadMem", &[(4,), (1,)]); self.load_mem = self.ops.len() as u8 - 1;
+		self.new_op("STM", "StoreMem", &[(1,), (4,)]); self.store_mem = self.ops.len() as u8 - 1;
+		self.new_op("CPY", "Copy", &[(1,), (1,)]); self.copy_reg = self.ops.len() as u8 - 1;
+		self.new_op("ADD", "Add", &[(1,), (1,), (1,)]); self.add = self.ops.len() as u8 - 1;
+		self.new_op("SUB", "Subtract", &[(1,), (1,), (1,)]); self.sub = self.ops.len() as u8 - 1;
+		self.new_op("MUL", "Multiply", &[(1,), (1,), (1,)]); self.mul = self.ops.len() as u8 - 1;
+		self.new_op("DIV", "Divide", &[(1,), (1,), (1,)]); self.div = self.ops.len() as u8 - 1;
+		self.new_op("MOD", "Modulate", &[(1,), (1,), (1,)]); self.modulate = self.ops.len() as u8 - 1;
+		self.new_op("POW", "Power", &[(1,), (1,), (1,)]); self.pow = self.ops.len() as u8 - 1;
+		self.new_op("LES", "Lesser", &[(1,), (1,), (1,)]); self.lesser = self.ops.len() as u8 - 1;
+		self.new_op("GRT", "Greater", &[(1,), (1,), (1,)]); self.greater = self.ops.len() as u8 - 1;
+		self.new_op("EQ", "Equal", &[(1,), (1,), (1,)]); self.equal = self.ops.len() as u8 - 1;
+		self.new_op("NEQ", "NotEqual", &[(1,), (1,), (1,)]); self.not_equal = self.ops.len() as u8 - 1;
+		self.new_op("NOT", "Not", &[(1,), (1,)]); self.not = self.ops.len() as u8 - 1;
+		self.new_op("JP", "JumpTo", &[(4,)]); self.jump_to = self.ops.len() as u8 - 1;
+		self.new_op("JB", "JumpBy", &[(4,)]); self.jump_by = self.ops.len() as u8 - 1;
+		self.new_op("JPI", "JumpIf", &[(4,), (1,)]); self.jump_to_if = self.ops.len() as u8 - 1;
+		self.new_op("JBI", "JumpByIf", &[(4,), (1,)]); self.jump_by_if = self.ops.len() as u8 - 1;
+		self.new_op("PRT", "Print", &[(1,)]); self.print = self.ops.len() as u8 - 1;
+		
+	}
+
+
+	/// Create a new operation.
+	fn new_op(&mut self, asm:&str, name:&str, args:&[CommandArg]) {
+		self.ops.push(
+			self.apply_op_id(
+				QuOperation::new(name, asm, args.to_vec())
+			)
+		);
+	}
+
+
+	/// Converts a math or logic symbol to the id of the [QuOperation] that will
+	/// perform it.
+	fn op_id_from_symbol(&self, symbol:&str) -> u8 {
+		return match symbol {
+			"+" => self.add,
+			"-" => self.sub,
+			"*" => self.mul,
+			"/" => self.div,
+			"**" => self.pow,
+			"%" => self.modulate,
+			">" => self.greater,
+			"<" => self.lesser,
+			"==" => self.equal,
+			"!=" => self.not_equal,
+			_ => panic!("Unknown Qu VM operation symbol: {}", symbol),
+		};
 	}
 
 }
@@ -1792,114 +2241,6 @@ pub struct QuParser<'a> {
 }
 
 
-/// A slice of a script file with information on the row, column, and indent of
-/// the slice.
-pub struct QuToken {
-	/// Where in the script this token starts.
-	pub begin:u64,
-	/// Where in the script this token ends.
-	pub end:u64,
-	/// The row this token is on.
-	pub row:u64,
-	/// The column this token starts on.
-	pub _col:u64,
-	/// The indentation of this token.
-	pub indent:u8,
-	/// The text of this token.
-	pub text:String,
-	/// The type of this token.
-	pub tk_type:u8,
-
-} impl QuToken {
-
-	/// Makes a new [`Token`].
-	pub fn new(
-			begin:u64, end:u64, row:u64, col:u64, indent:u8,
-			varient:u8,) -> QuToken {
-		return QuToken{
-			begin,
-			end,
-			row,
-			_col:col,
-			indent,
-			text:String::new(),
-			tk_type:varient
-		};
-	}
-
-	// TODO: Replace this function with the text parameter of the struct.
-	/// Returns the text of this token.
-	pub fn text(&self, source:&str) -> String {
-		let mut text = String::new();
-		if source.len() > 0 {
-			text = source[self.begin as usize..=self.end as usize].to_string();
-		}
-		return text;
-	}
-
-} impl Clone for QuToken {
-    fn clone(&self) -> Self {
-        Self { 
-			begin:self.begin.clone(),
-			end:self.end.clone(),
-			row:self.row.clone(),
-			_col:self._col.clone(),
-			indent:self.indent.clone(),
-			text:self.text.clone(),
-			tk_type:self.tk_type.clone()
-		}
-    }
-} impl Display for QuToken {
-	
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		return write!(
-				f, "<'{}' row:{}  indent:{}>",
-				self.text,
-				self.row,
-				self.indent,);
-	}
-} impl Debug for QuToken {
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		return write!(f, "Hi: {}", 0);
-		//f.debug_struct("QuToken")
-		//	.field("begin", &self.begin)
-		//	.field("end", &self.end)
-		//	.field("row", &self.row)
-		//	.field("_col", &self._col)
-		//	.field("indent", &self.indent)
-		//	.field("source", &self.source)
-		//	.field("tk_type", &self.tk_type).finish()
-	}
-} impl PartialEq for QuToken {
-	fn eq(&self, other:&Self) -> bool {
-		if self.tk_type == u8::MAX {
-			return false;
-		}
-		return self.text == other.text;
-	}
-} impl PartialEq<str> for QuToken {
-	fn eq(&self, other:&str) -> bool {
-		if self.tk_type == u8::MAX {
-			return false;
-		}
-		return &self.text == other;
-	}
-} impl<'a> PartialEq<&str> for QuToken {
-	fn eq(&self, other:&&str) -> bool {
-		if self.tk_type == u8::MAX {
-			return false;
-		}
-		return &self.text == *other;
-	}
-} impl PartialEq<String> for QuToken {
-	fn eq(&self, other:&String) -> bool {
-		if self.tk_type == u8::MAX {
-			return false;
-		}
-		return &self.text == other;
-	}
-}
-
 
 /// An object type (Example: int, bool, String, Object).
 pub struct QuType {
@@ -1942,15 +2283,15 @@ pub struct QuType {
 /// The virtual machine that runs Qu code.
 pub struct QuVm {
 	/// The registers of the VM.
-	pub registers:[u64;256],
+	registers:[u64;256],
 	/// Keeps track of which instruction to execute next.
 	pc:usize,
 	/// The source bytecode being run.
-	pub source:Vec<u8>,
+	source:Vec<u8>,
 	/// The memory of the VM.
-	pub mem:Vec<u64>,
+	mem:Vec<u64>,
 	/// The library of available operations.
-	pub op_lib:QuOpLibrary,
+	op_lib:QuOpLibrary,
 
 } impl QuVm {
 
@@ -2332,318 +2673,3 @@ pub struct QuVm {
 
 }
 
-
-/// Returns *true* if the passed characters matches to an assembly line-flag.
-pub fn tokenrule_flagref(added_so_far:&[char]) -> bool {
-	if added_so_far[0] != '$' {
-		return false;
-	}
-
-	let mut i = 1; // Set to 1 because first checked previously
-	while i < added_so_far.len() {
-		if added_so_far[i] == ' ' {
-			return false
-		}
-		if !added_so_far[i].is_alphanumeric() && added_so_far[i] != '_' {
-			return false;
-		}
-		i += 1;
-	}
-
-	return true;
-}
-
-
-/// Returns *true* if the passed characters match to a name.
-///
-/// A name could be a type, class, function name, or variable name.
-/// 
-/// Examples
-/// ```
-/// use qu_script::tokenrule_name;
-///
-///	let chars1:&[char] = &['_', '_', 'i', 'n', 'i', 't', '_', '_',];
-///	assert!(qu_script::tokenrule_name(chars1));
-///
-///	let chars2:&[char] = &['a', 'b', '1', ];
-///	assert!(qu_script::tokenrule_name(chars2));
-///
-///	let chars3:&[char] = &['a', '+', '=', ];
-///	assert!(!qu_script::tokenrule_name(chars3));
-/// ```
-pub fn tokenrule_name(added_so_far:&[char]) -> bool {
-	for char in  added_so_far {
-		if *char == ' ' {
-			return false
-		}
-		if !char.is_alphanumeric() && *char != '_' {
-			return false;
-		}
-	}
-
-	return true;
-}
-
-
-/// Returns *true* if the passed characters match to a number (like *int* or
-/// *float*).
-/// 
-/// Examples
-/// ```
-/// use qu_script::tokenrule_number;
-///
-///	let chars1:&[char] = &['5', '.', '6',];
-///	assert!(qu_script::tokenrule_number(chars1));
-///
-///	let chars2:&[char] = &['1','0',];
-///	assert!(qu_script::tokenrule_number(chars2));
-///
-///	let chars3:&[char] = &['a', ];
-///	assert!(!qu_script::tokenrule_number(chars3));
-/// ```
-pub fn tokenrule_number(added_so_far:&[char]) -> bool {
-	
-	for char in  added_so_far {
-		if char == &' ' {
-			return false
-		}
-		if !(char.is_numeric() || char == &'.') {
-			return false;
-		}
-	}
-
-	return true;
-}
-
-
-/// Returns *true* if the passed characters match to a keyword. 
-/// 
-/// Some examples of keywords are *var*, *if*, and *fn*.
-/// 
-/// Example
-/// ```
-/// use qu_script::tokenrule_keyword;
-///
-///	let chars1:&[char] = &['v', 'a', 'r',];
-///	assert!(qu_script::tokenrule_keyword(chars1));
-///
-///	let chars2:&[char] = &['i','f',];
-///	assert!(qu_script::tokenrule_keyword(chars2));
-///
-///	let chars3:&[char] = &['d', 'u', 'd', 'e',];
-///	assert!(!qu_script::tokenrule_keyword(chars3));
-/// ```
-pub fn tokenrule_keyword(added_so_far:&[char]) -> bool {
-	for word in [
-		KEYWORD_VAR,
-		KEYWORD_FUNCTION,
-		KEYWORD_CLASS,
-		KEYWORD_IF,
-		KEYWORD_ELSE,
-		KEYWORD_ELIF,
-	] {
-		let mut mismatched = false;
-		for (char1, char2) in added_so_far.iter().zip(word.chars()) {
-			mismatched = char1 != &char2;
-			if mismatched {
-				break;
-			}
-		}
-		if !mismatched {
-			return true && added_so_far.len() == word.len();
-		}
-	}
-
-	return false;
-}
-
-
-/// Returns *true* if the passed characters match to a symbol.
-/// 
-/// Some examples of operators are *+*, *-*, and *+=*.
-/// 
-/// Examples
-/// ```
-/// use qu_script::tokenrule_symbols;
-///
-///	let chars1:&[char] = &['*',];
-///	assert!(qu_script::tokenrule_symbols(chars1));
-///
-///	let chars2:&[char] = &['=','=',];
-///	assert!(qu_script::tokenrule_symbols(chars2));
-///
-///	let chars3:&[char] = &['+', '1'];
-///	assert!(!qu_script::tokenrule_symbols(chars3));
-/// ```
-pub fn tokenrule_symbols(added_so_far:&[char]) -> bool {
-	return match added_so_far {
-		['*',] => true,
-		['/',] => true,
-		['\\',] => true, // This is just '\'
-		['=',] => true,
-		['!',] => true,
-		['?',] => true,
-		['>',] => true,
-		['<',] => true,
-		['+',] => true,
-		['-',] => true,
-		['%',] => true,
-		['*', '*',] => true,
-		['/', '/',] => true,
-		['=', '=',] => true,
-		['!', '=',] => true,
-		['>', '=',] => true,
-		['<', '=',] => true,
-		['+', '=',] => true,
-		['-', '=',] => true,
-		['*', '=',] => true,
-		['/', '=',] => true,
-		['%', '=',] => true,
-		['&',] => true,
-		['@',] => true,
-		['|',] => true,
-		['^',] => true,
-		[':',] => true,
-		[';',] => true,
-		[',',] => true,
-		['(',] => true,
-		[')',] => true,
-		['[',] => true,
-		[']',] => true,
-		['{',] => true,
-		['}',] => true,
-		['`',] => true,
-		['"',] => true,
-		['\'',] => true,
-		_ => false,
-	};
-}
-
-
-/// Tokenizes a [String] according to the passed [Rules].
-/// 
-/// Examples
-/// ```
-/// use qu_script::Token;
-/// use qu_script::tokenize;
-/// use qu_script::tokenrule_name;
-/// use qu_script::tokenrule_symbols;
-/// use qu_script::TOKEN_TYPE_NAME;
-/// use qu_script::TOKEN_TYPE_SYMBOL;
-/// 
-/// let script:&str = " hello=world ;! ";
-/// 
-/// let tokens:Vec<Token> = tokenize(
-/// 	&script,
-/// 	&[
-/// 		(&tokenrule_name, TOKEN_TYPE_NAME),
-/// 		(&tokenrule_symbols, TOKEN_TYPE_SYMBOL),
-/// 	]
-/// );
-/// 
-///	assert!(tokens.len() == 5);
-///	assert!(tokens[0].text(&script) == "hello");
-///	assert!(tokens[1].text(&script) == "=");
-///	assert!(tokens[2].text(&script) == "world");
-///	assert!(tokens[3].text(&script) == ";");
-///	assert!(tokens[4].text(&script) == "!");
-/// ```
-pub fn tokenize<'a>(script:&'a String, rules:&Rules<'a>) -> Vec<QuToken> {
-	let mut tokens = vec!();
-
-	/* WARNING: This does not account for grapheme clusters. Currently hoping
-	This won't be a problem. */
-	let mut row:u64 = 0;
-	let mut col:u64 = 0;
-	let mut indent:u8 = 0;
-	let mut in_begining:bool = true;
-	let mut added_so_far:Vec<char> = Vec::with_capacity(20);
-	let mut curr_token = 0;
-	for (idx, char) in script.char_indices() {
-		col += 1;
-
-		if char != '\t' && char != ' ' {
-			in_begining = false;
-		}
-
-		// Check tab
-		if char == '\t' {
-			if in_begining {
-				indent += 1;
-				added_so_far.clear();
-			}
-			
-		// Check newline
-		} else if char == '\n' {
-			col = 0;
-			row += 1;
-			indent = 0;
-			in_begining = true;		
-		}
-
-		// Any other characters
-		added_so_far.push(char);
-		
-		// Update token end if it fits rule, 
-		// otherwise clear the added so far
-		loop {
-			let (does_fit, char_type) = chars_fit_rule(
-				&added_so_far,
-				rules,
-			);
-			if does_fit{
-				if curr_token <= tokens.len() && added_so_far.len() == 1 {
-					tokens.push(QuToken::new(
-						idx as u64,
-						idx as u64,
-						row,
-						col,
-						indent,
-						char_type,
-					));
-				}
-				tokens[curr_token].end = idx as u64;
-				tokens[curr_token].tk_type = char_type;
-
-				if idx+1 == script.len() {
-					tokens[curr_token].text
-							= tokens[curr_token].text(script);
-				}
-				break;
-				
-			} else if added_so_far.len() == 1 {
-				added_so_far.clear();
-				break;
-			}else {
-				if curr_token+1 == tokens.len() {
-					tokens[curr_token].text
-							= tokens[curr_token].text(script);
-					curr_token += 1;
-				}
-				added_so_far.clear();
-				added_so_far.push(char);
-			}
-		}
-	}
-
-	return tokens;
-}
-
-
-/// Checks a [`Vec`] of [`char`]s against [`RULES`].
-/// 
-/// Returns *true* if the [`Vec`] of [`char`]s fits at least one of the rules
-/// specified in [`RULES`].
-pub fn chars_fit_rule<'a>(chars:&Vec<char>, rules:&Rules<'a>) -> (bool, u8) {
-	let mut fits_rule = false;
-	let mut tk_type = u8::MAX;
-	for rule in rules {
-		fits_rule = fits_rule || rule.0(&chars);
-		if fits_rule{
-			tk_type = rule.1;
-			break;
-		}
-	}
-
-	return (fits_rule, tk_type);
-}
