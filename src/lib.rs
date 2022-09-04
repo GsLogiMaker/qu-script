@@ -5,7 +5,6 @@
 #![warn(rustdoc::missing_doc_code_examples)]
 #![warn(rustdoc::broken_intra_doc_links)]
 
-use std::{fmt::{self, Display, Debug}, vec, collections::HashMap};
 
 
 mod qu_error {
@@ -693,11 +692,14 @@ mod qu_tokens {
 
 }
 
+
+use std::{fmt::{self, Display, Debug}, vec, collections::HashMap};
 use qu_tokens::{RULES, TOKEN_TYPE_NAME, tokenize, QuToken};
 
 
 /// A tuple of for specifying arguments for a [QuOperation].
 type CommandArg = (i8,);
+type QuRegisterValue = usize;
 
 
 const FLOW_IF:u8 = 0;
@@ -721,15 +723,20 @@ const OP_ASSIGN_WORD:&str = "=";
 const OP_BLOCK_START_WORD:&str = ":";
 
 
+static _oplib:QuOpLibrary = QuOpLibrary::new();
+
 /// The interface for the Qu programming language.
-pub struct Qu {
-	vm:QuVm,
-} impl Qu {
+pub struct Qu<'a> {
+	vm:QuVm<'a>,
+	oplib:QuOpLibrary<'a>,
+} impl<'a> Qu<'a> {
 	
 	/// Creates a new Qu instance.
 	pub fn new() -> Self {
+		let oplib_ = QuOpLibrary::new();
 		Qu {
 			vm:QuVm::new(),
+			oplib:QuOpLibrary::new(),
 		}
 	}
 
@@ -791,6 +798,309 @@ pub struct Qu {
 }
 
 
+struct QuCallFrame {
+	/// The current instruction pointer.
+	pc:usize,
+	registers:[QuRegisterValue; 256],
+
+} impl QuCallFrame {
+
+	fn new() -> Self {
+		QuCallFrame {
+			pc:0,
+			registers:[0; 256],
+		}
+	}
+
+
+	fn exc_copy_reg(&mut self, code:&[u8]) {
+		let from_reg = self.next_u8(code) as usize;
+		let to_reg = self.next_u8(code) as usize;
+		self.registers[to_reg] = self.registers[from_reg];
+	}
+
+
+	fn exc_jump_by(&mut self, code:&[u8]) {
+		let val_by = self.next_u32(code) as usize;
+		// Add
+		if val_by as isize > 0 {
+			self.pc += val_by;
+		// Subtract
+		} else {
+			self.pc = self.pc.wrapping_add(val_by);
+		}
+		
+	}
+
+
+	fn exc_jump_by_if(&mut self, code:&[u8]) {
+		let val_by = self.next_u32(code) as i32;
+		let rg_if = self.next_u8(code) as usize;
+		if self.registers[rg_if] as i64 > 0 {
+			// Add
+			if val_by > 0 {
+				self.pc += val_by as usize;
+			// Subtract
+			} else {
+				self.pc -= val_by.abs() as usize;
+			}
+		}
+	}
+
+
+	fn exc_jump_to(&mut self, code:&[u8]) {
+		unimplemented!()
+	}
+
+
+	fn exc_jump_to_if(&mut self, code:&[u8]) {
+		let val_to = self.next_u32(code) as usize;
+		let rg_if = self.next_u8(code) as usize;
+		if self.registers[rg_if] > 0 {
+			self.pc = val_to as usize;
+		}
+	}
+
+
+	/// Executes a load instruction.
+	fn exc_load_const_u8(&mut self, code:&[u8]) {
+		let src_from = self.next_u32(code) as usize;
+		let rg_to = self.next_u8(code) as usize;
+		self.registers[rg_to] = code[src_from] as QuRegisterValue;
+	}
+
+
+	fn exc_load_val_u8(&mut self, code:&[u8]) {
+		let val = self.next_u8(code) as QuRegisterValue;
+		let rg_to = self.next_u8(code) as usize;
+		self.registers[rg_to] = val;
+	}
+
+
+	fn exc_load_val_u16(&mut self, code:&[u8]) {
+		let val = self.next_u16(code) as QuRegisterValue;
+		let rg_to = self.next_u8(code) as usize;
+		self.registers[rg_to] = val;
+	}
+
+
+	fn exc_load_val_u32(&mut self, code:&[u8]) {
+		let val = self.next_u32(code) as QuRegisterValue;
+		let rg_to = self.next_u8(code) as usize;
+		self.registers[rg_to] = val;
+	}
+
+
+	fn exc_load_val_u64(&mut self, code:&[u8]) {
+		let val = self.next_u64(code) as QuRegisterValue;
+		let rg_to = self.next_u8(code) as usize;
+		self.registers[rg_to] = val;
+	}
+
+
+	fn exc_load_mem(&mut self, code:&[u8]) {
+		unimplemented!();
+	}
+
+
+	fn exc_print(&mut self, code:&[u8]) {
+		let read_from_reg = self.next_u8(code) as usize;
+		let val = self.registers[read_from_reg];
+		println!("Qu Print: {}", val);
+	}
+
+
+	fn exc_store_mem(&mut self, code:&[u8]) {
+		unimplemented!();
+	}
+
+
+	fn exc_math_add(&mut self, code:&[u8]) {
+		let rg_left = self.next_u8(code) as usize;
+		let rg_right = self.next_u8(code) as usize;
+		let rg_result = self.next_u8(code) as usize;
+		self.registers[rg_result] = 
+				self.registers[rg_left]
+				+ self.registers[rg_right];
+	}
+
+
+	fn exc_math_sub(&mut self, code:&[u8]) {
+		let rg_left = self.next_u8(code) as usize;
+		let rg_right = self.next_u8(code) as usize;
+		let rg_result = self.next_u8(code) as usize;
+		self.registers[rg_result] = 
+				self.registers[rg_left]
+				- self.registers[rg_right];
+	}
+
+
+	fn exc_math_mul(&mut self, code:&[u8]) {
+		let rg_left = self.next_u8(code) as usize;
+		let rg_right = self.next_u8(code) as usize;
+		let rg_result = self.next_u8(code) as usize;
+		self.registers[rg_result] = 
+				self.registers[rg_left]
+				* self.registers[rg_right];
+	}
+
+
+	fn exc_math_div(&mut self, code:&[u8]) {
+		let rg_left = self.next_u8(code) as usize;
+		let rg_right = self.next_u8(code) as usize;
+		let rg_result = self.next_u8(code) as usize;
+		self.registers[rg_result] = 
+				self.registers[rg_left]
+				/ self.registers[rg_right];
+	}
+
+
+	fn exc_math_mod(&mut self, code:&[u8]) {
+		let rg_left = self.next_u8(code) as usize;
+		let rg_right = self.next_u8(code) as usize;
+		let rg_result = self.next_u8(code) as usize;
+		self.registers[rg_result] = 
+				self.registers[rg_left]
+				% self.registers[rg_right];
+	}
+
+
+	fn exc_math_pow(&mut self, code:&[u8]) {
+		let rg_left = self.next_u8(code) as usize;
+		let rg_right = self.next_u8(code) as usize;
+		let rg_result = self.next_u8(code) as usize;
+		// WARNING: I don't know that ^ is actually the power symbol.
+		self.registers[rg_result] = 
+				self.registers[rg_left]
+				^ self.registers[rg_right];
+	}
+
+
+	fn exc_logi_equal(&mut self, code:&[u8]) {
+		let rg_left = self.next_u8(code) as usize;
+		let rg_right = self.next_u8(code) as usize;
+		let rg_result = self.next_u8(code) as usize;
+		self.registers[rg_result] = 
+				(self.registers[rg_left] == self.registers[rg_right])
+				as QuRegisterValue;
+	}
+
+
+	fn exc_logi_greater(&mut self, code:&[u8]) {
+		let rg_left = self.next_u8(code) as usize;
+		let rg_right = self.next_u8(code) as usize;
+		let rg_result = self.next_u8(code) as usize;
+		self.registers[rg_result] = 
+				(self.registers[rg_left] > self.registers[rg_right])
+				as QuRegisterValue;
+	}
+
+
+	fn exc_logi_lesser(&mut self, code:&[u8]) {
+		let rg_left = self.next_u8(code) as usize;
+		let rg_right = self.next_u8(code) as usize;
+		let rg_result = self.next_u8(code) as usize;
+		self.registers[rg_result] = 
+				(self.registers[rg_left] < self.registers[rg_right])
+				as QuRegisterValue;
+	}
+
+
+	fn exc_logi_not_equal(&mut self, code:&[u8]) {
+		let rg_left = self.next_u8(code) as usize;
+		let rg_right = self.next_u8(code) as usize;
+		let rg_result = self.next_u8(code) as usize;
+		self.registers[rg_result] = 
+				(self.registers[rg_left] != self.registers[rg_right])
+				as QuRegisterValue;
+	}
+
+
+	fn exc_logi_not(&mut self, code:&[u8]) {
+		let rg_left = self.next_u8(code) as usize;
+		let rg_result = self.next_u8(code) as usize;
+		let x = self.registers[rg_left];
+		self.registers[rg_result] = 
+				(x*0 == x) as QuRegisterValue;
+	}
+
+
+	/// Gets the next byte in the source code as a u8 int.
+	fn next_u8(&mut self, code:&[u8]) -> u8 {
+		let val = code[self.pc];
+		self.pc += 1;
+		return val;
+	}
+
+
+	/// Gets the next 2 byte in the source code as a u16 int.
+	fn next_u16(&mut self, code:&[u8]) -> u16 {
+		let bytes = [code[self.pc], code[self.pc+1]];
+		self.pc += 2;
+		return u16::from_be_bytes(bytes);
+	}
+
+
+	/// Gets the next 4 byte in the source code as a u32 int.
+	fn next_u32(&mut self, code:&[u8]) -> u32 {
+		let bytes = [
+			code[self.pc], code[self.pc+1],
+			code[self.pc+2], code[self.pc+3],
+		];
+		self.pc += 4;
+		return u32::from_be_bytes(bytes);
+	}
+
+
+	// Gets the next 8 byte in the source code as a u64 int.
+	fn next_u64(&mut self, code:&[u8]) -> u64 {
+		let bytes = [
+			code[self.pc], code[self.pc+1],
+			code[self.pc+2], code[self.pc+3],
+			code[self.pc+4], code[self.pc+5],
+			code[self.pc+6], code[self.pc+7],
+		];
+		self.pc += 8;
+		return u64::from_be_bytes(bytes);
+	}
+
+	
+	pub fn run_next(&mut self, code:&[u8]) {
+		match self.next_u8(code) {
+			x if x == _oplib.end as u8 => {/*pass TODO: Handle END*/},
+
+			x if x == _oplib.load_const => self.exc_load_const_u8(code),
+			x if x == _oplib.load_val_u8 => self.exc_load_val_u8(code),
+			x if x == _oplib.load_val_u16 => self.exc_load_val_u16(code),
+			x if x == _oplib.load_val_u32 => self.exc_load_val_u32(code),
+			x if x == _oplib.load_val_u64 => self.exc_load_val_u64(code),
+			x if x == _oplib.load_mem => self.exc_load_mem(code),
+			x if x == _oplib.store_mem => self.exc_store_mem(code),
+			x if x == _oplib.copy_reg => self.exc_copy_reg(code),
+			x if x == _oplib.add => self.exc_math_add(code),
+			x if x == _oplib.sub => self.exc_math_sub(code),
+			x if x == _oplib.mul => self.exc_math_mul(code),
+			x if x == _oplib.div => self.exc_math_div(code),
+			x if x == _oplib.modulate => self.exc_math_mod(code),
+			x if x == _oplib.pow => self.exc_math_pow(code),
+			x if x == _oplib.lesser => self.exc_logi_lesser(code),
+			x if x == _oplib.greater => self.exc_logi_greater(code),
+			x if x == _oplib.equal => self.exc_logi_equal(code),
+			x if x == _oplib.not_equal => self.exc_logi_not_equal(code),
+			x if x == _oplib.not => self.exc_logi_not(code),
+			x if x == _oplib.jump_to => self.exc_jump_to(code),
+			x if x == _oplib.jump_by => self.exc_jump_by(code),
+			x if x == _oplib.jump_to_if => self.exc_jump_to_if(code),
+			x if x == _oplib.jump_by_if => self.exc_jump_by_if(code),
+			x if x == _oplib.print => self.exc_print(code),
+
+			x => { println!("{x}"); todo!(); }
+		}
+	}
+
+}
+
+
 /// Compiles [QuLeaf]s into Qu bytecode.
 pub struct QuCompiler<'a> {
 	/// Name, Type, Pointer
@@ -800,7 +1110,7 @@ pub struct QuCompiler<'a> {
 	stack_idx:u8,
 	types:Vec<QuType>,
 	types_map:HashMap<String, usize>,
-	ops:QuOpLibrary,
+	oplib:QuOpLibrary<'a>,
 } impl<'a> QuCompiler<'a> {
 
 	// TODO: Refactor so that QuCompiler does not need the script to be
@@ -814,7 +1124,7 @@ pub struct QuCompiler<'a> {
 			stack_idx:0,
 			types:vec![QuType::int(), QuType::uint(), QuType::bool()],
 			types_map:HashMap::new(),
-			ops:QuOpLibrary::new(),
+			oplib:QuOpLibrary::new(),
 		};
 
 		let mut i:usize = 0;
@@ -883,7 +1193,7 @@ pub struct QuCompiler<'a> {
 
 		let mut code = vec![];
 		// The vm operation
-		code.push(self.ops.load_val_u8);
+		code.push(self.oplib.load_val_u8);
 		// The number as bytes
 		code.append(&mut (val as u8).to_be_bytes().to_vec());
 		// The register to load into
@@ -898,7 +1208,7 @@ pub struct QuCompiler<'a> {
 			-> Result<Vec<u8>, String> {
 		let mut code = Vec::with_capacity(3);
 		// The vm operation
-		code.push(self.ops.copy_reg);
+		code.push(self.oplib.copy_reg);
 		// The register to copy the variable value from
 		let var_reg
 			= match self.get_var_register(token.text.as_str()) {
@@ -949,11 +1259,11 @@ pub struct QuCompiler<'a> {
 		let mut jump_code = Vec::with_capacity(7);
 		let jump_assert_reg = self.stack_reserve();
 		// Negate expression
-		jump_code.push(self.ops.not);
+		jump_code.push(self.oplib.not);
 		jump_code.push(if_expr_reg);
 		jump_code.push(jump_assert_reg);
 		// Jump instruction
-		jump_code.push(self.ops.jump_by_if);
+		jump_code.push(self.oplib.jump_by_if);
 		jump_code.push(jump_assert_reg);
 		jump_code.append(&mut (block_code.len() as i32).to_be_bytes().to_vec());
 
@@ -998,14 +1308,14 @@ pub struct QuCompiler<'a> {
 		// Compile while's prejump
 		let prejump_travel = block_code.len() as i32;
 		let mut prejump_code = vec![];
-		prejump_code.push(self.ops.jump_by);
+		prejump_code.push(self.oplib.jump_by);
 		prejump_code.append(&mut prejump_travel.to_be_bytes().to_vec());
 
 		// Compile while's loopback
 		let loopback_travel = 
 				-((block_code.len() + expr_code.len() + 6) as i32);
 		let mut loopback_code = vec![];
-		loopback_code.push(self.ops.jump_by_if);
+		loopback_code.push(self.oplib.jump_by_if);
 		loopback_code.append(&mut loopback_travel.to_be_bytes().to_vec());
 		loopback_code.push(while_expr_reg);
 
@@ -1068,7 +1378,7 @@ pub struct QuCompiler<'a> {
 				};
 				
 				code.append(&mut expression_code);
-				code.push(self.ops.print);
+				code.push(self.oplib.print);
 				code.push(print_reg);
 				return Ok(code);
 			},
@@ -1174,7 +1484,7 @@ pub struct QuCompiler<'a> {
 			None => {
 				// TODO: Support u64
 				let mut code = Vec::with_capacity(3);
-				code.push(self.ops.load_val_u8); 
+				code.push(self.oplib.load_val_u8); 
 				code.push(0);
 				code.push(var_reg);
 				Ok(code)
@@ -1207,7 +1517,7 @@ pub struct QuCompiler<'a> {
 		match self.cmp_scope(leafs) {
 			// Add exit code and return code
 			Ok(mut code) => {
-				code.push(self.ops.end);
+				code.push(self.oplib.end);
 				return Ok(code);
 			},
 
@@ -1372,13 +1682,13 @@ pub enum QuLeafExpr {
 
 
 /// A single Qu VM operation.
-pub struct QuOperation {
+pub struct QuOperation<'a> {
 	name:String,
 	asm_keyword:String,
-	args:Vec<CommandArg>,
+	args:&'a [CommandArg],
 	id:u8,
-} impl QuOperation {
-	pub fn new(name:&str, asm_keyword:&str, args:Vec<CommandArg>) -> Self {
+} impl<'a> QuOperation<'a> {
+	pub fn new(name:&str, asm_keyword:&str, args:&'a [CommandArg]) -> Self {
 		return Self{
 			name:name.to_string(),
 			asm_keyword:asm_keyword.to_string(),
@@ -1389,11 +1699,13 @@ pub struct QuOperation {
 }
 
 
+
+
 /// A library of all of Qu's VM operations.
 ///
 /// Instantiating this struct will create a library of all of Qu's VM operations.
-pub struct QuOpLibrary {
-	ops:Vec<QuOperation>,
+pub struct QuOpLibrary<'a> {
+	ops:Vec<QuOperation<'a>>,
 	// Operations
 	end:u8,
 	load_const:u8,
@@ -1420,10 +1732,10 @@ pub struct QuOpLibrary {
 	jump_to_if:u8,
 	jump_by_if:u8,
 	print:u8,
-} impl QuOpLibrary {
+} impl<'a> QuOpLibrary<'a> {
 
 	/// Create a new [QuOpLibrary].
-	fn new() -> Self {
+	const fn new() -> Self {
 		let mut obj = Self{
 			ops:vec![],
 			end:0,
@@ -1452,56 +1764,41 @@ pub struct QuOpLibrary {
 			jump_by_if:0,
 			print:0,
 		};
-		obj.generate();
+		//obj.generate();
 		return obj;
 	}
 
 
-	/// Sets the operation id for the given [QuOperation].
-	fn apply_op_id(&self, mut op:QuOperation) -> QuOperation {
-		op.id = self.ops.len() as u8;
-		return op;
-	}
-
-
 	/// Generate the library of Qu VM operations.
-	fn generate(&mut self) {
-		self.new_op("END", "End", &[]); self.end = self.ops.len() as u8 - 1;
-		self.new_op("LDU8", "LoadU8", &[(1,), (1,)]); self.load_val_u8 = self.ops.len() as u8 - 1;
-		self.new_op("LDU16", "LoadU16", &[(2,), (1,)]); self.load_val_u16 = self.ops.len() as u8 - 1;
-		self.new_op("LDU32", "LoadU32", &[(4,), (1,)]); self.load_val_u32 = self.ops.len() as u8 - 1;
-		self.new_op("LDU64", "LoadU64", &[(8,), (1,)]); self.load_val_u64 = self.ops.len() as u8 - 1;
-		self.new_op("LDM", "LoadMem", &[(4,), (1,)]); self.load_mem = self.ops.len() as u8 - 1;
-		self.new_op("STM", "StoreMem", &[(1,), (4,)]); self.store_mem = self.ops.len() as u8 - 1;
-		self.new_op("CPY", "Copy", &[(1,), (1,)]); self.copy_reg = self.ops.len() as u8 - 1;
-		self.new_op("ADD", "Add", &[(1,), (1,), (1,)]); self.add = self.ops.len() as u8 - 1;
-		self.new_op("SUB", "Subtract", &[(1,), (1,), (1,)]); self.sub = self.ops.len() as u8 - 1;
-		self.new_op("MUL", "Multiply", &[(1,), (1,), (1,)]); self.mul = self.ops.len() as u8 - 1;
-		self.new_op("DIV", "Divide", &[(1,), (1,), (1,)]); self.div = self.ops.len() as u8 - 1;
-		self.new_op("MOD", "Modulate", &[(1,), (1,), (1,)]); self.modulate = self.ops.len() as u8 - 1;
-		self.new_op("POW", "Power", &[(1,), (1,), (1,)]); self.pow = self.ops.len() as u8 - 1;
-		self.new_op("LES", "Lesser", &[(1,), (1,), (1,)]); self.lesser = self.ops.len() as u8 - 1;
-		self.new_op("GRT", "Greater", &[(1,), (1,), (1,)]); self.greater = self.ops.len() as u8 - 1;
-		self.new_op("EQ", "Equal", &[(1,), (1,), (1,)]); self.equal = self.ops.len() as u8 - 1;
-		self.new_op("NEQ", "NotEqual", &[(1,), (1,), (1,)]); self.not_equal = self.ops.len() as u8 - 1;
-		self.new_op("NOT", "Not", &[(1,), (1,)]); self.not = self.ops.len() as u8 - 1;
-		self.new_op("JP", "JumpTo", &[(4,)]); self.jump_to = self.ops.len() as u8 - 1;
-		self.new_op("JB", "JumpBy", &[(4,)]); self.jump_by = self.ops.len() as u8 - 1;
-		self.new_op("JPI", "JumpIf", &[(4,), (1,)]); self.jump_to_if = self.ops.len() as u8 - 1;
-		self.new_op("JBI", "JumpByIf", &[(4,), (1,)]); self.jump_by_if = self.ops.len() as u8 - 1;
-		self.new_op("PRT", "Print", &[(1,)]); self.print = self.ops.len() as u8 - 1;
-		
-	}
+//	fn generate(&mut self) {
+//		// TODO: Turn most of QuOpLibrary into macros
+//		self.new_op("END", "End", &[]); self.end = self.ops.len() as u8 - 1;
+//		self.new_op("LDU8", "LoadU8", &[(1,), (1,)]); self.load_val_u8 = self.ops.len() as u8 - 1;
+//		self.new_op("LDU16", "LoadU16", &[(2,), (1,)]); self.load_val_u16 = self.ops.len() as u8 - 1;
+//		self.new_op("LDU32", "LoadU32", &[(4,), (1,)]); self.load_val_u32 = self.ops.len() as u8 - 1;
+//		self.new_op("LDU64", "LoadU64", &[(8,), (1,)]); self.load_val_u64 = self.ops.len() as u8 - 1;
+//		self.new_op("LDM", "LoadMem", &[(4,), (1,)]); self.load_mem = self.ops.len() as u8 - 1;
+//		self.new_op("STM", "StoreMem", &[(1,), (4,)]); self.store_mem = self.ops.len() as u8 - 1;
+//		self.new_op("CPY", "Copy", &[(1,), (1,)]); self.copy_reg = self.ops.len() as u8 - 1;
+//		self.new_op("ADD", "Add", &[(1,), (1,), (1,)]); self.add = self.ops.len() as u8 - 1;
+//		self.new_op("SUB", "Subtract", &[(1,), (1,), (1,)]); self.sub = self.ops.len() as u8 - 1;
+//		self.new_op("MUL", "Multiply", &[(1,), (1,), (1,)]); self.mul = self.ops.len() as u8 - 1;
+//		self.new_op("DIV", "Divide", &[(1,), (1,), (1,)]); self.div = self.ops.len() as u8 - 1;
+//		self.new_op("MOD", "Modulate", &[(1,), (1,), (1,)]); self.modulate = self.ops.len() as u8 - 1;
+//		self.new_op("POW", "Power", &[(1,), (1,), (1,)]); self.pow = self.ops.len() as u8 - 1;
+//		self.new_op("LES", "Lesser", &[(1,), (1,), (1,)]); self.lesser = self.ops.len() as u8 - 1;
+//		self.new_op("GRT", "Greater", &[(1,), (1,), (1,)]); self.greater = self.ops.len() as u8 - 1;
+//		self.new_op("EQ", "Equal", &[(1,), (1,), (1,)]); self.equal = self.ops.len() as u8 - 1;
+//		self.new_op("NEQ", "NotEqual", &[(1,), (1,), (1,)]); self.not_equal = self.ops.len() as u8 - 1;
+//		self.new_op("NOT", "Not", &[(1,), (1,)]); self.not = self.ops.len() as u8 - 1;
+//		self.new_op("JP", "JumpTo", &[(4,)]); self.jump_to = self.ops.len() as u8 - 1;
+//		self.new_op("JB", "JumpBy", &[(4,)]); self.jump_by = self.ops.len() as u8 - 1;
+//		self.new_op("JPI", "JumpIf", &[(4,), (1,)]); self.jump_to_if = self.ops.len() as u8 - 1;
+//		self.new_op("JBI", "JumpByIf", &[(4,), (1,)]); self.jump_by_if = self.ops.len() as u8 - 1;
+//		self.new_op("PRT", "Print", &[(1,)]); self.print = self.ops.len() as u8 - 1;
+//		
+//	}
 
-
-	/// Create a new operation.
-	fn new_op(&mut self, asm:&str, name:&str, args:&[CommandArg]) {
-		self.ops.push(
-			self.apply_op_id(
-				QuOperation::new(name, asm, args.to_vec())
-			)
-		);
-	}
 
 
 	/// Converts a math or logic symbol to the id of the [QuOperation] that will
@@ -1533,7 +1830,7 @@ pub struct QuParser<'a> {
 	tk_stack:Vec<usize>,
 	tokens:&'a Vec<QuToken>,
 	script:&'a String,
-	ops:QuOpLibrary,
+	opslib:QuOpLibrary<'a>,
 
 } impl<'a> QuParser<'a> {
 
@@ -1552,7 +1849,7 @@ pub struct QuParser<'a> {
 			tk_stack:vec![],
 			tokens:tokens,
 			script:script,
-			ops:QuOpLibrary::new(),
+			opslib:QuOpLibrary::new(),
 		}
 	}
 
@@ -2079,7 +2376,7 @@ pub struct QuParser<'a> {
 
 		return Ok(Some(
 			QuLeafExpr::Equation(
-				self.ops.op_id_from_symbol(operator),
+				self.opslib.op_id_from_symbol(operator),
 				Box::new(data_l),
 				Box::new(data_r)
 			)
@@ -2281,7 +2578,8 @@ pub struct QuType {
 
 
 /// The virtual machine that runs Qu code.
-pub struct QuVm {
+pub struct QuVm<'a> {
+	call_stack:Vec<QuCallFrame>,
 	/// The registers of the VM.
 	registers:[u64;256],
 	/// Keeps track of which instruction to execute next.
@@ -2291,18 +2589,19 @@ pub struct QuVm {
 	/// The memory of the VM.
 	mem:Vec<u64>,
 	/// The library of available operations.
-	op_lib:QuOpLibrary,
+	oplib:QuOpLibrary<'a>,
 
-} impl QuVm {
+} impl<'a> QuVm<'a> {
 
 	/// Makes a new [`Vm`].
 	pub fn new() -> Self {
 		let vm = QuVm { 
+			call_stack:vec![],
 			pc:0,
 			source:vec![],
 			registers:[0;256],
 			mem:vec![],
-			op_lib:QuOpLibrary::new(),
+			oplib:QuOpLibrary::new(),
 		};
 
 		return vm;
@@ -2317,7 +2616,7 @@ pub struct QuVm {
 		while i < code.len() {
 			let op_code = code[i];
 			// HACK: Skip commands if they exceed the ops length.
-			if op_code as usize >= self.op_lib.ops.len() {
+			if op_code as usize >= _oplib.ops.len() {
 				i += 1;
 				// Add error text
 				asm.push_str(format!("\n{:.>8}-{:.<8} {}",
@@ -2325,7 +2624,7 @@ pub struct QuVm {
 				continue;
 			}
 			let op
-					= &self.op_lib.ops[op_code as usize];
+					= &_oplib.ops[op_code as usize];
 			assert!(op.id == op_code);
 
 			asm.push_str("\n");
@@ -2633,37 +2932,37 @@ pub struct QuVm {
 
 	
 	pub fn run_bytes(&mut self, code:&[u8]) {
-		let ops = QuOpLibrary::new();
+		let oplib = QuOpLibrary::new();
 		self.source = code.to_vec();
 		loop {
 			
 			match self.next_u8() {
-				x if x == ops.end as u8 => {break;},
+				x if x == oplib.end as u8 => {break;},
 
-				x if x == ops.load_const => self.exc_load_const_u8(),
-				x if x == ops.load_val_u8 => self.exc_load_val_u8(),
-				x if x == ops.load_val_u16 => self.exc_load_val_u16(),
-				x if x == ops.load_val_u32 => self.exc_load_val_u32(),
-				x if x == ops.load_val_u64 => self.exc_load_val_u64(),
-				x if x == ops.load_mem => self.exc_load_mem(),
-				x if x == ops.store_mem => self.exc_store_mem(),
-				x if x == ops.copy_reg => self.exc_copy_reg(),
-				x if x == ops.add => self.exc_math_add(),
-				x if x == ops.sub => self.exc_math_sub(),
-				x if x == ops.mul => self.exc_math_mul(),
-				x if x == ops.div => self.exc_math_div(),
-				x if x == ops.modulate => self.exc_math_mod(),
-				x if x == ops.pow => self.exc_math_pow(),
-				x if x == ops.lesser => self.exc_logi_lesser(),
-				x if x == ops.greater => self.exc_logi_greater(),
-				x if x == ops.equal => self.exc_logi_equal(),
-				x if x == ops.not_equal => self.exc_logi_not_equal(),
-				x if x == ops.not => self.exc_logi_not(),
-				x if x == ops.jump_to => self.exc_jump_to(),
-				x if x == ops.jump_by => self.exc_jump_by(),
-				x if x == ops.jump_to_if => self.exc_jump_to_if(),
-				x if x == ops.jump_by_if => self.exc_jump_by_if(),
-				x if x == ops.print => self.exc_print(),
+				x if x == oplib.load_const => self.exc_load_const_u8(),
+				x if x == oplib.load_val_u8 => self.exc_load_val_u8(),
+				x if x == oplib.load_val_u16 => self.exc_load_val_u16(),
+				x if x == oplib.load_val_u32 => self.exc_load_val_u32(),
+				x if x == oplib.load_val_u64 => self.exc_load_val_u64(),
+				x if x == oplib.load_mem => self.exc_load_mem(),
+				x if x == oplib.store_mem => self.exc_store_mem(),
+				x if x == oplib.copy_reg => self.exc_copy_reg(),
+				x if x == oplib.add => self.exc_math_add(),
+				x if x == oplib.sub => self.exc_math_sub(),
+				x if x == oplib.mul => self.exc_math_mul(),
+				x if x == oplib.div => self.exc_math_div(),
+				x if x == oplib.modulate => self.exc_math_mod(),
+				x if x == oplib.pow => self.exc_math_pow(),
+				x if x == oplib.lesser => self.exc_logi_lesser(),
+				x if x == oplib.greater => self.exc_logi_greater(),
+				x if x == oplib.equal => self.exc_logi_equal(),
+				x if x == oplib.not_equal => self.exc_logi_not_equal(),
+				x if x == oplib.not => self.exc_logi_not(),
+				x if x == oplib.jump_to => self.exc_jump_to(),
+				x if x == oplib.jump_by => self.exc_jump_by(),
+				x if x == oplib.jump_to_if => self.exc_jump_to_if(),
+				x if x == oplib.jump_by_if => self.exc_jump_by_if(),
+				x if x == oplib.print => self.exc_print(),
 
 				x => { println!("{x}"); todo!(); }
 			}
