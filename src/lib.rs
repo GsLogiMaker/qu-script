@@ -704,8 +704,27 @@ use qu_tokens::{RULES, TOKEN_TYPE_NAME, tokenize, QuToken};
 
 
 /// A tuple of for specifying arguments for a [QuOperation].
-type CommandArg = (i8,);
+type CommandArg = QuAsmTypes;
 type QuRegisterValue = usize;
+
+
+enum QuAsmTypes {
+	uint8,
+	uint16,
+	uint32,
+	uint64,
+	str,
+} impl QuAsmTypes {
+	fn size(&self, code:&Vec<u8>, at:usize) -> usize {
+		return match self {
+			Self::uint8 => 1,
+			Self::uint16 => 2,
+			Self::uint32 => 4,
+			Self::uint64 => 8,
+			Self::str => code[at] as usize,
+		};
+	}
+}
 
 
 const FLOW_IF:u8 = 0;
@@ -802,7 +821,7 @@ macro_rules! struct_QuOpLibrary {
 				return Self{
 					ops:vec![
 						$(
-							QuOperation::new(stringify!($name), stringify!($asm_keyword), $idx, &[   $( ($args,), )*   ]),
+							QuOperation::new(stringify!($name), stringify!($asm_keyword), $idx, &[   $( $args, )*   ]),
 						)+
 					],
 					
@@ -840,37 +859,38 @@ macro_rules! struct_QuOpLibrary {
 struct_QuOpLibrary!{
 	[  0] end:END()
 
-	[  1] load_val_u8:LDU8(1, 1)
-	[  2] load_val_u16:LDU16(2, 1)
-	[  3] load_val_u32:LDU32(4, 1)
-	[  4] load_val_u64:LDU64(8, 1)
+	[  1] load_val_u8:LDU8(QuAsmTypes::uint8, QuAsmTypes::uint8)
+	[  2] load_val_u16:LDU16(QuAsmTypes::uint16, QuAsmTypes::uint8)
+	[  3] load_val_u32:LDU32(QuAsmTypes::uint32, QuAsmTypes::uint8)
+	[  4] load_val_u64:LDU64(QuAsmTypes::uint64, QuAsmTypes::uint8)
 
-	[  5] load_mem:LDM(4, 1)
-	[  6] store_mem:STM(1, 4)
-	[  7] copy_reg:CPY(1, 1)
+	[  5] load_mem:LDM(QuAsmTypes::uint32, QuAsmTypes::uint8)
+	[  6] store_mem:STM(QuAsmTypes::uint8, QuAsmTypes::uint32)
+	[  7] copy_reg:CPY(QuAsmTypes::uint8, QuAsmTypes::uint8)
 
-	[  8] add:ADD(1, 1, 1)
-	[  9] sub:SUB(1, 1, 1)
-	[ 10] mul:MUL(1, 1, 1)
-	[ 11] div:DIV(1, 1, 1)
-	[ 12] modulate:MOD(1, 1, 1)
-	[ 13] pow:POW(1, 1, 1)
-	[ 14] lesser:LES(1, 1, 1)
-	[ 15] greater:GRT(1, 1, 1)
-	[ 16] equal:EQ(1, 1, 1)
-	[ 17] not_equal:NEQ(1, 1, 1)
-	[ 18] not:NOT(1, 1)
+	[  8] add:ADD(QuAsmTypes::uint8, QuAsmTypes::uint8, QuAsmTypes::uint8)
+	[  9] sub:SUB(QuAsmTypes::uint8, QuAsmTypes::uint8, QuAsmTypes::uint8)
+	[ 10] mul:MUL(QuAsmTypes::uint8, QuAsmTypes::uint8, QuAsmTypes::uint8)
+	[ 11] div:DIV(QuAsmTypes::uint8, QuAsmTypes::uint8, QuAsmTypes::uint8)
+	[ 12] modulate:MOD(QuAsmTypes::uint8, QuAsmTypes::uint8, QuAsmTypes::uint8)
+	[ 13] pow:POW(QuAsmTypes::uint8, QuAsmTypes::uint8, QuAsmTypes::uint8)
+	[ 14] lesser:LES(QuAsmTypes::uint8, QuAsmTypes::uint8, QuAsmTypes::uint8)
+	[ 15] greater:GRT(QuAsmTypes::uint8, QuAsmTypes::uint8, QuAsmTypes::uint8)
+	[ 16] equal:EQ(QuAsmTypes::uint8, QuAsmTypes::uint8, QuAsmTypes::uint8)
+	[ 17] not_equal:NEQ(QuAsmTypes::uint8, QuAsmTypes::uint8, QuAsmTypes::uint8)
+	[ 18] not:NOT(QuAsmTypes::uint8, QuAsmTypes::uint8)
 
-	[ 19] jump_to:JP(4)
-	[ 20] jump_by:JB(4)
-	[ 21] jump_to_if:JPI(4, 1)
-	[ 22] jump_by_if:JBI(4, 1)
+	[ 19] jump_to:JP(QuAsmTypes::uint32)
+	[ 20] jump_by:JB(QuAsmTypes::uint32)
+	[ 21] jump_to_if:JPI(QuAsmTypes::uint32, QuAsmTypes::uint8)
+	[ 22] jump_by_if:JBI(QuAsmTypes::uint32, QuAsmTypes::uint8)
 
-	[ 23] print:PRT(1)
+	[ 23] print:PRT(QuAsmTypes::uint8)
 
-	[ 24] call:CALL(4)
+	[ 24] call:CALL(QuAsmTypes::uint32)
 
-	[ 25] define_fn:DFFN(4)
+	[ 25] define_fn:DFFN(QuAsmTypes::uint16, QuAsmTypes::uint16)
+	[ 26] define_const_str:DFCS(QuAsmTypes::str)
 }
 
 
@@ -1569,7 +1589,7 @@ pub struct QuOperation<'a> {
 	args:&'a [CommandArg],
 	id:u8,
 } impl<'a> QuOperation<'a> {
-	pub fn new(name:&str, asm_keyword:&str, id:u8, args:&'a [CommandArg]) -> Self {
+	fn new(name:&str, asm_keyword:&str, id:u8, args:&'a [CommandArg]) -> Self {
 		return Self{
 			name:name.to_string(),
 			asm_keyword:asm_keyword.to_string(),
@@ -2393,7 +2413,8 @@ pub struct QuVm {
 				format!("{}",op.asm_keyword).as_str());
 
 			// Add parameter text
-			for (size,) in op.args.iter() {
+			for asm_type in op.args.iter() {
+				let size = asm_type.size(code, i);
 				// Get value
 				let val = match size {
 					1 => {
