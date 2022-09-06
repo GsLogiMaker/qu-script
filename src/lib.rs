@@ -6,6 +6,11 @@
 #![warn(rustdoc::broken_intra_doc_links)]
 
 
+#[macro_use]
+extern crate derive_new;
+#[macro_use]
+extern crate lazy_static;
+
 
 mod qu_error {
 
@@ -693,7 +698,8 @@ mod qu_tokens {
 }
 
 
-use std::{fmt::{self, Display, Debug}, vec, collections::HashMap};
+use std::{fmt::{self, Display, Debug}, vec, collections::HashMap, rc::Rc};
+use derive_new::new;
 use qu_tokens::{RULES, TOKEN_TYPE_NAME, tokenize, QuToken};
 
 
@@ -723,76 +729,210 @@ const OP_ASSIGN_WORD:&str = "=";
 const OP_BLOCK_START_WORD:&str = ":";
 
 
-static _oplib:QuOpLibrary = QuOpLibrary::new();
+lazy_static! {
+    pub static ref OPLIB:QuOpLibrary<'static> = QuOpLibrary::new();
+}
+
+
+/// Defines a [QuOpLibrary] struct
+/// 
+/// Example:
+/// ```
+/// struct_QuOpLibrary!{
+/// 	[0] end:END()
+/// 	[1] add:ADD((1,), (1,), (1,))
+/// }
+/// let oplib = QuOpLibrary::new();
+/// assert_eq(oplib.end, 0);
+/// assert_eq(oplib.add, 1);
+/// ```
+/// 
+/// Expands into:
+/// ```
+/// pub struct QuOpLibrary<'a> {
+/// 	ops: Vec<QuOperation<'a>>,
+/// 	end: u8,
+/// 	add: u8,
+/// }
+/// impl<'a> QuOpLibrary<'a> {
+/// 	fn new() -> Self {
+/// 		return Self {
+/// 			ops: vec![
+/// 				QuOperation::new("end", "END", &[(1,)]),
+/// 				QuOperation::new("add", "ADD", &[(1,), (1,), (1,)]),
+/// 			],
+/// 			end: 0,
+/// 			add: 1,
+/// 		};
+/// 	}
+/// }
+/// ```
+macro_rules! struct_QuOpLibrary {
+	// Start (BROKEN)
+	( $(  $name:ident:$asm_keyword:ident( $($args:expr),+ )  )+ ) => {
+		struct_QuOpLibrary!(
+			0, $($name:$asm_keyword($($args),+))+
+		);
+	};
+
+	// Body (BROKEN)
+	( $id:expr, $name:ident:$asm_keyword:ident( $($args:expr),+ ) $(  $name2:ident:$asm_keyword2:ident( $($args2:expr),+ )  )+ ) => {
+		struct_QuOpLibrary!(
+			id, $name:$asm_keyword($($args),+)
+			struct_QuOpLibrary!{
+				$(  $id+1, $name2:$asm_keyword2( $($args2),+ )  )+
+			}
+		);
+	};
+
+
+	// Final (do nothing) (BROKEN)
+	( $id:expr ) => {};
+
+
+	( $(  [$idx:expr] $name:ident:$asm_keyword:ident( $($args:expr),* )  )+ ) => {
+		pub struct QuOpLibrary<'a> {
+			pub ops:Vec<QuOperation<'a>>,
+			$(
+				pub $name:u8,
+			)+
+		} impl<'a> QuOpLibrary<'a> {
+			
+			fn new() -> Self {
+				return Self{
+					ops:vec![
+						$(
+							QuOperation::new(stringify!($name), stringify!($asm_keyword), $idx, &[   $( ($args,), )*   ]),
+						)+
+					],
+					
+					$(
+						$name:$idx,
+					)+
+				};
+			}
+
+
+			/// Converts a math or logic symbol to the id of the [QuOperation] that will
+			/// perform it.
+			fn op_id_from_symbol(&self, symbol:&str) -> u8 {
+				return match symbol {
+					"+" => self.add,
+					"-" => self.sub,
+					"*" => self.mul,
+					"/" => self.div,
+					"**" => self.pow,
+					"%" => self.modulate,
+					">" => self.greater,
+					"<" => self.lesser,
+					"==" => self.equal,
+					"!=" => self.not_equal,
+					_ => panic!("Unknown Qu VM operation symbol: {}", symbol),
+				};
+			}
+
+		}
+	};
+}
+
+
+// Define the QuOpLibrary struct
+struct_QuOpLibrary!{
+	[  0] end:END()
+
+	[  1] load_val_u8:LDU8(1, 1)
+	[  2] load_val_u16:LDU16(2, 1)
+	[  3] load_val_u32:LDU32(4, 1)
+	[  4] load_val_u64:LDU64(8, 1)
+
+	[  5] load_mem:LDM(4, 1)
+	[  6] store_mem:STM(1, 4)
+	[  7] copy_reg:CPY(1, 1)
+
+	[  8] add:ADD(1, 1, 1)
+	[  9] sub:SUB(1, 1, 1)
+	[ 10] mul:MUL(1, 1, 1)
+	[ 11] div:DIV(1, 1, 1)
+	[ 12] modulate:MOD(1, 1, 1)
+	[ 13] pow:POW(1, 1, 1)
+	[ 14] lesser:LES(1, 1, 1)
+	[ 15] greater:GRT(1, 1, 1)
+	[ 16] equal:EQ(1, 1, 1)
+	[ 17] not_equal:NEQ(1, 1, 1)
+	[ 18] not:NOT(1, 1)
+
+	[ 19] jump_to:JP(4)
+	[ 20] jump_by:JB(4)
+	[ 21] jump_to_if:JPI(4, 1)
+	[ 22] jump_by_if:JBI(4, 1)
+
+	[ 23] print:PRT(1)
+
+	[ 24] call:CALL(4)
+
+	[ 25] define_fn:DFFN(4)
+}
+
 
 /// The interface for the Qu programming language.
-pub struct Qu<'a> {
-	vm:QuVm<'a>,
-	oplib:QuOpLibrary<'a>,
-} impl<'a> Qu<'a> {
+pub struct Qu {
+	vm:QuVm,
+} impl Qu {
 	
 	/// Creates a new Qu instance.
 	pub fn new() -> Self {
-		let oplib_ = QuOpLibrary::new();
 		Qu {
 			vm:QuVm::new(),
-			oplib:QuOpLibrary::new(),
 		}
 	}
 
 
 	/// Compiles Qu code into bytecode.
 	pub fn compile(&self, code:&str) -> Result<Vec<u8>, String> {
+		// Tokenize
 		let code_str = code.to_string();
 		let tokens = &mut tokenize(&code_str, RULES);
+
+		// Parse
 		let mut parser = QuParser::new(tokens, &code_str);
-		let instruction_vec = match parser.parse() {
-			Ok(v) => v,
-			// Propagate error
-			Err(e) => {
-				return Err(e);
-			}
-		};
-		let leaf_block = QuLeaf::Block(instruction_vec);
+		let leaf_block = parser.parse()?;
+
+		// Compile
 		let mut c = QuCompiler::new(&code_str);
-		let compiled = match c.compile(&leaf_block) {
-			Ok(compiled) => compiled,
-			Err(e) => {
-				return Err(e);
-			}
-		};
-		return Ok(compiled);
+		return Ok(c.compile(&leaf_block)?);
 	}
 
 
 	/// Compiles Qu code to Qu assembly.
 	pub fn compile_to_asm(&mut self, code:&str) -> Result<String, String> {
-		let byte_code = match self.compile(code) {
-			Ok(byte_code) => byte_code,
-			Err(e) => {
-				return Err(e);
-			}
-		};
+		let code = self.compile(code)?;
 
-		return Ok(self.vm.code_to_asm(&byte_code, false));
+		return Ok(self.vm.code_to_asm(&code, false));
 	}
 
 
-	/// Runs Qu code.
+	/// Runs a [String] of Qu code.
 	pub fn run(&mut self, script:&str) -> Result<(), String> {
-		let bytecode = match self.compile(script) {
-			Ok(bytecode) => bytecode,
-			Err(e) => {
-				return Err(e);
-			}
-		};
-		return self.run_bytes(bytecode.as_slice());
+		let code = self.compile(script)?;
+		return self.run_bytes(&code);
 	}
 
 
 	/// Runs Qu bytecode.
 	pub fn run_bytes(&mut self, bytes:&[u8]) -> Result<(), String> {
-		return Ok(self.vm.run_bytes(bytes));
+		return self.vm.run_bytes(bytes);
+	}
+	
+
+	/// Runs a [QuFunc].
+	pub fn run_fn(&mut self, glob_fn:&QuFunc) -> Result<(), String> {
+		return self.vm.run_bytes(&glob_fn.code);
+	}
+
+
+	/// Runs a global scope [QuFunc].
+	pub fn run_global_fn(&mut self, glob_fn:&QuFunc) -> Result<(), String> {
+		return self.run_fn(glob_fn);
 	}
 
 }
@@ -809,292 +949,6 @@ struct QuCallFrame {
 		QuCallFrame {
 			pc:0,
 			registers:[0; 256],
-		}
-	}
-
-
-	fn exc_copy_reg(&mut self, code:&[u8]) {
-		let from_reg = self.next_u8(code) as usize;
-		let to_reg = self.next_u8(code) as usize;
-		self.registers[to_reg] = self.registers[from_reg];
-	}
-
-
-	fn exc_jump_by(&mut self, code:&[u8]) {
-		let val_by = self.next_u32(code) as usize;
-		// Add
-		if val_by as isize > 0 {
-			self.pc += val_by;
-		// Subtract
-		} else {
-			self.pc = self.pc.wrapping_add(val_by);
-		}
-		
-	}
-
-
-	fn exc_jump_by_if(&mut self, code:&[u8]) {
-		let val_by = self.next_u32(code) as i32;
-		let rg_if = self.next_u8(code) as usize;
-		if self.registers[rg_if] as i64 > 0 {
-			// Add
-			if val_by > 0 {
-				self.pc += val_by as usize;
-			// Subtract
-			} else {
-				self.pc -= val_by.abs() as usize;
-			}
-		}
-	}
-
-
-	fn exc_jump_to(&mut self, code:&[u8]) {
-		unimplemented!()
-	}
-
-
-	fn exc_jump_to_if(&mut self, code:&[u8]) {
-		let val_to = self.next_u32(code) as usize;
-		let rg_if = self.next_u8(code) as usize;
-		if self.registers[rg_if] > 0 {
-			self.pc = val_to as usize;
-		}
-	}
-
-
-	/// Executes a load instruction.
-	fn exc_load_const_u8(&mut self, code:&[u8]) {
-		let src_from = self.next_u32(code) as usize;
-		let rg_to = self.next_u8(code) as usize;
-		self.registers[rg_to] = code[src_from] as QuRegisterValue;
-	}
-
-
-	fn exc_load_val_u8(&mut self, code:&[u8]) {
-		let val = self.next_u8(code) as QuRegisterValue;
-		let rg_to = self.next_u8(code) as usize;
-		self.registers[rg_to] = val;
-	}
-
-
-	fn exc_load_val_u16(&mut self, code:&[u8]) {
-		let val = self.next_u16(code) as QuRegisterValue;
-		let rg_to = self.next_u8(code) as usize;
-		self.registers[rg_to] = val;
-	}
-
-
-	fn exc_load_val_u32(&mut self, code:&[u8]) {
-		let val = self.next_u32(code) as QuRegisterValue;
-		let rg_to = self.next_u8(code) as usize;
-		self.registers[rg_to] = val;
-	}
-
-
-	fn exc_load_val_u64(&mut self, code:&[u8]) {
-		let val = self.next_u64(code) as QuRegisterValue;
-		let rg_to = self.next_u8(code) as usize;
-		self.registers[rg_to] = val;
-	}
-
-
-	fn exc_load_mem(&mut self, code:&[u8]) {
-		unimplemented!();
-	}
-
-
-	fn exc_print(&mut self, code:&[u8]) {
-		let read_from_reg = self.next_u8(code) as usize;
-		let val = self.registers[read_from_reg];
-		println!("Qu Print: {}", val);
-	}
-
-
-	fn exc_store_mem(&mut self, code:&[u8]) {
-		unimplemented!();
-	}
-
-
-	fn exc_math_add(&mut self, code:&[u8]) {
-		let rg_left = self.next_u8(code) as usize;
-		let rg_right = self.next_u8(code) as usize;
-		let rg_result = self.next_u8(code) as usize;
-		self.registers[rg_result] = 
-				self.registers[rg_left]
-				+ self.registers[rg_right];
-	}
-
-
-	fn exc_math_sub(&mut self, code:&[u8]) {
-		let rg_left = self.next_u8(code) as usize;
-		let rg_right = self.next_u8(code) as usize;
-		let rg_result = self.next_u8(code) as usize;
-		self.registers[rg_result] = 
-				self.registers[rg_left]
-				- self.registers[rg_right];
-	}
-
-
-	fn exc_math_mul(&mut self, code:&[u8]) {
-		let rg_left = self.next_u8(code) as usize;
-		let rg_right = self.next_u8(code) as usize;
-		let rg_result = self.next_u8(code) as usize;
-		self.registers[rg_result] = 
-				self.registers[rg_left]
-				* self.registers[rg_right];
-	}
-
-
-	fn exc_math_div(&mut self, code:&[u8]) {
-		let rg_left = self.next_u8(code) as usize;
-		let rg_right = self.next_u8(code) as usize;
-		let rg_result = self.next_u8(code) as usize;
-		self.registers[rg_result] = 
-				self.registers[rg_left]
-				/ self.registers[rg_right];
-	}
-
-
-	fn exc_math_mod(&mut self, code:&[u8]) {
-		let rg_left = self.next_u8(code) as usize;
-		let rg_right = self.next_u8(code) as usize;
-		let rg_result = self.next_u8(code) as usize;
-		self.registers[rg_result] = 
-				self.registers[rg_left]
-				% self.registers[rg_right];
-	}
-
-
-	fn exc_math_pow(&mut self, code:&[u8]) {
-		let rg_left = self.next_u8(code) as usize;
-		let rg_right = self.next_u8(code) as usize;
-		let rg_result = self.next_u8(code) as usize;
-		// WARNING: I don't know that ^ is actually the power symbol.
-		self.registers[rg_result] = 
-				self.registers[rg_left]
-				^ self.registers[rg_right];
-	}
-
-
-	fn exc_logi_equal(&mut self, code:&[u8]) {
-		let rg_left = self.next_u8(code) as usize;
-		let rg_right = self.next_u8(code) as usize;
-		let rg_result = self.next_u8(code) as usize;
-		self.registers[rg_result] = 
-				(self.registers[rg_left] == self.registers[rg_right])
-				as QuRegisterValue;
-	}
-
-
-	fn exc_logi_greater(&mut self, code:&[u8]) {
-		let rg_left = self.next_u8(code) as usize;
-		let rg_right = self.next_u8(code) as usize;
-		let rg_result = self.next_u8(code) as usize;
-		self.registers[rg_result] = 
-				(self.registers[rg_left] > self.registers[rg_right])
-				as QuRegisterValue;
-	}
-
-
-	fn exc_logi_lesser(&mut self, code:&[u8]) {
-		let rg_left = self.next_u8(code) as usize;
-		let rg_right = self.next_u8(code) as usize;
-		let rg_result = self.next_u8(code) as usize;
-		self.registers[rg_result] = 
-				(self.registers[rg_left] < self.registers[rg_right])
-				as QuRegisterValue;
-	}
-
-
-	fn exc_logi_not_equal(&mut self, code:&[u8]) {
-		let rg_left = self.next_u8(code) as usize;
-		let rg_right = self.next_u8(code) as usize;
-		let rg_result = self.next_u8(code) as usize;
-		self.registers[rg_result] = 
-				(self.registers[rg_left] != self.registers[rg_right])
-				as QuRegisterValue;
-	}
-
-
-	fn exc_logi_not(&mut self, code:&[u8]) {
-		let rg_left = self.next_u8(code) as usize;
-		let rg_result = self.next_u8(code) as usize;
-		let x = self.registers[rg_left];
-		self.registers[rg_result] = 
-				(x*0 == x) as QuRegisterValue;
-	}
-
-
-	/// Gets the next byte in the source code as a u8 int.
-	fn next_u8(&mut self, code:&[u8]) -> u8 {
-		let val = code[self.pc];
-		self.pc += 1;
-		return val;
-	}
-
-
-	/// Gets the next 2 byte in the source code as a u16 int.
-	fn next_u16(&mut self, code:&[u8]) -> u16 {
-		let bytes = [code[self.pc], code[self.pc+1]];
-		self.pc += 2;
-		return u16::from_be_bytes(bytes);
-	}
-
-
-	/// Gets the next 4 byte in the source code as a u32 int.
-	fn next_u32(&mut self, code:&[u8]) -> u32 {
-		let bytes = [
-			code[self.pc], code[self.pc+1],
-			code[self.pc+2], code[self.pc+3],
-		];
-		self.pc += 4;
-		return u32::from_be_bytes(bytes);
-	}
-
-
-	// Gets the next 8 byte in the source code as a u64 int.
-	fn next_u64(&mut self, code:&[u8]) -> u64 {
-		let bytes = [
-			code[self.pc], code[self.pc+1],
-			code[self.pc+2], code[self.pc+3],
-			code[self.pc+4], code[self.pc+5],
-			code[self.pc+6], code[self.pc+7],
-		];
-		self.pc += 8;
-		return u64::from_be_bytes(bytes);
-	}
-
-	
-	pub fn run_next(&mut self, code:&[u8]) {
-		match self.next_u8(code) {
-			x if x == _oplib.end as u8 => {/*pass TODO: Handle END*/},
-
-			x if x == _oplib.load_const => self.exc_load_const_u8(code),
-			x if x == _oplib.load_val_u8 => self.exc_load_val_u8(code),
-			x if x == _oplib.load_val_u16 => self.exc_load_val_u16(code),
-			x if x == _oplib.load_val_u32 => self.exc_load_val_u32(code),
-			x if x == _oplib.load_val_u64 => self.exc_load_val_u64(code),
-			x if x == _oplib.load_mem => self.exc_load_mem(code),
-			x if x == _oplib.store_mem => self.exc_store_mem(code),
-			x if x == _oplib.copy_reg => self.exc_copy_reg(code),
-			x if x == _oplib.add => self.exc_math_add(code),
-			x if x == _oplib.sub => self.exc_math_sub(code),
-			x if x == _oplib.mul => self.exc_math_mul(code),
-			x if x == _oplib.div => self.exc_math_div(code),
-			x if x == _oplib.modulate => self.exc_math_mod(code),
-			x if x == _oplib.pow => self.exc_math_pow(code),
-			x if x == _oplib.lesser => self.exc_logi_lesser(code),
-			x if x == _oplib.greater => self.exc_logi_greater(code),
-			x if x == _oplib.equal => self.exc_logi_equal(code),
-			x if x == _oplib.not_equal => self.exc_logi_not_equal(code),
-			x if x == _oplib.not => self.exc_logi_not(code),
-			x if x == _oplib.jump_to => self.exc_jump_to(code),
-			x if x == _oplib.jump_by => self.exc_jump_by(code),
-			x if x == _oplib.jump_to_if => self.exc_jump_to_if(code),
-			x if x == _oplib.jump_by_if => self.exc_jump_by_if(code),
-			x if x == _oplib.print => self.exc_print(code),
-
-			x => { println!("{x}"); todo!(); }
 		}
 	}
 
@@ -1515,7 +1369,7 @@ pub struct QuCompiler<'a> {
 	/// Compiles from a [QuLeaf] instruction into bytecode (into a [Vec]<[u8]>.)
 	pub fn compile(&mut self, leafs:&QuLeaf) -> Result<Vec<u8>, String> {
 		match self.cmp_scope(leafs) {
-			// Add exit code and return code
+			// Add the exit code and return function
 			Ok(mut code) => {
 				code.push(self.oplib.end);
 				return Ok(code);
@@ -1571,6 +1425,33 @@ pub struct QuCompiler<'a> {
 	/// Starts a new stack frame.
 	fn stack_frame_push(&mut self) {
 		self.stack_layers.push(self.stack_idx);
+	}
+
+}
+
+
+/// A declared Qu function. Contains all the metadata for a defined function.
+pub struct QuFunc {
+	/// The name of this funciton.
+	name:String,
+	/// The index that is function is stored at in the function list.
+	id:usize,
+	arg_list:Vec<u8>,
+	/// The code of this function.
+	code:Vec<u8>,
+	/// The start index of this function's code.
+	code_start:usize,
+
+} impl QuFunc {
+
+	fn new(name:&str, id:usize, code_start:usize) -> Self {
+		return Self{
+			name: name.to_owned(),
+			id: id,
+			arg_list: Vec::default(),
+			code: Vec::default(),
+			code_start: code_start,
+		}
 	}
 
 }
@@ -1688,137 +1569,14 @@ pub struct QuOperation<'a> {
 	args:&'a [CommandArg],
 	id:u8,
 } impl<'a> QuOperation<'a> {
-	pub fn new(name:&str, asm_keyword:&str, args:&'a [CommandArg]) -> Self {
+	pub fn new(name:&str, asm_keyword:&str, id:u8, args:&'a [CommandArg]) -> Self {
 		return Self{
 			name:name.to_string(),
 			asm_keyword:asm_keyword.to_string(),
 			args:args,
-			id:0,
+			id:id,
 		};
 	}
-}
-
-
-
-
-/// A library of all of Qu's VM operations.
-///
-/// Instantiating this struct will create a library of all of Qu's VM operations.
-pub struct QuOpLibrary<'a> {
-	ops:Vec<QuOperation<'a>>,
-	// Operations
-	end:u8,
-	load_const:u8,
-	load_val_u8:u8,
-	load_val_u16:u8,
-	load_val_u32:u8,
-	load_val_u64:u8,
-	load_mem:u8,
-	store_mem:u8,
-	copy_reg:u8,
-	add:u8,
-	sub:u8,
-	mul:u8,
-	div:u8,
-	modulate:u8,
-	pow:u8,
-	lesser:u8,
-	greater:u8,
-	equal:u8,
-	not_equal:u8,
-	not:u8,
-	jump_to:u8,
-	jump_by:u8,
-	jump_to_if:u8,
-	jump_by_if:u8,
-	print:u8,
-} impl<'a> QuOpLibrary<'a> {
-
-	/// Create a new [QuOpLibrary].
-	const fn new() -> Self {
-		let mut obj = Self{
-			ops:vec![],
-			end:0,
-			load_const:0,
-			load_val_u8:0,
-			load_val_u16:0,
-			load_val_u32:0,
-			load_val_u64:0,
-			load_mem:0,
-			store_mem:0,
-			copy_reg:0,
-			add:0,
-			sub:0,
-			mul:0,
-			div:0,
-			modulate:0,
-			pow:0,
-			lesser:0,
-			greater:0,
-			equal:0,
-			not_equal:0,
-			not:0,
-			jump_to:0,
-			jump_by:0,
-			jump_to_if:0,
-			jump_by_if:0,
-			print:0,
-		};
-		//obj.generate();
-		return obj;
-	}
-
-
-	/// Generate the library of Qu VM operations.
-//	fn generate(&mut self) {
-//		// TODO: Turn most of QuOpLibrary into macros
-//		self.new_op("END", "End", &[]); self.end = self.ops.len() as u8 - 1;
-//		self.new_op("LDU8", "LoadU8", &[(1,), (1,)]); self.load_val_u8 = self.ops.len() as u8 - 1;
-//		self.new_op("LDU16", "LoadU16", &[(2,), (1,)]); self.load_val_u16 = self.ops.len() as u8 - 1;
-//		self.new_op("LDU32", "LoadU32", &[(4,), (1,)]); self.load_val_u32 = self.ops.len() as u8 - 1;
-//		self.new_op("LDU64", "LoadU64", &[(8,), (1,)]); self.load_val_u64 = self.ops.len() as u8 - 1;
-//		self.new_op("LDM", "LoadMem", &[(4,), (1,)]); self.load_mem = self.ops.len() as u8 - 1;
-//		self.new_op("STM", "StoreMem", &[(1,), (4,)]); self.store_mem = self.ops.len() as u8 - 1;
-//		self.new_op("CPY", "Copy", &[(1,), (1,)]); self.copy_reg = self.ops.len() as u8 - 1;
-//		self.new_op("ADD", "Add", &[(1,), (1,), (1,)]); self.add = self.ops.len() as u8 - 1;
-//		self.new_op("SUB", "Subtract", &[(1,), (1,), (1,)]); self.sub = self.ops.len() as u8 - 1;
-//		self.new_op("MUL", "Multiply", &[(1,), (1,), (1,)]); self.mul = self.ops.len() as u8 - 1;
-//		self.new_op("DIV", "Divide", &[(1,), (1,), (1,)]); self.div = self.ops.len() as u8 - 1;
-//		self.new_op("MOD", "Modulate", &[(1,), (1,), (1,)]); self.modulate = self.ops.len() as u8 - 1;
-//		self.new_op("POW", "Power", &[(1,), (1,), (1,)]); self.pow = self.ops.len() as u8 - 1;
-//		self.new_op("LES", "Lesser", &[(1,), (1,), (1,)]); self.lesser = self.ops.len() as u8 - 1;
-//		self.new_op("GRT", "Greater", &[(1,), (1,), (1,)]); self.greater = self.ops.len() as u8 - 1;
-//		self.new_op("EQ", "Equal", &[(1,), (1,), (1,)]); self.equal = self.ops.len() as u8 - 1;
-//		self.new_op("NEQ", "NotEqual", &[(1,), (1,), (1,)]); self.not_equal = self.ops.len() as u8 - 1;
-//		self.new_op("NOT", "Not", &[(1,), (1,)]); self.not = self.ops.len() as u8 - 1;
-//		self.new_op("JP", "JumpTo", &[(4,)]); self.jump_to = self.ops.len() as u8 - 1;
-//		self.new_op("JB", "JumpBy", &[(4,)]); self.jump_by = self.ops.len() as u8 - 1;
-//		self.new_op("JPI", "JumpIf", &[(4,), (1,)]); self.jump_to_if = self.ops.len() as u8 - 1;
-//		self.new_op("JBI", "JumpByIf", &[(4,), (1,)]); self.jump_by_if = self.ops.len() as u8 - 1;
-//		self.new_op("PRT", "Print", &[(1,)]); self.print = self.ops.len() as u8 - 1;
-//		
-//	}
-
-
-
-	/// Converts a math or logic symbol to the id of the [QuOperation] that will
-	/// perform it.
-	fn op_id_from_symbol(&self, symbol:&str) -> u8 {
-		return match symbol {
-			"+" => self.add,
-			"-" => self.sub,
-			"*" => self.mul,
-			"/" => self.div,
-			"**" => self.pow,
-			"%" => self.modulate,
-			">" => self.greater,
-			"<" => self.lesser,
-			"==" => self.equal,
-			"!=" => self.not_equal,
-			_ => panic!("Unknown Qu VM operation symbol: {}", symbol),
-		};
-	}
-
 }
 
 
@@ -2419,16 +2177,15 @@ pub struct QuParser<'a> {
 
 
 	/// Parses a Qu script.
-	pub fn parse(&mut self) -> Result<Vec<QuLeaf>, String> {
+	pub fn parse(&mut self) -> Result<QuLeaf, String> {
 		self.tk_idx = 0;
 		self.line = 0;
 		self.indent = u8::MAX;
 
-		let result = self.ck_code_block();
-		return match result {
-			Ok(data) => Ok(data.unwrap()),
-			Err(msg) => Err(msg),
-		};
+		let leafs = self.ck_code_block()?
+			.ok_or("TODO: Proper error for the function 'parse' not getting a vec of leafs")?;
+				
+		return Ok(QuLeaf::Block(leafs));
 	}
 
 
@@ -2578,45 +2335,41 @@ pub struct QuType {
 
 
 /// The virtual machine that runs Qu code.
-pub struct QuVm<'a> {
-	call_stack:Vec<QuCallFrame>,
-	/// The registers of the VM.
-	registers:[u64;256],
-	/// Keeps track of which instruction to execute next.
-	pc:usize,
-	/// The source bytecode being run.
-	source:Vec<u8>,
-	/// The memory of the VM.
-	mem:Vec<u64>,
-	/// The library of available operations.
-	oplib:QuOpLibrary<'a>,
+pub struct QuVm {
+	/// The stack frame. Keeps track of which function call the VM is in.
+	//call_stack:Vec<QuCallFrame>,
+	/// A [Vec] of all defined [QuFunc]s.
+	functions:Vec<QuFunc>,
 
-} impl<'a> QuVm<'a> {
+} impl QuVm {
 
-	/// Makes a new [`Vm`].
+	/// Makes a new [QuVm].
 	pub fn new() -> Self {
 		let vm = QuVm { 
-			call_stack:vec![],
-			pc:0,
-			source:vec![],
-			registers:[0;256],
-			mem:vec![],
-			oplib:QuOpLibrary::new(),
+			//call_stack:Vec::default(),
+			functions:vec![QuFunc::new("print", 0, 16)],
 		};
 
 		return vm;
 	}
 
 
+	/// Returns a new [QuVm] wrapped in an [Rc].
+	pub fn new_rc() -> Rc<Self> {
+		return Rc::new(Self::new());
+	}
+
+
 	/// Converts byte code to human readable instructions.
-	pub fn code_to_asm(&mut self, code:&Vec<u8>, include_line_columns:bool) -> String {
+	pub fn code_to_asm(&mut self, code:&Vec<u8>, include_line_columns:bool
+	) -> String {
 		let mut asm = String::new();
 		
 		let mut i = 0;
 		while i < code.len() {
 			let op_code = code[i];
 			// HACK: Skip commands if they exceed the ops length.
-			if op_code as usize >= _oplib.ops.len() {
+			if op_code as usize >= OPLIB.ops.len() {
 				i += 1;
 				// Add error text
 				asm.push_str(format!("\n{:.>8}-{:.<8} {}",
@@ -2624,7 +2377,7 @@ pub struct QuVm<'a> {
 				continue;
 			}
 			let op
-					= &_oplib.ops[op_code as usize];
+					= &OPLIB.ops[op_code as usize];
 			assert!(op.id == op_code);
 
 			asm.push_str("\n");
@@ -2677,297 +2430,379 @@ pub struct QuVm<'a> {
 	}
 
 
-	fn exc_copy_reg(&mut self) {
-		let from_reg = self.next_u8() as usize;
-		let to_reg = self.next_u8() as usize;
-		self.registers[to_reg] = self.registers[from_reg];
+	pub fn define_fn(&mut self, name:&str, code_start:usize) {
+		let id = self.functions.len();
+		self.functions.push(QuFunc::new(&name, id, code_start));
 	}
 
 
-	fn exc_jump_by(&mut self) {
-		let val_by = self.next_u32() as usize;
+	fn exc_copy_reg(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
+		let from_reg = self.next_u8(frame, code) as usize;
+		let to_reg = self.next_u8(frame, code) as usize;
+		frame.registers[to_reg] = frame.registers[from_reg];
+	}
+
+
+	/// Reads the bytecode of a function call command and executes it.
+	fn exc_call_fn(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
+		let mut next_frame = QuCallFrame::new();
+
+		let fn_id = self.next_u32(frame, code) as usize;
+		next_frame.pc = self.functions[fn_id].code_start;
+
+		self.do_loop(&mut next_frame, code);
+	}
+
+
+	/// Defines a function from next bytes in the code.
+	fn exc_define_fn(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
+		let name_idx = self.next_u8(frame, code) as usize;
+		let fn_length = self.next_u16(frame, code) as usize;
+
+		let name = self.load_constant_string(frame, code, name_idx);
+		let code_start = frame.pc;
+
+		self.define_fn(&name, code_start);
+		frame.pc += fn_length;
+	}
+
+
+	fn exc_jump_by(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
+		let val_by = self.next_u32(frame, code) as usize;
 		// Add
 		if val_by as isize > 0 {
-			self.pc += val_by;
+			frame.pc += val_by;
 		// Subtract
 		} else {
-			self.pc = self.pc.wrapping_add(val_by);
+			frame.pc = frame.pc.wrapping_add(val_by);
 		}
 		
 	}
 
 
-	fn exc_jump_by_if(&mut self) {
-		let val_by = self.next_u32() as i32;
-		let rg_if = self.next_u8() as usize;
-		if self.registers[rg_if] as i64 > 0 {
+	fn exc_jump_by_if(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
+		let val_by = self.next_u32(frame, code) as i32;
+		let rg_if = self.next_u8(frame, code) as usize;
+		if frame.registers[rg_if] as i64 > 0 {
 			// Add
 			if val_by > 0 {
-				self.pc += val_by as usize;
+				frame.pc += val_by as usize;
 			// Subtract
 			} else {
-				self.pc -= val_by.abs() as usize;
+				frame.pc -= val_by.abs() as usize;
 			}
 		}
 	}
 
 
-	fn exc_jump_to(&mut self) {
+	fn exc_jump_to(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
 		unimplemented!()
 	}
 
 
-	fn exc_jump_to_if(&mut self) {
-		let val_to = self.next_u32() as usize;
-		let rg_if = self.next_u8() as usize;
-		if self.registers[rg_if] > 0 {
-			self.pc = val_to as usize;
+	fn exc_jump_to_if(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
+		let val_to = self.next_u32(frame, code) as usize;
+		let rg_if = self.next_u8(frame, code) as usize;
+		if frame.registers[rg_if] > 0 {
+			frame.pc = val_to as usize;
 		}
 	}
 
 
-	/// Executes a load instruction.
-	fn exc_load_const_u8(&mut self) {
-		let src_from = self.next_u32() as usize;
-		let rg_to = self.next_u8() as usize;
-		self.registers[rg_to] = self.source[src_from] as u64;
+	/// Loads an 8-bit unsigned number into a register.
+	fn exc_load_const_u8(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
+		let src_from = self.next_u32(frame, code) as usize;
+		let rg_to = self.next_u8(frame, code) as usize;
+		frame.registers[rg_to] = code[src_from] as QuRegisterValue;
 	}
 
 
-	fn exc_load_val_u8(&mut self) {
-		let val = self.next_u8() as u64;
-		let rg_to = self.next_u8() as usize;
-		self.registers[rg_to] = val;
+	fn exc_load_val_u8(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
+		let val = self.next_u8(frame, code) as QuRegisterValue;
+		let rg_to = self.next_u8(frame, code) as usize;
+		frame.registers[rg_to] = val;
 	}
 
 
-	fn exc_load_val_u16(&mut self) {
-		let val = self.next_u16() as u64;
-		let rg_to = self.next_u8() as usize;
-		self.registers[rg_to] = val;
+	fn exc_load_val_u16(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
+		let val = self.next_u16(frame, code) as QuRegisterValue;
+		let rg_to = self.next_u8(frame, code) as usize;
+		frame.registers[rg_to] = val;
 	}
 
 
-	fn exc_load_val_u32(&mut self) {
-		let val = self.next_u32() as u64;
-		let rg_to = self.next_u8() as usize;
-		self.registers[rg_to] = val;
+	fn exc_load_val_u32(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
+		let val = self.next_u32(frame, code) as QuRegisterValue;
+		let rg_to = self.next_u8(frame, code) as usize;
+		frame.registers[rg_to] = val;
 	}
 
 
-	fn exc_load_val_u64(&mut self) {
-		let val = self.next_u64() as u64;
-		let rg_to = self.next_u8() as usize;
-		self.registers[rg_to] = val;
+	fn exc_load_val_u64(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
+		let val = self.next_u64(frame, code) as QuRegisterValue;
+		let rg_to = self.next_u8(frame, code) as usize;
+		frame.registers[rg_to] = val;
 	}
 
 
-	fn exc_load_mem(&mut self) {
-		let mem_from = self.next_u32() as usize;
-		let rg_to = self.next_u8() as usize;
-		self.registers[rg_to] = self.mem[mem_from] as u64;
+	fn exc_load_mem(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
+		unimplemented!();
 	}
 
 
-	fn exc_print(&mut self) {
-		let read_from_reg = self.next_u8() as usize;
-		let val = self.registers[read_from_reg];
+	fn exc_print(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
+		let read_from_reg = self.next_u8(frame, code) as usize;
+		let val = frame.registers[read_from_reg];
 		println!("Qu Print: {}", val);
 	}
 
 
-	fn exc_store_mem(&mut self) {
-		let rg_from = self.next_u8() as usize;
-		let mem_to = self.next_u32() as usize;
-		if mem_to >= self.mem.len() {
-			self.mem.resize(mem_to+1, 0);
+	fn exc_store_mem(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
+		unimplemented!();
+	}
+
+
+	fn exc_math_add(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
+		let rg_left = self.next_u8(frame, code) as usize;
+		let rg_right = self.next_u8(frame, code) as usize;
+		let rg_result = self.next_u8(frame, code) as usize;
+		frame.registers[rg_result] = 
+				frame.registers[rg_left]
+				+ frame.registers[rg_right];
+	}
+
+
+	fn exc_math_sub(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
+		let rg_left = self.next_u8(frame, code) as usize;
+		let rg_right = self.next_u8(frame, code) as usize;
+		let rg_result = self.next_u8(frame, code) as usize;
+		frame.registers[rg_result] = 
+				frame.registers[rg_left]
+				- frame.registers[rg_right];
+	}
+
+
+	fn exc_math_mul(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
+		let rg_left = self.next_u8(frame, code) as usize;
+		let rg_right = self.next_u8(frame, code) as usize;
+		let rg_result = self.next_u8(frame, code) as usize;
+		frame.registers[rg_result] = 
+				frame.registers[rg_left]
+				* frame.registers[rg_right];
+	}
+
+
+	fn exc_math_div(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
+		let rg_left = self.next_u8(frame, code) as usize;
+		let rg_right = self.next_u8(frame, code) as usize;
+		let rg_result = self.next_u8(frame, code) as usize;
+		frame.registers[rg_result] = 
+				frame.registers[rg_left]
+				/ frame.registers[rg_right];
+	}
+
+
+	fn exc_math_mod(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
+		let rg_left = self.next_u8(frame, code) as usize;
+		let rg_right = self.next_u8(frame, code) as usize;
+		let rg_result = self.next_u8(frame, code) as usize;
+		frame.registers[rg_result] = 
+				frame.registers[rg_left]
+				% frame.registers[rg_right];
+	}
+
+
+	fn exc_math_pow(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
+		let rg_left = self.next_u8(frame, code) as usize;
+		let rg_right = self.next_u8(frame, code) as usize;
+		let rg_result = self.next_u8(frame, code) as usize;
+		// WARNING: I don't know that ^ is actually the power symbol.
+		frame.registers[rg_result] = 
+				frame.registers[rg_left]
+				^ frame.registers[rg_right];
+	}
+
+
+	fn exc_logi_equal(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
+		let rg_left = self.next_u8(frame, code) as usize;
+		let rg_right = self.next_u8(frame, code) as usize;
+		let rg_result = self.next_u8(frame, code) as usize;
+		frame.registers[rg_result] = 
+				(frame.registers[rg_left] == frame.registers[rg_right])
+				as QuRegisterValue;
+	}
+
+
+	fn exc_logi_greater(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
+		let rg_left = self.next_u8(frame, code) as usize;
+		let rg_right = self.next_u8(frame, code) as usize;
+		let rg_result = self.next_u8(frame, code) as usize;
+		frame.registers[rg_result] = 
+				(frame.registers[rg_left] > frame.registers[rg_right])
+				as QuRegisterValue;
+	}
+
+
+	fn exc_logi_lesser(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
+		let rg_left = self.next_u8(frame, code) as usize;
+		let rg_right = self.next_u8(frame, code) as usize;
+		let rg_result = self.next_u8(frame, code) as usize;
+		frame.registers[rg_result] = 
+				(frame.registers[rg_left] < frame.registers[rg_right])
+				as QuRegisterValue;
+	}
+
+
+	fn exc_logi_not_equal(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
+		let rg_left = self.next_u8(frame, code) as usize;
+		let rg_right = self.next_u8(frame, code) as usize;
+		let rg_result = self.next_u8(frame, code) as usize;
+		frame.registers[rg_result] = 
+				(frame.registers[rg_left] != frame.registers[rg_right])
+				as QuRegisterValue;
+	}
+
+
+	fn exc_logi_not(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
+		let rg_left = self.next_u8(frame, code) as usize;
+		let rg_result = self.next_u8(frame, code) as usize;
+		let x = frame.registers[rg_left];
+		frame.registers[rg_result] = 
+				(x*0 == x) as QuRegisterValue;
+	}
+
+
+	/// Loads a constant [String] from the specified location in the bytecode.
+	fn load_constant_string(&mut self, frame:&mut QuCallFrame, code:&[u8],
+	at:usize) -> String {
+		let str_size = code[at] as usize;
+		let mut str_vec = Vec::with_capacity(str_size);
+		for i in at+1..(at+1+str_size) {
+			str_vec.push(code[i]);
 		}
-		self.mem[mem_to] = self.registers[rg_from];
+		return String::from_utf8(str_vec).expect("TODO: Handle this error");
 	}
 
 
-	fn exc_math_add(&mut self) {
-		let rg_left = self.next_u8() as usize;
-		let rg_right = self.next_u8() as usize;
-		let rg_result = self.next_u8() as usize;
-		self.registers[rg_result] = 
-				self.registers[rg_left] as u64
-				+ self.registers[rg_right] as u64;
-	}
+	fn next_ascii(&mut self, frame:&mut QuCallFrame, code:&[u8]) -> String {
+		let str_size = self.next_u8(frame, code);
+		let mut str_vec = Vec::with_capacity(str_size as usize);
+		for _ in 0..str_size {
+			str_vec.push(self.next_u8(frame, code));
+		}
 
-
-	fn exc_math_sub(&mut self) {
-		let rg_left = self.next_u8() as usize;
-		let rg_right = self.next_u8() as usize;
-		let rg_result = self.next_u8() as usize;
-		self.registers[rg_result] = 
-				self.registers[rg_left] as u64
-				- self.registers[rg_right] as u64;
-	}
-
-
-	fn exc_math_mul(&mut self) {
-		let rg_left = self.next_u8() as usize;
-		let rg_right = self.next_u8() as usize;
-		let rg_result = self.next_u8() as usize;
-		self.registers[rg_result] = 
-				self.registers[rg_left] as u64
-				* self.registers[rg_right] as u64;
-	}
-
-
-	fn exc_math_div(&mut self) {
-		let rg_left = self.next_u8() as usize;
-		let rg_right = self.next_u8() as usize;
-		let rg_result = self.next_u8() as usize;
-		self.registers[rg_result] = 
-				self.registers[rg_left] as u64
-				/ self.registers[rg_right] as u64;
-	}
-
-
-	fn exc_math_mod(&mut self) {
-		let rg_left = self.next_u8() as usize;
-		let rg_right = self.next_u8() as usize;
-		let rg_result = self.next_u8() as usize;
-		self.registers[rg_result] = 
-				self.registers[rg_left] as u64
-				% self.registers[rg_right] as u64;
-	}
-
-
-	fn exc_math_pow(&mut self) {
-		let rg_left = self.next_u8() as usize;
-		let rg_right = self.next_u8() as usize;
-		let rg_result = self.next_u8() as usize;
-		self.registers[rg_result] = 
-				self.registers[rg_left] as u64
-				^ self.registers[rg_right] as u64;
-	}
-
-
-	fn exc_logi_equal(&mut self) {
-		let rg_left = self.next_u8() as usize;
-		let rg_right = self.next_u8() as usize;
-		let rg_result = self.next_u8() as usize;
-		self.registers[rg_result] = 
-				(self.registers[rg_left] == self.registers[rg_right]) as u64;
-	}
-
-
-	fn exc_logi_greater(&mut self) {
-		let rg_left = self.next_u8() as usize;
-		let rg_right = self.next_u8() as usize;
-		let rg_result = self.next_u8() as usize;
-		self.registers[rg_result] = 
-				(self.registers[rg_left] > self.registers[rg_right]) as u64;
-	}
-
-
-	fn exc_logi_lesser(&mut self) {
-		let rg_left = self.next_u8() as usize;
-		let rg_right = self.next_u8() as usize;
-		let rg_result = self.next_u8() as usize;
-		self.registers[rg_result] = 
-				(self.registers[rg_left] < self.registers[rg_right]) as u64;
-	}
-
-
-	fn exc_logi_not_equal(&mut self) {
-		let rg_left = self.next_u8() as usize;
-		let rg_right = self.next_u8() as usize;
-		let rg_result = self.next_u8() as usize;
-		self.registers[rg_result] = 
-				(self.registers[rg_left] != self.registers[rg_right]) as u64;
-	}
-
-
-	fn exc_logi_not(&mut self) {
-		let rg_left = self.next_u8() as usize;
-		let rg_result = self.next_u8() as usize;
-		let x = self.registers[rg_left];
-		self.registers[rg_result] = 
-				(x*0 == x) as u64;
+		return String::from_utf8(str_vec).expect("TODO: Handle this error");
 	}
 
 
 	/// Gets the next byte in the source code as a u8 int.
-	fn next_u8(&mut self) -> u8 {
-		let val = self.source[self.pc];
-		self.pc += 1;
+	fn next_u8(&mut self, frame:&mut QuCallFrame, code:&[u8]) -> u8 {
+		let val = code[frame.pc];
+		frame.pc += 1;
 		return val;
 	}
 
 
 	/// Gets the next 2 byte in the source code as a u16 int.
-	fn next_u16(&mut self) -> u16 {
-		let bytes = [self.source[self.pc], self.source[self.pc+1]];
-		self.pc += 2;
+	fn next_u16(&mut self, frame:&mut QuCallFrame, code:&[u8]) -> u16 {
+		let bytes = [code[frame.pc], code[frame.pc+1]];
+		frame.pc += 2;
 		return u16::from_be_bytes(bytes);
 	}
 
 
 	/// Gets the next 4 byte in the source code as a u32 int.
-	fn next_u32(&mut self) -> u32 {
+	fn next_u32(&mut self, frame:&mut QuCallFrame, code:&[u8]) -> u32 {
 		let bytes = [
-			self.source[self.pc], self.source[self.pc+1],
-			self.source[self.pc+2], self.source[self.pc+3],
+			code[frame.pc], code[frame.pc+1],
+			code[frame.pc+2], code[frame.pc+3],
 		];
-		self.pc += 4;
+		frame.pc += 4;
 		return u32::from_be_bytes(bytes);
 	}
 
 
 	// Gets the next 8 byte in the source code as a u64 int.
-	fn next_u64(&mut self) -> u64 {
+	fn next_u64(&mut self, frame:&mut QuCallFrame, code:&[u8]) -> u64 {
 		let bytes = [
-			self.source[self.pc], self.source[self.pc+1],
-			self.source[self.pc+2], self.source[self.pc+3],
-			self.source[self.pc+4], self.source[self.pc+5],
-			self.source[self.pc+6], self.source[self.pc+7],
+			code[frame.pc], code[frame.pc+1],
+			code[frame.pc+2], code[frame.pc+3],
+			code[frame.pc+4], code[frame.pc+5],
+			code[frame.pc+6], code[frame.pc+7],
 		];
-		self.pc += 8;
+		frame.pc += 8;
 		return u64::from_be_bytes(bytes);
 	}
 
-	
-	pub fn run_bytes(&mut self, code:&[u8]) {
-		let oplib = QuOpLibrary::new();
-		self.source = code.to_vec();
-		loop {
-			
-			match self.next_u8() {
-				x if x == oplib.end as u8 => {break;},
 
-				x if x == oplib.load_const => self.exc_load_const_u8(),
-				x if x == oplib.load_val_u8 => self.exc_load_val_u8(),
-				x if x == oplib.load_val_u16 => self.exc_load_val_u16(),
-				x if x == oplib.load_val_u32 => self.exc_load_val_u32(),
-				x if x == oplib.load_val_u64 => self.exc_load_val_u64(),
-				x if x == oplib.load_mem => self.exc_load_mem(),
-				x if x == oplib.store_mem => self.exc_store_mem(),
-				x if x == oplib.copy_reg => self.exc_copy_reg(),
-				x if x == oplib.add => self.exc_math_add(),
-				x if x == oplib.sub => self.exc_math_sub(),
-				x if x == oplib.mul => self.exc_math_mul(),
-				x if x == oplib.div => self.exc_math_div(),
-				x if x == oplib.modulate => self.exc_math_mod(),
-				x if x == oplib.pow => self.exc_math_pow(),
-				x if x == oplib.lesser => self.exc_logi_lesser(),
-				x if x == oplib.greater => self.exc_logi_greater(),
-				x if x == oplib.equal => self.exc_logi_equal(),
-				x if x == oplib.not_equal => self.exc_logi_not_equal(),
-				x if x == oplib.not => self.exc_logi_not(),
-				x if x == oplib.jump_to => self.exc_jump_to(),
-				x if x == oplib.jump_by => self.exc_jump_by(),
-				x if x == oplib.jump_to_if => self.exc_jump_to_if(),
-				x if x == oplib.jump_by_if => self.exc_jump_by_if(),
-				x if x == oplib.print => self.exc_print(),
-
-				x => { println!("{x}"); todo!(); }
+	/// Runs inputed bytecode in a loop.
+	fn do_loop(&mut self, frame:&mut QuCallFrame, bytecode:&[u8]
+	) -> Result<(), String>{
+		while frame.pc != bytecode.len() {
+			let result = self.do_next(frame, bytecode);
+			if let Err(e) = result {
+				if e == "Done" {return Ok(())};
 			}
-
 		}
+		return Ok(());
+	}
+
+
+	/// Runs the next command in the given bytecode.
+	fn do_next(&mut self, frame:&mut QuCallFrame, bytecode:&[u8]) -> Result<(), String> {
+		// TODO: Error handling for running operations
+		let op = self.next_u8(frame, bytecode);
+		println!("{}", OPLIB.ops[op as usize].name);
+		match op {
+			x if x == OPLIB.end as u8 => {return Err("Done".to_string())},
+
+			x if x == OPLIB.load_val_u8 => self.exc_load_val_u8(frame, bytecode),
+			x if x == OPLIB.load_val_u16 => self.exc_load_val_u16(frame, bytecode),
+			x if x == OPLIB.load_val_u32 => self.exc_load_val_u32(frame, bytecode),
+			x if x == OPLIB.load_val_u64 => self.exc_load_val_u64(frame, bytecode),
+			x if x == OPLIB.load_mem => self.exc_load_mem(frame, bytecode),
+			x if x == OPLIB.store_mem => self.exc_store_mem(frame, bytecode),
+			x if x == OPLIB.copy_reg => self.exc_copy_reg(frame, bytecode),
+			x if x == OPLIB.add => self.exc_math_add(frame, bytecode),
+			x if x == OPLIB.sub => self.exc_math_sub(frame, bytecode),
+			x if x == OPLIB.mul => self.exc_math_mul(frame, bytecode),
+			x if x == OPLIB.div => self.exc_math_div(frame, bytecode),
+			x if x == OPLIB.modulate => self.exc_math_mod(frame, bytecode),
+			x if x == OPLIB.pow => self.exc_math_pow(frame, bytecode),
+			x if x == OPLIB.lesser => self.exc_logi_lesser(frame, bytecode),
+			x if x == OPLIB.greater => self.exc_logi_greater(frame, bytecode),
+			x if x == OPLIB.equal => self.exc_logi_equal(frame, bytecode),
+			x if x == OPLIB.not_equal => self.exc_logi_not_equal(frame, bytecode),
+			x if x == OPLIB.not => self.exc_logi_not(frame, bytecode),
+			x if x == OPLIB.jump_to => self.exc_jump_to(frame, bytecode),
+			x if x == OPLIB.jump_by => self.exc_jump_by(frame, bytecode),
+			x if x == OPLIB.jump_to_if => self.exc_jump_to_if(frame, bytecode),
+			x if x == OPLIB.jump_by_if => self.exc_jump_by_if(frame, bytecode),
+			x if x == OPLIB.print => self.exc_print(frame, bytecode),
+			x if x == OPLIB.call => self.exc_call_fn(frame, bytecode),
+			x if x == OPLIB.define_fn => self.exc_define_fn(frame, bytecode),
+
+			x => { println!("{x}"); todo!(); }
+		};
+		return Ok(());
+	}
+
+
+
+	/// Run the passed [QuFunc] in a new [QuCallFrame].
+	pub fn run_func(&mut self, func:&QuFunc) -> Result<(), String> {
+		return self.run_bytes(&func.code);
+	}
+
+
+	/// Run the passed bytecode in the topmost [QuCallFrame].
+	pub fn run_bytes(&mut self, bytecode:&[u8]) -> Result<(), String> {
+		let mut call_frame = QuCallFrame::new();
+		while call_frame.pc != bytecode.len() {
+			self.do_next(&mut call_frame, bytecode,);
+		}
+
+		return Ok(());
 	}
 
 }

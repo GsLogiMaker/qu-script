@@ -3,11 +3,18 @@ name = "qu_script"
 version = "0.1.0"
 edition = "2021"
 
+
+#[lib]
+#name = "qu_script"
+#path = "src/lib.rs"
+#crate_type = ["cdylib"]
+
 # See more keys and their definitions at
 # https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 lazy_static = "1.4.0"
+derive-new = "0.5.9"
 
 [dev-dependencies]
 criterion = "0.3"
