@@ -1,99 +1,50 @@
 
-#[macro_use]
-extern crate lazy_static;
-
-
 use qu_script::Qu;
-use qu_script::QuLeaf;
-use qu_script::QuCompiler;
-use qu_script::QuVm;
-use qu_script::QuParser;
-use qu_script::QuOperation;
+use qu_script::OPLIB;
 
-use std::ops::Index;
-
-struct A {
-	a:i32,
-	b:i32,
-	c:i32,
-	d:i32,
-}
-
-
-macro_rules! struct_QuOpLibrary {
-	( $(  $name:ident:$asm_keyword:ident( $($args:expr),+ )  )+ ) => {
-		struct_QuOpLibrary!(
-			$(
-				[  0] $name:$asm_keyword(
-					$(
-						$args
-					),+
-				)
-			)+
-		);
-	};
-
-	( $(  [$idx:expr] $name:ident:$asm_keyword:ident( $($args:expr),+ )  )+ ) => {
-		pub struct QuOpLibrary<'a> {
-			ops:Vec<QuOperation<'a>>,
-			$(
-				$name:u8,
-			)+
-		} impl<'a> QuOpLibrary<'a> {
-			
-			fn new() -> Self {
-				return Self{
-					ops:vec![
-						$(
-							QuOperation::new(stringify!($name), stringify!($asm_keyword), &[   $( ($args,), )+   ]),
-						)+
-					],
-					
-					$(
-						$name:$idx,
-					)+
-				};
-			}
-
-		}
-	};
-}
-
-
-
-
-// (main, sub)(1)[0]
-// main:{ASM, (1), 0}
-// [0] main:ASM(1)
-
-//struct_QuOpLibrary!(
-//	[  0] end:END(1)
-//	[  1] add:ADD(1, 1, 1)
-//);
-
-struct_QuOpLibrary!(
-	end:END(1)
-	add:ADD(1, 1)
-);
-
-
-//lazy_static! {
-//    static ref OPLIB:QuOpLibrary<'static> = QuOpLibrary::new();
-//}
 
 fn main() {
-	println!("");
-	println!("---START---");
-	println!("");
+	println!("---START---\n");
 
-	let code = "
-	if 1 == 10:
-		print 55
-	";
+	let test_fn_define_bytecode = &[
+		// Define constants
+		OPLIB.define_const_str, 2, 'p' as u8,'r' as u8,
+
+		// Define print variables
+		OPLIB.load_val_u8, 10, 0,
+		OPLIB.load_val_u8, 20, 1,
+		OPLIB.load_val_u8, 1, 2,
+
+		// Pre print
+		OPLIB.print, 0,
+
+		// Define 'pr' function
+		OPLIB.define_fn, 0,0, 0,16,
+			OPLIB.print, 0,
+			OPLIB.print, 1,
+			OPLIB.print, 2,
+			OPLIB.load_val_u8, 10, 0,
+			OPLIB.load_val_u8, 20, 1,
+			OPLIB.load_val_u8, 1, 2,
+			OPLIB.end,
+
+		// Post print
+		OPLIB.print, 1,
+
+		// Call 'pr'
+		OPLIB.call, 0,0,0,0,
+		OPLIB.call, 0,0,0,0,
+
+		OPLIB.print, 0,
+		OPLIB.print, 1,
+		OPLIB.print, 2,
+	];
 
 	let mut qu = Qu::new();
-	qu.run(code).unwrap_or_else(|err|{panic!("{}", err)});
-	println!("{}", qu.compile_to_asm(code).unwrap());
+
+	//qu.run(code).unwrap_or_else(|err|{panic!("{}", err)});
+	qu.run_bytes(test_fn_define_bytecode).unwrap_or_else(|err|{panic!("{}", err)});
+
 
 }
 

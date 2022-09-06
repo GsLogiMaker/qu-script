@@ -2356,18 +2356,18 @@ pub struct QuType {
 
 /// The virtual machine that runs Qu code.
 pub struct QuVm {
-	/// The stack frame. Keeps track of which function call the VM is in.
-	//call_stack:Vec<QuCallFrame>,
 	/// A [Vec] of all defined [QuFunc]s.
 	functions:Vec<QuFunc>,
+	/// All defined constant [String]s.
+	str_constants:Vec<String>,
 
 } impl QuVm {
 
 	/// Makes a new [QuVm].
 	pub fn new() -> Self {
 		let vm = QuVm { 
-			//call_stack:Vec::default(),
-			functions:vec![QuFunc::new("print", 0, 16)],
+			functions: Vec::default(),
+			str_constants: Vec::default(),
 		};
 
 		return vm;
@@ -2451,6 +2451,12 @@ pub struct QuVm {
 	}
 
 
+	pub fn define_const_string(&mut self, value:&str) {
+		// TODO: Error handling
+		self.str_constants.push(value.to_owned());
+	}
+
+
 	pub fn define_fn(&mut self, name:&str, code_start:usize) {
 		let id = self.functions.len();
 		self.functions.push(QuFunc::new(&name, id, code_start));
@@ -2475,12 +2481,19 @@ pub struct QuVm {
 	}
 
 
+	fn exc_define_const_str(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
+		let string = self.load_constant_string(frame, code, frame.pc);
+		frame.pc += string.len()+1;
+		self.str_constants.push(string);
+	}
+
+
 	/// Defines a function from next bytes in the code.
 	fn exc_define_fn(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
-		let name_idx = self.next_u8(frame, code) as usize;
+		let name_const_idx = self.next_u16(frame, code) as usize;
 		let fn_length = self.next_u16(frame, code) as usize;
 
-		let name = self.load_constant_string(frame, code, name_idx);
+		let name = self.load_constant_string(frame, code, name_const_idx);
 		let code_start = frame.pc;
 
 		self.define_fn(&name, code_start);
@@ -2802,6 +2815,7 @@ pub struct QuVm {
 			x if x == OPLIB.print => self.exc_print(frame, bytecode),
 			x if x == OPLIB.call => self.exc_call_fn(frame, bytecode),
 			x if x == OPLIB.define_fn => self.exc_define_fn(frame, bytecode),
+			x if x == OPLIB.define_const_str => self.exc_define_const_str(frame, bytecode),
 
 			x => { println!("{x}"); todo!(); }
 		};
