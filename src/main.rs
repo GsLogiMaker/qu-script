@@ -42,8 +42,20 @@ fn main() {
 
 	let mut qu = Qu::new();
 
-	//qu.run(code).unwrap_or_else(|err|{panic!("{}", err)});
-	qu.run_bytes(test_fn_define_bytecode).unwrap_or_else(|err|{panic!("{}", err)});
+	let script = r##"
+	fn stuff():
+		vl a = 5
+		a = a + 2
+		print a
+
+	stuff()
+	stuff()
+	stuff()
+	"##;
+
+	qu.run(script).unwrap_or_else(|err|{panic!("{}", err)});
+
+	println!("{}", qu.compile_to_asm(script).expect("oh no"));
 
 
 }

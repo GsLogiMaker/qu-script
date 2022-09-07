@@ -70,6 +70,15 @@ mod qu_error {
 	}
 
 
+	/// Returns a [QuErrorMessage] for an expected token is ommitted.
+	pub fn msg_missing_token(token:&str) -> QuErrorMessage {
+		return (
+			"MISSING TOKEN".to_string(),
+			format!("Epected a '{}' token, but it was not found.", token)
+		);
+	}
+
+
 	/// Returns a [QuErrorMessage] for when a incohrent indentation is found.
 	pub fn msg_prs_bad_indentation() -> QuErrorMessage {
 		return (
@@ -622,6 +631,20 @@ mod qu_tokens {
 			};
 		}
 
+
+		/// Makes a new empty [`Token`].
+		pub fn empty() -> QuToken {
+		return QuToken{
+			begin:0,
+			end:0,
+			row:0,
+			_col:0,
+			indent:0,
+			text:"".to_string(),
+			tk_type:0
+		};
+	}
+
 		// TODO: Replace this function with the text parameter of the struct.
 		/// Returns the text of this token.
 		pub fn text(&self, source:&str) -> String {
@@ -698,7 +721,7 @@ mod qu_tokens {
 }
 
 
-use std::{fmt::{self, Display, Debug}, vec, collections::HashMap, rc::Rc};
+use std::{fmt::{self, Display, Debug, format}, vec, collections::HashMap, rc::Rc, mem, hash::Hash};
 use derive_new::new;
 use qu_tokens::{RULES, TOKEN_TYPE_NAME, tokenize, QuToken};
 
@@ -724,6 +747,116 @@ enum QuAsmTypes {
 			Self::str => code[at] as usize,
 		};
 	}
+}
+
+
+#[derive(Debug, Clone)]
+/// A Qu instruction.
+pub enum QuLeaf {
+	/// A Block of leafs.
+	Block(Vec<QuLeaf>),
+	/// An if statement. Contains an assertion statement and a [`Vec`] of
+	/// instructions.
+	FlowStatement(u8, QuLeafExpr, Box<QuLeaf>),
+	// A function declaration branch.
+	FnDecl(String, Box<QuLeaf>),
+	// Call function branch.
+	FnCall(String), // TODO: Implement arguments
+	/// Prints a register to the console.
+	Print(QuLeafExpr),
+	/// A variable assignment. Contains a var name and a [`QuLeafExpr`].
+	VarAssign(QuToken, QuLeafExpr),
+	/// A variable declaration. Contains a var name, type(TODO), and
+	/// [`QuLeafExpr`].
+	VarDecl(QuToken, Option<QuToken>, Option<QuLeafExpr>),
+
+} impl QuLeaf {
+
+	/// Returns the [`QuLeaf`] as a [`String`] formatted into a tree.
+	pub fn tree_fmt(&self, indent:u8) -> String {
+		let mut indentstr = "\n".to_string();
+		for _ in 0..indent {
+			indentstr += "  ";
+		}
+		
+		match self {
+			QuLeaf::Block(
+				body) => {
+				let mut bodystr = "".to_string();
+				for leaf in body {
+					bodystr += &leaf.tree_fmt(indent + 1);
+				}
+				return format!("BLOCK:{}", bodystr);
+			}
+			QuLeaf::FlowStatement(op, cond, body
+					) => {
+				let bodystr = body.tree_fmt(indent + 1);
+				return format!("{}FLOW {} {} {}", indentstr, op, cond, bodystr);
+			}
+			QuLeaf::FnCall(name) => {
+				return format!("{}CALL {}", indentstr, name);
+			}
+			QuLeaf::FnDecl(name, body) => {
+				let bodystr = body.tree_fmt(indent + 1);
+				return format!("{}DECL FN {} {}", indentstr, name, bodystr);
+			}
+			QuLeaf::Print(register) => {
+				return format!("{}PRINT {}", indentstr, register);
+			}
+			QuLeaf::VarAssign(name, val) => {
+				return format!("{}ASSIGN {} = {}", indentstr, name.text, val);
+			}
+			QuLeaf::VarDecl(name, _var_type,
+					_val) => {
+				let val_str = match _val {
+					Some(val) => format!("{}", val),
+					None => "".to_string(),
+				};
+				// TODO: Add variable declaration type
+				return format!("{}VAR {} {} = {}", indentstr, name.text, "", val_str);
+			}
+		}
+	}
+
+} impl Display for QuLeaf {
+
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		return write!(f, "{}", self.tree_fmt(0));
+	}
+
+}
+
+
+#[derive(Debug, Clone)]
+/// Defines an expression in a Qu program tree.
+pub enum QuLeafExpr {
+	/// A calculable expression. Contains an operator and two [`QuLeafExpr`]s.
+	Equation(u8, Box<QuLeafExpr>, Box<QuLeafExpr>),
+	/// A literal int value.
+	Int(u64),
+	/// A variable name.
+	Var(QuToken),
+} impl Display for QuLeafExpr {
+
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			QuLeafExpr::Equation(op, lft, rht) => {
+				let string = format!("{}", op);
+				let opstr:&str = string.as_str();
+				return write!(f, "Equate({lft} {opstr} {rht})");
+			}
+			QuLeafExpr::Int(val) => {
+				return write!(f, "{val}:Int");
+			}
+			QuLeafExpr::Var(name) => {
+				return write!(f, "{}:Var", name.text);
+			}
+			_ => {
+				return write!(f, "<QuLeafExpr Unimplemented Format>");
+			}
+		}
+	}
+
 }
 
 
@@ -889,7 +1022,7 @@ struct_QuOpLibrary!{
 
 	[ 24] call:CALL(QuAsmTypes::uint32)
 
-	[ 25] define_fn:DFFN(QuAsmTypes::uint16, QuAsmTypes::uint16)
+	[ 25] define_fn:DFFN(QuAsmTypes::uint32, QuAsmTypes::uint32)
 	[ 26] define_const_str:DFCS(QuAsmTypes::str)
 }
 
@@ -978,7 +1111,9 @@ struct QuCallFrame {
 /// Compiles [QuLeaf]s into Qu bytecode.
 pub struct QuCompiler<'a> {
 	/// Name, Type, Pointer
+	str_constants:Vec<String>,
 	variables:Vec<(String, usize, u8)>,
+	functions:HashMap<String, u32>,
 	script:&'a String,
 	stack_layers:Vec<u8>,
 	stack_idx:u8,
@@ -992,9 +1127,11 @@ pub struct QuCompiler<'a> {
 	/// Creates and returns a new [QuCompiler].
 	pub fn new(script:&'a String) -> Self {
 		let mut inst = Self{
-			variables:vec![],
+			str_constants:Vec::default(),
+			variables:Vec::default(),
+			functions:HashMap::default(),
 			script:script,
-			stack_layers:vec![],
+			stack_layers:Vec::default(),
 			stack_idx:0,
 			types:vec![QuType::int(), QuType::uint(), QuType::bool()],
 			types_map:HashMap::new(),
@@ -1206,22 +1343,52 @@ pub struct QuCompiler<'a> {
 	}
 
 
+	fn cmp_fn_call(&mut self, name:&str
+	) -> Result<Vec<u8>, String> {
+		let name_index = *self.functions.get(&name.to_string())
+		.ok_or("Compiler attempted to call a function that was not defined. TODO: Better error message".to_owned())?
+		as u32;
+
+		let mut code = vec![];
+		// Add fn declaration operation
+		code.push(OPLIB.call);
+		code.append(&mut name_index.to_be_bytes().to_vec());
+
+		return Ok(code);
+	}
+
+
+	fn cmp_fn_decl(&mut self, name:&str, body:&QuLeaf
+	) -> Result<Vec<u8>, String> {
+		let name_index = self.str_constants.len() as u32;
+		self.str_constants.push(name.to_owned());
+
+		self.functions.insert(name.to_string(), name_index);
+
+		// Compile code block
+		let mut body_compiled = self.cmp_leaf(body)?;
+		body_compiled.push(OPLIB.end);
+		let code_length = body_compiled.len() as u32;
+
+		let mut code = vec![];
+		// Add fn declaration operation
+		code.push(OPLIB.define_fn);
+		code.append(&mut name_index.to_be_bytes().to_vec());
+		code.append(&mut code_length.to_be_bytes().to_vec());
+		// Add body
+		code.append(&mut body_compiled);
+
+		return Ok(code);
+	}
+
 	/// Compiles a [QuLeaf] into bytecode.
 	fn cmp_leaf(&mut self, leaf:&QuLeaf) -> Result<Vec<u8>, String> {
 		let result = match leaf {
 			QuLeaf::Block(leafs) => {
 				let mut code = vec![];
 				for block_leaf in leafs {
-					match self.cmp_leaf(block_leaf) {
-						// Add compiled code to Vector
-						Ok(mut block_code) => {
-							code.append(&mut block_code);
-						},
-						// Propagate error
-						Err(err) => {
-							return Err(err);
-						}
-					}
+					let mut block_code = self.cmp_leaf(block_leaf)?;
+					code.append(&mut block_code);
 				}
 				return Ok(code);
 			},
@@ -1239,6 +1406,17 @@ pub struct QuCompiler<'a> {
 					}
 					_ => unimplemented!(),
 				}
+			}
+			QuLeaf::FnCall(
+				name,
+			) => {
+				return self.cmp_fn_call(name);
+			}
+			QuLeaf::FnDecl(
+				name,
+				statements,
+			) => {
+				return self.cmp_fn_decl(name, statements);
 			}
 			QuLeaf::Print(leaf_expr) => {
 				// TODO Handle errors for compiling Print
@@ -1286,7 +1464,7 @@ pub struct QuCompiler<'a> {
 	/// Compiles code variable assignment.
 	fn cmp_var_assign(&mut self,
 			variable_name_token:&QuToken, assign_to:&QuLeafExpr
-			) -> Result<Vec<u8>, String> {
+	) -> Result<Vec<u8>, String> {
 		// Get variable register
 		let var_reg= match self.get_var_register(&variable_name_token.text) {
 			Some(reg) => reg,
@@ -1307,7 +1485,7 @@ pub struct QuCompiler<'a> {
 	/// Compiles a variable declaration.
 	fn cmp_var_decl(&mut self, variable_name_token:&QuToken,
 			variable_type_token:&Option<QuToken>,
-			assign_to:&Option<QuLeafExpr>) -> Result<Vec<u8>, String> {
+	assign_to:&Option<QuLeafExpr>) -> Result<Vec<u8>, String> {
 
 		// Check if the variable is already defined
 		if self.is_var_defined(&variable_name_token.text) {
@@ -1370,36 +1548,39 @@ pub struct QuCompiler<'a> {
 	/// Compiles a scope.
 	fn cmp_scope(&mut self, leaf:&QuLeaf) -> Result<Vec<u8>, String> {
 		self.stack_frame_push();
+		let compiled = self.cmp_leaf(leaf);
+		self.stack_frame_pop();
+		return compiled;
+	}
 
-		match self.cmp_leaf(leaf) {
-			// Return compiled code
-			Ok(code) => {
-				self.stack_frame_pop();
-				return Ok(code);
-			},
-			// Propagate error
-			Err(err) => {
-				self.stack_frame_pop();
-				return Err(err);
+
+	fn cmp_str_constants(&mut self) -> Result<Vec<u8>, String> {
+		let mut code = vec![];
+		for s in &self.str_constants {
+			code.push(OPLIB.define_const_str);
+			code.push(s.len() as u8);
+			for char in s.chars() {
+				if !char.is_ascii() {
+					return Err("String is not ASCII. TODO: Better error message".to_string());
+				}
+				code.push(char as u8);
 			}
 		}
+		return Ok(code);
 	}
 
 
 	/// Compiles from a [QuLeaf] instruction into bytecode (into a [Vec]<[u8]>.)
 	pub fn compile(&mut self, leafs:&QuLeaf) -> Result<Vec<u8>, String> {
-		match self.cmp_scope(leafs) {
-			// Add the exit code and return function
-			Ok(mut code) => {
-				code.push(self.oplib.end);
-				return Ok(code);
-			},
+		// Main code
+		let mut code = self.cmp_scope(leafs)?;
+		code.push(self.oplib.end);
 
-			// Propgate error
-			Err(err) => {
-				return Err(err);
-			}
-		}
+		// Constants and joining with main code
+		let mut constants_code = self.cmp_str_constants()?;
+		constants_code.append(&mut code);
+
+		return Ok(constants_code);
 	}
 
 
@@ -1412,7 +1593,6 @@ pub struct QuCompiler<'a> {
 		}
 		return None;
 	}
-
 
 
 	/// Returns true if the given variable is already defined.
@@ -1477,111 +1657,6 @@ pub struct QuFunc {
 }
 
 
-#[derive(Debug, Clone)]
-/// A Qu instruction.
-pub enum QuLeaf {
-	/// A Block of leafs.
-	Block(Vec<QuLeaf>),
-	/// An if statement. Contains an assertion statement and a [`Vec`] of
-	/// instructions.
-	FlowStatement(u8, QuLeafExpr, Box<QuLeaf>),
-	/// Prints a register to the console.
-	Print(QuLeafExpr),
-	/// A variable assignment. Contains a var name and a [`QuLeafExpr`].
-	VarAssign(QuToken, QuLeafExpr),
-	/// A variable declaration. Contains a var name, type(TODO), and
-	/// [`QuLeafExpr`].
-	VarDecl(QuToken, Option<QuToken>, Option<QuLeafExpr>),
-
-} impl QuLeaf {
-
-	/// Returns the [`QuLeaf`] as a [`String`] formatted into a tree.
-	pub fn tree_fmt(&self, indent:u8) -> String {
-		let mut indentstr = "\n".to_string();
-		for _ in 0..indent {
-			indentstr += "  ";
-		}
-		
-		match self {
-			QuLeaf::Block(
-				body) => {
-				let mut bodystr = "".to_string();
-				for leaf in body {
-					bodystr += &leaf.tree_fmt(indent + 1);
-				}
-				return format!("BLOCK:{}", bodystr);
-			}
-			QuLeaf::FlowStatement(
-				op, 
-				cond, 
-				body) => {
-					let bodystr = body.tree_fmt(indent + 1);
-					return format!("{}FLOW {} {} {}", indentstr, op, cond, bodystr);
-			}
-			QuLeaf::Print(register) => {
-				return format!("{}PRINT {}", indentstr, register);
-			}
-			QuLeaf::VarAssign(
-				name, 
-				val) => {
-				return format!("{}ASSIGN {} = {}", indentstr, name.text, val);
-			}
-			QuLeaf::VarDecl(
-				name, 
-				_var_type, 
-				_val) => {
-				let val_str = match _val {
-					Some(val) => format!("{}", val),
-					None => "".to_string(),
-				};
-				// TODO: Add variable declaration type
-				return format!("{}VAR {} {} = {}", indentstr, name.text, "", val_str);
-			}
-		}
-	}
-
-} impl Display for QuLeaf {
-
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		return write!(f, "{}", self.tree_fmt(0));
-	}
-
-}
-
-
-#[derive(Debug, Clone)]
-/// Defines an expression in a Qu program tree.
-pub enum QuLeafExpr {
-	/// A calculable expression. Contains an operator and two [`QuLeafExpr`]s.
-	Equation(u8, Box<QuLeafExpr>, Box<QuLeafExpr>),
-	/// A literal int value.
-	Int(u64),
-	/// A variable name.
-	Var(QuToken),
-} impl Display for QuLeafExpr {
-
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		match self {
-			QuLeafExpr::Equation(op, lft, rht) => {
-				let string = format!("{}", op);
-				let opstr:&str = string.as_str();
-				return write!(f, "Equate({lft} {opstr} {rht})");
-			}
-			QuLeafExpr::Int(val) => {
-				return write!(f, "{val}:Int");
-			}
-			QuLeafExpr::Var(name) => {
-				return write!(f, "{}:Var", name.text);
-			}
-			_ => {
-				return write!(f, "<QuLeafExpr Unimplemented Format>");
-			}
-		}
-	}
-
-}
-
-
 /// A single Qu VM operation.
 pub struct QuOperation<'a> {
 	name:String,
@@ -1636,71 +1711,36 @@ pub struct QuParser<'a> {
 	fn ck_code_block(&mut self) -> Result<Option<Vec<QuLeaf>>, String> {
 		let mut leafs = vec![];
 
+		macro_rules! ck_parse {
+			($fn_name:ident) => {
+				if let Some(data) = self.$fn_name()? {
+					leafs.push(data);
+					continue;
+				}
+			};
+		}
+
 		while self.tk_idx < self.tokens.len()-1 {
 			// Variable declaration
-			match self.ck_var_decl() {
-				Ok(data_opt) => {
-					if let Some(data) = data_opt {
-						leafs.push(data);
-						continue;
-					}
-				}
-				Err(msg) => {
-					return Err(format!("{}", msg));
-				}
-			}
+			ck_parse!(ck_var_decl);
 
 			// Variable assignment
-			match self.ck_var_assign() {
-				Ok(data_opt) => {
-					if let Some(data) = data_opt {
-						leafs.push(data);
-						continue;
-					}
-				}
-				Err(msg) => {
-					return Err(format!("{}", msg));
-				}
-			}
+			ck_parse!(ck_var_assign);
 
 			// If Statement
-			match self.ck_flow_if() {
-				Ok(data_opt) => {
-					if let Some(data) = data_opt {
-						leafs.push(data);
-						continue;
-					}
-				}
-				Err(msg) => {
-					return Err(format!("{}", msg));
-				}
-			}
+			ck_parse!(ck_flow_if);
 
 			// while Statement
-			match self.ck_flow_while() {
-				Ok(data_opt) => {
-					if let Some(data) = data_opt {
-						leafs.push(data);
-						continue;
-					}
-				}
-				Err(msg) => {
-					return Err(format!("{}", msg));
-				}
-			}
+			ck_parse!(ck_flow_while);
 
 			// Print Statement
-			match self.ch_print() {
-				Ok(data_opt) => {
-					if let Some(data) = data_opt {
-						leafs.push(data);
-						continue;
-					}
-				}
-				Err(msg) => {
-					return Err(format!("{}", msg));
-				}
-			}
+			ck_parse!(ch_print);
+
+			// Function declaration
+			ck_parse!(ck_fn_decl);
+
+			// Function call
+			ck_parse!(ck_fn_call);
 
 			// End block
 			break;
@@ -1709,7 +1749,7 @@ pub struct QuParser<'a> {
 		if leafs.len() == 0 {
 			return Err(qu_error::make_message(
 				qu_error::msg_missing_code_block(),
-				&self.tokens[self.tk_idx-1], &self.script
+				&QuToken::empty(), &self.script
 			));
 		}
 
@@ -1719,13 +1759,12 @@ pub struct QuParser<'a> {
 
 	/// Attempts to pasrse a code scope.
 	fn ck_code_scope(&mut self) -> Result<Option<Vec<QuLeaf>>, String> {
-		self.tk_push();
+		self.tk_state_save();
 
 		// Check operator
-		let start_tk = self.tk_next()
-				.expect("Improper indentation TODO: Bette message");
+		let start_tk = self.tk_next()?;
 		if start_tk != OP_BLOCK_START_WORD {
-			self.tk_pop();
+			self.tk_state_pop();
 			return Ok(None);
 		}
 
@@ -1748,7 +1787,7 @@ pub struct QuParser<'a> {
 			Err(msg) => return Err(msg),
 		}
 
-		self.tk_push();
+		self.tk_state_save();
 
 		// Check keyword
 		let keyword = match token_type {
@@ -1759,7 +1798,7 @@ pub struct QuParser<'a> {
 		let keyword_tk = self.tk_next()
 				.expect("Improper indentation TODO: Bette message");
 		if keyword_tk != keyword {
-			self.tk_pop();
+			self.tk_state_pop();
 			return Ok(None);
 		}
 
@@ -1822,6 +1861,113 @@ pub struct QuParser<'a> {
 	}
 
 
+
+	/// Attempts to parse a function call.
+	fn ck_fn_call(&mut self) -> Result<Option<QuLeaf>, String> {
+		if self.utl_statement_start()?.is_none() {
+			return Ok(None);
+		}
+		
+		self.tk_state_save();
+
+		// Check function name
+		let fn_name_tk = self.ck_fn_name()?.ok_or(
+			qu_error::make_message(
+				qu_error::msg_missing_code_block(),
+				&self.tokens[self.tk_idx-1], &self.script
+			)
+		)?;
+
+		// Match an open '('
+		if self.tk_next()? != "(" {
+			return Err(qu_error::make_message(
+				qu_error::msg_missing_token("("),
+				&self.tokens[self.tk_idx-1], &self.script
+			));
+		}
+
+		// Match a close ')'
+		if self.tk_next()? != ")" {
+			return Err(qu_error::make_message(
+				qu_error::msg_missing_token(")"),
+				&self.tokens[self.tk_idx-1], &self.script
+			));
+		}
+
+		return Ok(Some(QuLeaf::FnCall(fn_name_tk.text)));
+	}
+
+
+	/// Attempts to parse a function definition.
+	fn ck_fn_decl(&mut self) -> Result<Option<QuLeaf>, String> {
+		if self.utl_statement_start()?.is_none() {
+			return Ok(None);
+		}
+		
+		self.tk_state_save();
+
+		// Check keyword
+		let keyword_tk = self.tk_next()
+				.expect("Improper indentation TODO: Bette message");
+		if keyword_tk != KEYWORD_FUNCTION {
+			// Check failed. Stop checking silently
+			self.tk_state_pop();
+			return Ok(None);
+		}
+
+		// Check function name
+		let fn_name_tk = self.ck_fn_name()?.ok_or(
+			qu_error::make_message(
+				qu_error::msg_missing_code_block(),
+				&self.tokens[self.tk_idx-1], &self.script
+			)
+		)?;
+
+		// Match an open '('
+		if self.tk_next()? != "(" {
+			return Err(qu_error::make_message(
+				qu_error::msg_missing_token("("),
+				&self.tokens[self.tk_idx-1], &self.script
+			));
+		}
+
+		// Match a close ')'
+		if self.tk_next()? != ")" {
+			return Err(qu_error::make_message(
+				qu_error::msg_missing_token(")"),
+				&self.tokens[self.tk_idx-1], &self.script
+			));
+		}
+
+		// Check for code block
+		match self.ck_code_scope()? {
+			// Code block found, return successful match
+			Some(scope_data) => {
+				return Ok(Some(
+					QuLeaf::FnDecl(
+						fn_name_tk.text.clone(),
+						Box::new(QuLeaf::Block(scope_data)))
+				));
+			},
+
+			// No code block found, return error
+			None => {
+				return Err(qu_error::make_message(
+					qu_error::msg_missing_code_block(),
+					&self.tokens[self.tk_idx-1], &self.script
+				));
+			}
+		}
+	}
+
+
+	/// Attempts to parse a function name.
+	fn ck_fn_name(&mut self) -> Result<Option<QuToken>, String> {
+		// TODO: Implement function specific check for names
+		return self.ck_var_name();
+	}
+
+
 	/// Attempts to parse a print statement.
 	fn ch_print(&mut self) -> Result<Option<QuLeaf>, String> {
 		match self.utl_statement_start() {
@@ -1853,6 +1999,188 @@ pub struct QuParser<'a> {
 	}
 
 
+	/// Attempts to parse an expression
+	fn ck_expr(&mut self) -> Result<Option<QuLeafExpr>, String> {
+		return self.ck_op_les();
+	}
+
+
+	/// Attempts to parse a lesser than expression.
+	fn ck_op_les(&mut self) -> Result<Option<QuLeafExpr>, String>{
+		return self.ck_operation("<", &Self::ck_op_grt);
+	}
+
+
+	/// Attempts to parse a greater than expression.
+	fn ck_op_grt(&mut self) -> Result<Option<QuLeafExpr>, String> {
+		return self.ck_operation(">", &Self::ck_op_eql);
+	}
+
+
+	/// Attempts to parse an equal to expression.
+	fn ck_op_eql(&mut self) -> Result<Option<QuLeafExpr>, String> {
+		return self.ck_operation("==", &Self::ck_op_not_eql);
+	}
+
+
+	/// Attempts to parse a not equal to expression.
+	fn ck_op_not_eql(&mut self) -> Result<Option<QuLeafExpr>, String> {
+		return self.ck_operation("!=", &Self::ck_op_sub);
+	}
+
+
+	/// Attempts to parse a subtraction expression.
+	fn ck_op_sub(&mut self) -> Result<Option<QuLeafExpr>, String> {
+		return self.ck_operation("-", &Self::ck_op_add);
+	}
+
+
+	/// Attempts to parse an addition expression.
+	fn ck_op_add(&mut self) -> Result<Option<QuLeafExpr>, String>  {
+		return self.ck_operation("+", &Self::ck_op_div);
+	}
+
+
+	/// Attempts to parse a division expression.
+	fn ck_op_div(&mut self) -> Result<Option<QuLeafExpr>, String> {
+		return self.ck_operation("/", &Self::ck_op_mul);
+	}
+
+
+	/// Attempts to parse a multiplication expression.
+	fn ck_op_mul(&mut self) -> Result<Option<QuLeafExpr>, String> {
+		return self.ck_operation("*", &Self::ck_op_paren_expr);
+	}
+
+
+	/// Attempts to parse a parenthesized expression.
+	fn ck_op_paren_expr(&mut self) -> Result<Option<QuLeafExpr>, String> {
+		self.tk_state_save();
+
+		let tk = self.tk_next()
+				.expect("Improper indentation TODO: Better message");
+		if tk != "(" {
+			self.tk_state_pop();
+			self.tk_state_save();
+
+			// Match for a value if no parenthesis expression is matched.
+			let data = match self.ck_value() {
+				Ok(data) => data,
+				Err(msg) => return Err(msg),
+			};
+			if let None = data {
+				self.tk_state_pop();
+				return Ok(None);
+			}
+			return Ok(data);
+		}
+
+		let data = match self.ck_expr() {
+			Ok(data) => data,
+			Err(msg) => return Err(msg),
+		};
+		if let None = data {
+			self.tk_state_pop();
+			return Ok(None);
+		}
+
+		let closing_tk = self.tk_next()
+				.expect("Improper indentation TODO: Better message");
+		if closing_tk != ")" {
+			return Err(qu_error::make_message(
+				qu_error::msg_unclosed_parethesy_expression(),
+				&self.tokens[self.tk_idx], &self.script
+			));
+		}
+
+		return Ok(data);
+	}
+
+
+	/// A helper function for checking operations like addition or equality.
+	fn ck_operation(
+			&mut self, operator:&str,
+			next:&dyn Fn(&mut Self)->Result<Option<QuLeafExpr>, String>,
+			) -> Result<Option<QuLeafExpr>, String> {
+
+		self.tk_state_save();
+
+		// Check left side for value
+		let data_l = match next(self) {
+			Ok(data) => data,
+			Err(msg) => return Err(msg),
+		};
+		if let None = data_l {
+			self.tk_state_pop();
+			return Ok(None);
+		}
+		let data_l = data_l.unwrap();
+
+		// Check operator
+		let tk_op = self.tk_spy(0);
+		if tk_op != operator {
+			return Ok(Some(data_l));
+		}
+		self.tk_next().expect("Improper indentation TODO: Bette message");
+
+		// Check right side for expression
+		let data_r
+				= match self.ck_operation(operator, next) {
+			Ok(data) => data,
+			Err(msg) => return Err(msg),
+		};
+		if let None = data_r {
+			self.tk_state_pop();
+			return Ok(None);
+		}
+		let data_r = data_r.unwrap();
+
+		return Ok(Some(
+			QuLeafExpr::Equation(
+				self.opslib.op_id_from_symbol(operator),
+				Box::new(data_l),
+				Box::new(data_r)
+			)
+		));
+	}
+
+
+	/// Attempts to parse a type name.
+	fn ck_type_name(&mut self) -> Result<Option<QuToken>, String> {
+		// TODO: Implement type specific check for names
+		return self.ck_var_name();
+	}
+
+
+	/// Attempts to parse a value.
+	fn ck_value(&mut self) -> Result<Option<QuLeafExpr>, String> {
+		self.tk_state_save();
+		let tk = self.tk_next()
+				.expect("Improper indentation TODO: Bette message");
+
+		return match tk.text.parse::<u64>() {
+			Ok(x) => Ok(Some(QuLeafExpr::Int(x))),
+			Err(_) => {
+				self.tk_state_pop();
+				match self.ck_var_name() {
+					Ok(var_name_opt) => {
+						match var_name_opt {
+							// Matched a value
+							Some(data) =>
+								Ok(Some(QuLeafExpr::Var(data))),
+							// Didn't match a value, return None
+							None => Ok(None),
+						}
+					}
+					// Propagate error
+					Err(err) => {return Err(err);}
+				}
+			},
+		};
+	}
+
+
+
 	/// Attempts to parse a variable assignment.
 	fn ck_var_assign(&mut self) -> Result<Option<QuLeaf>, String> {
 		match self.utl_statement_start() {
@@ -1865,7 +2193,7 @@ pub struct QuParser<'a> {
 			Err(msg) => return Err(msg),
 		}
 
-		self.tk_push();
+		self.tk_state_save();
 
 		// Match variable name
 		let name_data_result = self.ck_var_name();
@@ -1880,7 +2208,7 @@ pub struct QuParser<'a> {
 			},
 			// Propagate error
 			Err(msg) => {
-				self.tk_pop();
+				self.tk_state_pop();
 				return Err(msg);
 			},
 		};
@@ -1893,7 +2221,7 @@ pub struct QuParser<'a> {
 				"this error message is reachable...)"
 		).as_str());
 		if assign_op_tk != OP_ASSIGN_WORD {
-			self.tk_pop();
+			self.tk_state_pop();
 			return Ok(None);
 		}
 
@@ -1903,7 +2231,7 @@ pub struct QuParser<'a> {
 				match expr_data_opt {
 					Some(expr_data) => expr_data,
 					None => {
-						self.tk_pop();
+						self.tk_state_pop();
 						let false_expr = self.tk_spy(2).clone();
 						return Err(qu_error::make_message(
 							qu_error::msg_invalid_variable_assignment(
@@ -1916,7 +2244,7 @@ pub struct QuParser<'a> {
 				}
 			},
 			Err(msg) => {
-				self.tk_pop();
+				self.tk_state_pop();
 				return Err(msg);
 			},
 		};
@@ -2016,185 +2344,6 @@ pub struct QuParser<'a> {
 	}
 
 
-	/// Attempts to parse an expression
-	fn ck_expr(&mut self) -> Result<Option<QuLeafExpr>, String> {
-		return self.ck_op_les();
-	}
-
-
-	/// Attempts to parse a lesser than expression.
-	fn ck_op_les(&mut self) -> Result<Option<QuLeafExpr>, String>{
-		return self.ck_operation("<", &Self::ck_op_grt);
-	}
-
-
-	/// Attempts to parse a greater than expression.
-	fn ck_op_grt(&mut self) -> Result<Option<QuLeafExpr>, String> {
-		return self.ck_operation(">", &Self::ck_op_eql);
-	}
-
-
-	/// Attempts to parse an equal to expression.
-	fn ck_op_eql(&mut self) -> Result<Option<QuLeafExpr>, String> {
-		return self.ck_operation("==", &Self::ck_op_not_eql);
-	}
-
-
-	/// Attempts to parse a not equal to expression.
-	fn ck_op_not_eql(&mut self) -> Result<Option<QuLeafExpr>, String> {
-		return self.ck_operation("!=", &Self::ck_op_sub);
-	}
-
-
-	/// Attempts to parse a subtraction expression.
-	fn ck_op_sub(&mut self) -> Result<Option<QuLeafExpr>, String> {
-		return self.ck_operation("-", &Self::ck_op_add);
-	}
-
-
-	/// Attempts to parse an addition expression.
-	fn ck_op_add(&mut self) -> Result<Option<QuLeafExpr>, String>  {
-		return self.ck_operation("+", &Self::ck_op_div);
-	}
-
-
-	/// Attempts to parse a division expression.
-	fn ck_op_div(&mut self) -> Result<Option<QuLeafExpr>, String> {
-		return self.ck_operation("/", &Self::ck_op_mul);
-	}
-
-
-	/// Attempts to parse a multiplication expression.
-	fn ck_op_mul(&mut self) -> Result<Option<QuLeafExpr>, String> {
-		return self.ck_operation("*", &Self::ck_op_paren_expr);
-	}
-
-
-	/// Attempts to parse a parenthesized expression.
-	fn ck_op_paren_expr(&mut self) -> Result<Option<QuLeafExpr>, String> {
-		self.tk_push();
-
-		let tk = self.tk_next()
-				.expect("Improper indentation TODO: Better message");
-		if tk != "(" {
-			self.tk_pop();
-			self.tk_push();
-
-			// Match for a value if no parenthesis expression is matched.
-			let data = match self.ck_value() {
-				Ok(data) => data,
-				Err(msg) => return Err(msg),
-			};
-			if let None = data {
-				self.tk_pop();
-				return Ok(None);
-			}
-			return Ok(data);
-		}
-
-		let data = match self.ck_expr() {
-			Ok(data) => data,
-			Err(msg) => return Err(msg),
-		};
-		if let None = data {
-			self.tk_pop();
-			return Ok(None);
-		}
-
-		let closing_tk = self.tk_next()
-				.expect("Improper indentation TODO: Better message");
-		if closing_tk != ")" {
-			return Err(qu_error::make_message(
-				qu_error::msg_unclosed_parethesy_expression(),
-				&self.tokens[self.tk_idx], &self.script
-			));
-		}
-
-		return Ok(data);
-	}
-
-
-	/// A helper function for checking operations like addition or equality.
-	fn ck_operation(
-			&mut self, operator:&str,
-			next:&dyn Fn(&mut Self)->Result<Option<QuLeafExpr>, String>,
-			) -> Result<Option<QuLeafExpr>, String> {
-
-		self.tk_push();
-
-		// Check left side for value
-		let data_l = match next(self) {
-			Ok(data) => data,
-			Err(msg) => return Err(msg),
-		};
-		if let None = data_l {
-			self.tk_pop();
-			return Ok(None);
-		}
-		let data_l = data_l.unwrap();
-
-		// Check operator
-		let tk_op = self.tk_spy(0);
-		if tk_op != operator {
-			return Ok(Some(data_l));
-		}
-		self.tk_next().expect("Improper indentation TODO: Bette message");
-
-		// Check right side for expression
-		let data_r
-				= match self.ck_operation(operator, next) {
-			Ok(data) => data,
-			Err(msg) => return Err(msg),
-		};
-		if let None = data_r {
-			self.tk_pop();
-			return Ok(None);
-		}
-		let data_r = data_r.unwrap();
-
-		return Ok(Some(
-			QuLeafExpr::Equation(
-				self.opslib.op_id_from_symbol(operator),
-				Box::new(data_l),
-				Box::new(data_r)
-			)
-		));
-	}
-
-
-	/// Attempts to parse a type name.
-	fn ck_type_name(&mut self) -> Result<Option<QuToken>, String> {
-		return self.ck_var_name();
-	}
-
-
-	/// Attempts to parse a value.
-	fn ck_value(&mut self) -> Result<Option<QuLeafExpr>, String> {
-		self.tk_push();
-		let tk = self.tk_next()
-				.expect("Improper indentation TODO: Bette message");
-
-		return match tk.text.parse::<u64>() {
-			Ok(x) => Ok(Some(QuLeafExpr::Int(x))),
-			Err(_) => {
-				self.tk_pop();
-				match self.ck_var_name() {
-					Ok(var_name_opt) => {
-						match var_name_opt {
-							// Matched a value
-							Some(data) =>
-								Ok(Some(QuLeafExpr::Var(data))),
-							// Didn't match a value, return None
-							None => Ok(None),
-						}
-					}
-					// Propagate error
-					Err(err) => {return Err(err);}
-				}
-			},
-		};
-	}
-
 
 	/// Parses a Qu script.
 	pub fn parse(&mut self) -> Result<QuLeaf, String> {
@@ -2273,13 +2422,13 @@ pub struct QuParser<'a> {
 	/// vl counter = 1
 	/// + 2
 	/// ```
-	fn tk_next(&mut self) -> Result<&QuToken, &QuToken> {
+	fn tk_next(&mut self) -> Result<&QuToken, String> {
 		let tk = &self.tokens[self.tk_idx];
 
 		// Check for proper indentation
 		if tk.row != self.line as u64 {
 			if tk.indent != self.indent+2 {
-				return Err(tk);
+				return Err(tk.text.clone());
 			}
 		}
 
@@ -2289,14 +2438,14 @@ pub struct QuParser<'a> {
 
 
 	/// Returns to a previously saved token index.
-	fn tk_pop(&mut self) {
+	fn tk_state_pop(&mut self) {
 		self.tk_idx = self.tk_stack.pop().unwrap();
 	}
 
 
 	/// Saves a the curent token index to return to if a parse attempt fails.
 	/// see [func@`Parser::tk_pop`]
-	fn tk_push(&mut self) {
+	fn tk_state_save(&mut self) {
 		self.tk_stack.push(self.tk_idx);
 	}
 
@@ -2313,8 +2462,6 @@ pub struct QuParser<'a> {
 	}
 
 }
-
-
 
 /// An object type (Example: int, bool, String, Object).
 pub struct QuType {
@@ -2380,7 +2527,7 @@ pub struct QuVm {
 	}
 
 
-	/// Converts byte code to human readable instructions.
+	/// Converts byte code to human readable Qu assembly instructions.
 	pub fn code_to_asm(&mut self, code:&Vec<u8>, include_line_columns:bool
 	) -> String {
 		let mut asm = String::new();
@@ -2414,31 +2561,40 @@ pub struct QuVm {
 
 			// Add parameter text
 			for asm_type in op.args.iter() {
-				let size = asm_type.size(code, i);
+				let size = asm_type.size(code, i+1);
 				// Get value
-				let val = match size {
-					1 => {
+				let val = match asm_type {
+					QuAsmTypes::uint8 => {
 						let bytes = [code[i+1]];
 						i += 1;
-						u8::from_be_bytes(bytes) as u64
+						format!("{}", u8::from_be_bytes(bytes))
 					}
-					2 => {
+					QuAsmTypes::uint16 => {
 						let bytes = [code[i+1], code[i+2]];
 						i += 2;
-						u16::from_be_bytes(bytes) as u64
+						format!("{}", u16::from_be_bytes(bytes))
 					}
-					4 => {
+					QuAsmTypes::uint32 => {
 						let bytes = [
 							code[i+1], code[i+2], code[i+3], code[i+4]];
 						i += 4;
-						u32::from_be_bytes(bytes) as u64
+						format!("{}", u32::from_be_bytes(bytes))
 					}
-					8 => {
+					QuAsmTypes::uint64 => {
 						let bytes = [
 							code[i+1], code[i+2], code[i+3], code[i+4],
 							code[i+5], code[i+6], code[i+7], code[i+8]];
 						i += 8;
-						u64::from_be_bytes(bytes) as u64
+						format!("{}", u64::from_be_bytes(bytes))
+					}
+					QuAsmTypes::str => {
+						let mut val = "\"".to_string();
+						for _ in 0..size+1 {
+							val.push(code[i+1] as char);
+							i += 1;
+						}
+						val.push('"');
+						val
 					}
 					_ => panic!(),
 				};
@@ -2451,12 +2607,14 @@ pub struct QuVm {
 	}
 
 
+	/// Defines a constant [String]. TODO: Better documentation
 	pub fn define_const_string(&mut self, value:&str) {
 		// TODO: Error handling
 		self.str_constants.push(value.to_owned());
 	}
 
 
+	/// Defines a Qu function. TODO: Better documentation
 	pub fn define_fn(&mut self, name:&str, code_start:usize) {
 		let id = self.functions.len();
 		self.functions.push(QuFunc::new(&name, id, code_start));
@@ -2482,21 +2640,20 @@ pub struct QuVm {
 
 
 	fn exc_define_const_str(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
-		let string = self.load_constant_string(frame, code, frame.pc);
-		frame.pc += string.len()+1;
+		let string = self.next_ascii(frame, code);
 		self.str_constants.push(string);
 	}
 
 
 	/// Defines a function from next bytes in the code.
 	fn exc_define_fn(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
-		let name_const_idx = self.next_u16(frame, code) as usize;
-		let fn_length = self.next_u16(frame, code) as usize;
+		let name_const_idx = self.next_u32(frame, code) as usize;
+		let fn_length = self.next_u32(frame, code) as usize;
 
-		let name = self.load_constant_string(frame, code, name_const_idx);
+		let name = &self.str_constants[name_const_idx];
 		let code_start = frame.pc;
 
-		self.define_fn(&name, code_start);
+		self.define_fn(&name.clone(), code_start);
 		frame.pc += fn_length;
 	}
 
@@ -2540,14 +2697,6 @@ pub struct QuVm {
 		if frame.registers[rg_if] > 0 {
 			frame.pc = val_to as usize;
 		}
-	}
-
-
-	/// Loads an 8-bit unsigned number into a register.
-	fn exc_load_const_u8(&mut self, frame:&mut QuCallFrame, code:&[u8]) {
-		let src_from = self.next_u32(frame, code) as usize;
-		let rg_to = self.next_u8(frame, code) as usize;
-		frame.registers[rg_to] = code[src_from] as QuRegisterValue;
 	}
 
 
@@ -2707,13 +2856,14 @@ pub struct QuVm {
 
 
 	/// Loads a constant [String] from the specified location in the bytecode.
-	fn load_constant_string(&mut self, frame:&mut QuCallFrame, code:&[u8],
+	fn load_constant_string(&mut self, code:&[u8],
 	at:usize) -> String {
 		let str_size = code[at] as usize;
 		let mut str_vec = Vec::with_capacity(str_size);
 		for i in at+1..(at+1+str_size) {
 			str_vec.push(code[i]);
 		}
+		
 		return String::from_utf8(str_vec).expect("TODO: Handle this error");
 	}
 
@@ -2786,7 +2936,7 @@ pub struct QuVm {
 	fn do_next(&mut self, frame:&mut QuCallFrame, bytecode:&[u8]) -> Result<(), String> {
 		// TODO: Error handling for running operations
 		let op = self.next_u8(frame, bytecode);
-		println!("{}", OPLIB.ops[op as usize].name);
+		//println!("{}", OPLIB.ops[op as usize].name);
 		match op {
 			x if x == OPLIB.end as u8 => {return Err("Done".to_string())},
 
@@ -2834,7 +2984,18 @@ pub struct QuVm {
 	pub fn run_bytes(&mut self, bytecode:&[u8]) -> Result<(), String> {
 		let mut call_frame = QuCallFrame::new();
 		while call_frame.pc != bytecode.len() {
-			self.do_next(&mut call_frame, bytecode,);
+			match self.do_next(&mut call_frame, bytecode) {
+				// No errors, continue running
+				Ok(_) => {/*pass*/},
+				// Encountered error; check if done and finish, otherwise
+				// propogate error
+				Err(msg) => {
+					if msg == "Done" {
+						break;
+					}
+					return Err(msg);
+				},
+			};
 		}
 
 		return Ok(());
