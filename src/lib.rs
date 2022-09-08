@@ -1441,11 +1441,7 @@ pub struct QuCompiler<'a> {
 				let mut code = vec![];
 				let print_reg = self.stack_reserve();
 				let mut expression_code
-					= match self.cmp_expr(leaf_expr, print_reg) {
-						Ok(code) => code,
-						// Propagate error
-						Err(err) => return Err(err),
-				};
+					= self.cmp_expr(leaf_expr, print_reg)?;
 				
 				code.append(&mut expression_code);
 				code.push(self.oplib.print);
@@ -1484,17 +1480,14 @@ pub struct QuCompiler<'a> {
 			variable_name_token:&QuToken, assign_to:&QuLeafExpr
 	) -> Result<Vec<u8>, String> {
 		// Get variable register
-		let var_reg= match self.get_var_register(&variable_name_token.text) {
-			Some(reg) => reg,
-			None => {
-				return Err(qu_error::make_message(
+		let var_reg
+			= self.get_var_register(&variable_name_token.text)
+				.ok_or(qu_error::make_message(
 					qu_error::msg_assign_undefined_variable(
 						variable_name_token.text(self.script),
 					),
 					variable_name_token, self.script,
-				));
-			},
-		};
+				))?;
 		// Compile assignment to expression
 		return self.cmp_expr(assign_to, var_reg);
 	}
@@ -1520,21 +1513,14 @@ pub struct QuCompiler<'a> {
 		if let Some(type_tk) = variable_type_token {
 			let var_type_str = type_tk.text.as_str();
 			if var_type_str != "" {
-				match self.types_map.get(var_type_str) {
-					// Set variable's type
-					Some(type_id) => {
-						var_type = *type_id;
-					},
-					// Return an error if the type is not defined
-					None => {
-						return Err(qu_error::make_message(
-							qu_error::msg_cmp_nonexistent_type(
-								type_tk.text(&self.script)),
-							type_tk,
-							self.script
-						));
-					}
-				}
+				var_type = *self.types_map.get(var_type_str).ok_or(
+					qu_error::make_message(
+						qu_error::msg_cmp_nonexistent_type(
+							type_tk.text(&self.script)),
+						type_tk,
+						self.script
+					)
+				)?;
 			}
 		}
 
@@ -1795,14 +1781,8 @@ pub struct QuParser<'a> {
 
 	/// Attempts to parse a flow statement (Exp: if, while, for, etc).
 	fn ck_flow(&mut self, token_type:u8) -> Result<Option<QuLeaf>, String> {
-		match self.utl_statement_start() {
-			Ok(opt) => (
-				match opt {
-					Some(_) => {/*pass*/},
-					None => return Ok(None),
-				}
-			),
-			Err(msg) => return Err(msg),
+		if self.utl_statement_start()?.is_none() {
+			return Ok(None);
 		}
 
 		self.tk_state_save();
@@ -1821,49 +1801,31 @@ pub struct QuParser<'a> {
 		}
 
 		// Check expression
-		let expr = match self.ck_expr() {
-			Ok(data_opt) => (
-				match data_opt {
-					Some(data) => data,
-					None => {
-						return Err(qu_error::make_message(
-							qu_error::msg_flow_lacks_expression(
-								keyword.to_string()
-							),
-							&self.tokens[self.tk_idx-1], &self.script
-						));
-					}
-				}
-			),
-			Err(msg) => return Err(msg),
-		};
+		let expr = self.ck_expr()?.ok_or(
+			qu_error::make_message(
+				qu_error::msg_flow_lacks_expression(
+					keyword.to_string()
+				),
+				&self.tokens[self.tk_idx-1], &self.script
+			)
+		)?;
 
 		// Check for code block
-		match self.ck_code_scope() {
-			Ok(data_opt) => { match data_opt {
+		let scope_data = self.ck_code_scope()?.ok_or(
+			qu_error::make_message(
+				qu_error::msg_flow_lacks_expression(
+					keyword.to_string()
+				),
+				&self.tokens[self.tk_idx-1], &self.script
+			)
+		)?;
 
-				// Code block found
-				Some(scope_data) => {
-					return Ok(Some(
-						QuLeaf::FlowStatement(
-							token_type,
-							expr,
-							Box::new(QuLeaf::Block(scope_data)))
-					));
-				},
-
-				// No code block found, return error
-				None => {
-					return Err(qu_error::make_message(
-						qu_error::msg_missing_code_block(),
-						&self.tokens[self.tk_idx-1], &self.script
-					));
-				}
-			}},
-
-			// Propagate error
-			Err(msg) => return Err(msg),
-		};
+		return Ok(Some(
+			QuLeaf::FlowStatement(
+				token_type,
+				expr,
+				Box::new(QuLeaf::Block(scope_data)))
+		));
 	}
 
 
@@ -1957,24 +1919,16 @@ pub struct QuParser<'a> {
 		}
 
 		// Check for code block
-		match self.ck_code_scope()? {
-			// Code block found, return successful match
-			Some(scope_data) => {
-				return Ok(Some(
-					QuLeaf::FnDecl(
-						fn_name_tk.text.clone(),
-						Box::new(QuLeaf::Block(scope_data)))
-				));
-			},
+		let scope_leafs = self.ck_code_scope()?.ok_or(qu_error::make_message(
+			qu_error::msg_missing_code_block(),
+			&self.tokens[self.tk_idx-1], &self.script
+		))?;
 
-			// No code block found, return error
-			None => {
-				return Err(qu_error::make_message(
-					qu_error::msg_missing_code_block(),
-					&self.tokens[self.tk_idx-1], &self.script
-				));
-			}
-		}
+		return Ok(Some(
+			QuLeaf::FnDecl(
+				fn_name_tk.text.clone(),
+				Box::new(QuLeaf::Block(scope_leafs)))
+		));
 	}
 
 
@@ -1987,14 +1941,8 @@ pub struct QuParser<'a> {
 
 	/// Attempts to parse a print statement.
 	fn ch_print(&mut self) -> Result<Option<QuLeaf>, String> {
-		match self.utl_statement_start() {
-			Ok(opt) => (
-				match opt {
-					Some(_) => {/*pass*/},
-					None => return Ok(None),
-				}
-			),
-			Err(msg) => return Err(msg),
+		if self.utl_statement_start()?.is_none() {
+			return Ok(None);
 		}
 
 		// Match keyword
@@ -2081,10 +2029,7 @@ pub struct QuParser<'a> {
 			self.tk_state_save();
 
 			// Match for a value if no parenthesis expression is matched.
-			let data = match self.ck_value() {
-				Ok(data) => data,
-				Err(msg) => return Err(msg),
-			};
+			let data = self.ck_value()?;
 			if let None = data {
 				self.tk_state_pop();
 				return Ok(None);
@@ -2092,10 +2037,7 @@ pub struct QuParser<'a> {
 			return Ok(data);
 		}
 
-		let data = match self.ck_expr() {
-			Ok(data) => data,
-			Err(msg) => return Err(msg),
-		};
+		let data = self.ck_expr()?;
 		if let None = data {
 			self.tk_state_pop();
 			return Ok(None);
@@ -2123,10 +2065,7 @@ pub struct QuParser<'a> {
 		self.tk_state_save();
 
 		// Check left side for value
-		let data_l = match next(self) {
-			Ok(data) => data,
-			Err(msg) => return Err(msg),
-		};
+		let data_l = next(self)?;
 		if let None = data_l {
 			self.tk_state_pop();
 			return Ok(None);
@@ -2141,11 +2080,7 @@ pub struct QuParser<'a> {
 		self.tk_next().expect("Improper indentation TODO: Bette message");
 
 		// Check right side for expression
-		let data_r
-				= match self.ck_operation(operator, next) {
-			Ok(data) => data,
-			Err(msg) => return Err(msg),
-		};
+		let data_r = self.ck_operation(operator, next)?;
 		if let None = data_r {
 			self.tk_state_pop();
 			return Ok(None);
@@ -2179,18 +2114,13 @@ pub struct QuParser<'a> {
 			Ok(x) => Ok(Some(QuLeafExpr::Int(x))),
 			Err(_) => {
 				self.tk_state_pop();
-				match self.ck_var_name() {
-					Ok(var_name_opt) => {
-						match var_name_opt {
-							// Matched a value
-							Some(data) =>
-								Ok(Some(QuLeafExpr::Var(data))),
-							// Didn't match a value, return None
-							None => Ok(None),
-						}
-					}
-					// Propagate error
-					Err(err) => {return Err(err);}
+				let var_name_opt = self.ck_var_name()?;
+				match var_name_opt {
+					// Matched a value
+					Some(data) =>
+						Ok(Some(QuLeafExpr::Var(data))),
+					// Didn't match a value, return None
+					None => Ok(None),
 				}
 			},
 		};
@@ -2200,34 +2130,17 @@ pub struct QuParser<'a> {
 
 	/// Attempts to parse a variable assignment.
 	fn ck_var_assign(&mut self) -> Result<Option<QuLeaf>, String> {
-		match self.utl_statement_start() {
-			Ok(opt) => (
-				match opt {
-					Some(_) => {/*pass*/},
-					None => return Ok(None),
-				}
-			),
-			Err(msg) => return Err(msg),
+		if self.utl_statement_start()?.is_none() {
+			return Ok(None);
 		}
 
 		self.tk_state_save();
 
 		// Match variable name
-		let name_data_result = self.ck_var_name();
-		let name_tk = match name_data_result {
-			Ok(name_data_opt) => {
-				match name_data_opt {
-					// Matched a variable name, set name_tk and continue
-					Some(name_data) => name_data,
-					// Tokens don't match a variable name, return None
-					None => {return Ok(None);},
-				}
-			},
-			// Propagate error
-			Err(msg) => {
-				self.tk_state_pop();
-				return Err(msg);
-			},
+		let name_data_opt = self.ck_var_name()?;
+		let name_tk = match name_data_opt {
+			Some(name_data) => name_data,
+			None => {return Ok(None);},
 		};
 		
 		
@@ -2243,26 +2156,18 @@ pub struct QuParser<'a> {
 		}
 
 		// Match expression
-		let expr_leaf = match self.ck_expr() {
-			Ok(expr_data_opt) => {
-				match expr_data_opt {
-					Some(expr_data) => expr_data,
-					None => {
-						self.tk_state_pop();
-						let false_expr = self.tk_spy(2).clone();
-						return Err(qu_error::make_message(
-							qu_error::msg_invalid_variable_assignment(
-								name_tk.text,
-								false_expr.text.clone()
-							),
-							&false_expr, &self.script
-						));
-					},
-				}
-			},
-			Err(msg) => {
+		let expr_leaf = match self.ck_expr()? {
+			Some(expr_data) => expr_data,
+			None => {
 				self.tk_state_pop();
-				return Err(msg);
+				let false_expr = self.tk_spy(2).clone();
+				return Err(qu_error::make_message(
+					qu_error::msg_invalid_variable_assignment(
+						name_tk.text,
+						false_expr.text.clone()
+					),
+					&false_expr, &self.script
+				));
 			},
 		};
 
@@ -2274,14 +2179,8 @@ pub struct QuParser<'a> {
 
 	/// Attempts to parse a variable declaration.
 	fn ck_var_decl(&mut self) -> Result<Option<QuLeaf>, String> {
-		match self.utl_statement_start() {
-			Ok(opt) => (
-				match opt {
-					Some(_) => {/*pass*/},
-					None => return Ok(None),
-				}
-			),
-			Err(msg) => return Err(msg),
+		if self.utl_statement_start()?.is_none() {
+			return Ok(None);
 		}
 		
 		// Match keyword
@@ -2292,28 +2191,13 @@ pub struct QuParser<'a> {
 		self.tk_next().expect("Improper indentation TODO:Better msg");
 
 		// Match variable name
-		let name_data = match self.ck_var_name() {
-			Ok(data) => data,
-			// Propogate error
-			Err(msg) => {
-				return Err(msg);
-			},
-		};
-		if let None = name_data {
-			return Err(
-				"Token after 'var' does not match a name. 'TODO:Better msg'"
-				.to_string());
-		}
-		let name_tk = name_data.unwrap();
+		let name_tk = self.ck_var_name()?.ok_or(
+			"Token after 'var' does not match a name. 'TODO:Better msg'"
+				.to_string()
+		)?;
 
 		// Match variable type
-		let type_tk_opt = match self.ck_type_name() {
-			Ok(data) => data,
-			// Propogate error
-			Err(msg) => {
-				return Err(msg);
-			},
-		};
+		let type_tk_opt = self.ck_type_name()?;
 
 		// Match assign operator
 		let keyword_tk = self.tk_spy(0);
@@ -2321,13 +2205,7 @@ pub struct QuParser<'a> {
 		if keyword_tk == OP_ASSIGN_WORD {
 			self.tk_next()
 					.expect("Improper indentation TODO:Better msg");
-			assign_leaf_opt = match self.ck_expr() {
-				Ok(data) => data,
-				// Propogate error
-				Err(msg) => {
-					return Err(msg);
-				},
-			};
+			assign_leaf_opt = self.ck_expr()?;
 			if let None = assign_leaf_opt {
 				return Err("Expected expression after '='. TODO:Better msg".to_string());
 			}
@@ -2350,13 +2228,8 @@ pub struct QuParser<'a> {
 		}
 		let tk = tk.clone();
 
-		match self.tk_next() {
-			Ok(_) => {/*pass*/},
-			Err(msg) => return Err(qu_error::make_message(
-				qu_error::msg_prs_bad_indentation(),
-				&self.tokens[self.tk_idx], &self.script
-			)),
-		};
+		self.tk_next()?;
+
 		return Ok(Some(tk));
 	}
 
@@ -2445,7 +2318,10 @@ pub struct QuParser<'a> {
 		// Check for proper indentation
 		if tk.row != self.line as u64 {
 			if tk.indent != self.indent+2 {
-				return Err(tk.text.clone());
+				return Err(qu_error::make_message(
+					qu_error::msg_prs_bad_indentation(),
+					&self.tokens[self.tk_idx], &self.script
+				));
 			}
 		}
 
