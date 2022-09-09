@@ -15,152 +15,255 @@ extern crate lazy_static;
 mod qu_error {
 
 	use crate::qu_tokens::QuToken;
+	use std::{fmt::{self, Display, Debug}};
 
 	type QuErrorMessage = (String, String);
 
 
-	/// Returns a [`QuErrorMessage`] for when an attempt is made to assign to
-	/// an undefined variable.
-	pub fn msg_assign_undefined_variable(a_var:String)
-			-> QuErrorMessage {
-		return (
-			"UNDEFINED VARIABLE".to_string(),
-			// TODO: Better message.
-			format!("Can't assign to '{a_var}' because it was not previously defined.")
-		);
-	}
+	pub const ERR_TITLE_EMPTY_CODE_BLOCK:&str = "EMPTY CODE BLOCK";
+	pub const ERR_TITLE_GENERAL:&str = "GENERAL";
+	pub const ERR_TITLE_INVALID_FLOW_STATEMENT:&str = "INVALID FLOW STATEMENT";
+	pub const ERR_TITLE_INVALID_INDENTATION:&str = "INVALID INDENTATION";
+	pub const ERR_TITLE_INVALID_SYNTAX:&str = "INVALID SYNTAX";
+	pub const ERR_TITLE_INVALID_VARIABLE_ASSIGNMENT:&str = "INVALID VARIABLE ASSIGNMENT";
+	pub const ERR_TITLE_INVALID_VARIABLE_DEFINITION:&str = "INVALID VARIABLE DEFINITION";
+	pub const ERR_TITLE_MISSING_CODE_BLOCK:&str = "MISSING CODE BLOCK";
+	pub const ERR_TITLE_MISSING_TOKEN:&str = "MISSING TOKEN";
+	pub const ERR_TITLE_UNDEFINED_TYPE:&str = "UNDEFINED TYPE";
+	
+
+	#[derive(Debug)]
+	pub struct QuMsg {
+		pub title:String,
+		pub description:String,
+		pub token:QuToken,
+
+	} impl QuMsg {
+
+		pub fn new() -> Self {
+			Self {
+				title:String::default(),
+				description:String::default(),
+				token:QuToken::default()
+			}
+		}
 
 
-	/// Returns a [QuErrorMessage] for general errors. Don't let this be used
-	/// because informative errors are very important.
-	pub fn msg_general() -> QuErrorMessage {
-		return (
-			"GENERAL ERROR".to_string(),
-			"Some error has occured. (Yo devs, Replace this message with a more descriptive one!)".to_string()
-		);
-	}
+		pub fn panic(&self, script:&str) {
+			panic!("{}", self.make_pretty_message(script));
+		}
 
 
-	/// Returns a [QuErrorMessage] for when a type is used that was not defined.
-	pub fn msg_cmp_nonexistent_type(the_type:String) -> QuErrorMessage {
-		return (
-			"UNDEFINED TYPE".to_string(),
-			format!("Can't use type '{the_type}' because it not previously defined.")
-		);
-	}
+		pub fn print(&self, script:&str) {
+			println!("{}", self.make_pretty_message(script));
+		}
 
 
-	/// Returns a [QuErrorMessage] for when a flow statement expects an
-	/// assertion expression, but none is found.
-	pub fn msg_flow_lacks_expression(flow_keyword:String) -> QuErrorMessage {
-		return (
-			"FLOW LACKS EXPRESSION".to_string(),
-			format!("The '{flow_keyword}' statement lacks an expression.")
-		);
-	}
+		/// Creates a pretty Qu error message as a [String].
+		pub fn make_pretty_message(&self, script:&str) -> String {
+			// Line numbers
+			let line_nm_pre_pre = (self.token.row as usize).saturating_sub(1);
+			let line_nm_pre = (self.token.row as usize).saturating_sub(0);
+			let line_nm = (self.token.row as usize).saturating_add(1);
+			let line_nm_post = (self.token.row as usize).saturating_add(2);
+			let line_nm_post_post = (self.token.row as usize).saturating_add(3);
+
+			// Line text
+			let mut script_lines = script.split("\n");
+			let line_pre_pre = if self.token.row > 1 {
+				script_lines.nth(line_nm_pre_pre-1).unwrap_or("")
+				.to_string()
+			} else {
+				"".to_string()
+			};
+			let line_pre = if self.token.row > 0 {
+				script_lines.next().unwrap_or("").to_string()
+			} else {
+				"".to_string()
+			};
+			let line = script_lines.next().unwrap_or("");
+			let line_post =
+					script_lines.next().unwrap_or("");
+			let line_post_post =
+					script_lines.next().unwrap_or("");
+
+			// Build code view
+			let code_view = format!(
+	"    {:0>4}:{}\n    {:0>4}:{}\n >> {:0>4}:{}\n    {:0>4}:{}\n    {:0>4}:{}\n\n",
+				line_nm_pre_pre,
+				line_pre_pre,
+				line_nm_pre,
+				line_pre,
+				line_nm,
+				line,
+				line_nm_post,
+				line_post,
+				line_nm_post_post,
+				line_post_post,
+			);
+
+			// Build error message
+			let msg = format!(
+				"ERROR on line {row}, col {col}; {m0}:\"{m1}\"\n{script}",
+				row=self.token.row+1, col=self.token._col, m0=self.title,
+				m1=self.description, script=code_view
+			);
+			return msg;
+			
+		}
 
 
-	/// Returns a [QuErrorMessage] for when a code block is expected but not
-	/// found.
-	pub fn msg_missing_code_block() -> QuErrorMessage {
-		return (
-			"MISSING CODE BLOCK".to_string(),
-			"A code block was expected, but none was found.".to_string()
-		);
-	}
+		// --- Messages ---
+
+		pub fn empty_code_block(expected_token:&str) -> Self{
+			let mut msg = Self::new();
+			msg.title = ERR_TITLE_EMPTY_CODE_BLOCK.to_string();
+			msg.description = "A code block was started, but no code was found.".to_string();
+			return msg;
+		}
 
 
-	/// Returns a [QuErrorMessage] for an expected token is ommitted.
-	pub fn msg_missing_token(token:&str) -> QuErrorMessage {
-		return (
-			"MISSING TOKEN".to_string(),
-			format!("Epected a '{}' token, but it was not found.", token)
-		);
-	}
+		pub fn flow_statement_lacks_expression(flow_keyword:&str) -> Self{
+			let mut msg = Self::new();
+			msg.title = ERR_TITLE_INVALID_FLOW_STATEMENT.to_string();
+			msg.description = format!("Flow statement requires an expression but non was given.");
+			return msg;
+		}
 
 
-	/// Returns a [QuErrorMessage] for when a incohrent indentation is found.
-	pub fn msg_prs_bad_indentation() -> QuErrorMessage {
-		return (
-			"BAD INDENTATION".to_string(),
-			// TODO: Better message.
-			"A line has an incorrect indentation level.".to_string()
-		);
-	}
+		pub fn general(description:&str) -> Self{
+			let mut msg = Self::new();
+			msg.title = ERR_TITLE_GENERAL.to_string();
+			msg.description = description.to_string();
+			return msg;
+		}
 
 
-	/// Returns a [QuErrorMessage] for when a statement is placed on the same
-	/// line as a flow statement, like an if statement.
-	pub fn msg_prs_bad_indentation2() -> QuErrorMessage {
-		return (
-			"BAD INDENTATION2".to_string(),
-			// TODO: Better message.
-			"A code block and flow statement are on the same line.".to_string()
-		);
-	}
+		pub fn missing_token(expected_token:&str) -> Self{
+			let mut msg = Self::new();
+			msg.title = ERR_TITLE_MISSING_TOKEN.to_string();
+			msg.description = format!("Epected a '{expected_token}' token, but it was not found.");
+			return msg;
+		}
 
 
-	/// Returns a [QuErrorMessage] for when a new code block is started, but
-	/// remains empty.
-	pub fn msg_prs_empty_code_block() -> QuErrorMessage {
-		return (
-			"EMPTY CODE BLOCK".to_string(),
-			// TODO: Better message.
-			"A code block was started, but no code was written to it.".to_string()
-		);
-	}
+		pub fn missing_code_block() -> Self{
+			let mut msg = Self::new();
+			msg.title = ERR_TITLE_MISSING_CODE_BLOCK.to_string();
+			msg.description = "A code block was expected, but none was found.".to_string();
+			return msg;
+		}
 
 
-	/// Returns a [QuErrorMessage] for when a variable is being read that
-	/// is not defined.
-	pub fn msg_read_undefined_variable(a_var:String)
-			-> QuErrorMessage {
-		return (
-			"UNDEFINED VARIABLE".to_string(),
-			// TODO: Better message.
-			format!("Can't read from '{a_var}' because it was not previously defined.")
-		);
-	}
+		pub fn missing_code_block_in_flow() -> Self{
+			let mut msg = Self::new();
+			msg.title = ERR_TITLE_MISSING_CODE_BLOCK.to_string();
+			msg.description = "Flow statement requires a code block, but none was found.".to_string();
+			return msg;
+		}
 
 
-	/// Returns a [QuErrorMessage] for when a variable is being set to something
-	/// invalid, basically anything that is not an expression.
-	pub fn msg_invalid_variable_assignment(a_var:String, invalid_value:String)
-			-> QuErrorMessage {
-		return (
-			"INVALID VARIABLE ASSIGNMENT".to_string(),
-			// TODO: Better message.
-			format!("Can't assign to variable '{a_var}' with '{invalid_value}' because it is not a valid value.")
-		);
-	}
+		pub fn invalid_indent() -> Self{
+			let mut msg = Self::new();
+			msg.title = ERR_TITLE_INVALID_INDENTATION.to_string();
+			msg.description = "Encountered invalid indentation.".to_string();
+			return msg;
+		}
 
 
-	/// Returns a [QuErrorMessage] for when a parenthesy expression is not
-	/// closed.
-	pub fn msg_unclosed_parethesy_expression() -> QuErrorMessage {
-		return (
-			"UNCLOSED PARETHESY EXPRESSION".to_string(),
-			"A parenthesy expression was opened, but it was nether closed.".to_string()
-		);
-	}
+		pub fn invalid_syntax(expected_token:&str) -> Self{
+			let mut msg = Self::new();
+			msg.title = ERR_TITLE_INVALID_INDENTATION.to_string();
+			msg.description = "A line has an incorrect indentation level.".to_string();
+			return msg;
+		}
 
 
-	/// Returns a [QuErrorMessage] for when a variable is defined twice.
-	pub fn msg_var_redefinition(the_var:String) -> QuErrorMessage {
-		return (
-			"VARIABLE REDEFINITION".to_string(),
-			format!("Can't define the variable '{the_var}' because it was already defined previously.")
-		);
-	}
+		pub fn invalid_token(invalid_tk:&str) -> Self{
+			let mut msg = Self::new();
+			msg.title = ERR_TITLE_INVALID_SYNTAX.to_string();
+			msg.description = format!{"Encountered invalid token '{invalid_tk}'."};
+			return msg;
+		}
 
 
-	/// Returns a [QuErrorMessage] for when a variable assignment lacks an
-	/// expression.
-	pub fn msg_var_assign_lacks_expr(the_var:String) -> QuErrorMessage {
-		return (
-			"VARIABLE ASSIGNMENT LACKS EXPRESSION".to_string(),
-			format!("A variable assignment for '{the_var}' lacks an expression.")
-		);
+		pub fn one_liner() -> Self{
+			let mut msg = Self::new();
+			msg.title = ERR_TITLE_INVALID_INDENTATION.to_string();
+			msg.description = "A code block and flow statement are on the same line.".to_string();
+			return msg;
+		}
+
+
+		pub fn unclosed_paren_expr() -> Self{
+			let mut msg = Self::new();
+			msg.title = ERR_TITLE_INVALID_SYNTAX.to_string();
+			msg.description = format!("Parenthesy expression remained unclosed.");
+			return msg;
+		}
+
+
+		pub fn undefined_type_access(the_type:&str) -> Self{
+			let mut msg = Self::new();
+			msg.title = ERR_TITLE_UNDEFINED_TYPE.to_string();
+			msg.description = format!("Can't use '{the_type}' because it was not previously defined.");
+			return msg;
+		}
+
+
+		pub fn undefined_var_access(the_var:&str) -> Self{
+			let mut msg = Self::new();
+			msg.title = ERR_TITLE_INVALID_VARIABLE_ASSIGNMENT.to_string();
+			msg.description = format!
+				("Can't use '{the_var}' because it was not previously defined.",
+			);
+			return msg;
+		}
+
+
+		pub fn undefined_var_assign(the_var:&str) -> Self{
+			let mut msg = Self::new();
+			msg.title = ERR_TITLE_INVALID_VARIABLE_ASSIGNMENT.to_string();
+			msg.description = format!("Can't assign to '{the_var}' because it was not previously defined.");
+			return msg;
+		}
+
+
+		pub fn var_assign_invalid_value(the_var:&str,
+		invalid_value:&str) -> Self{
+			let mut msg = Self::new();
+			msg.title = ERR_TITLE_INVALID_VARIABLE_ASSIGNMENT.to_string();
+			msg.description = format!("Can't assign to variable '{the_var}' with '{invalid_value}' because it is not a valid value.");
+			return msg;
+		}
+
+
+		pub fn var_assign_lacks_value(the_var:&str) -> Self{
+				let mut msg = Self::new();
+				msg.title = ERR_TITLE_INVALID_VARIABLE_ASSIGNMENT.to_string();
+				msg.description = format!("Variable assignment for '{the_var}' lacks an expression.");
+				return msg;
+			}
+
+
+		pub fn var_redefined(the_var:&str) -> Self{
+			let mut msg = Self::new();
+			msg.title = ERR_TITLE_INVALID_VARIABLE_DEFINITION.to_string();
+			msg.description = format!("Can't define the variable '{the_var}' because it was already defined previously.");
+			return msg;
+		}	
+		
+	} impl Display for QuMsg {
+
+		fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+			return write!(f, "ERROR on line {row}, col {col}; {title}:\"{descr}",
+				row=self.token.row+1,
+				col=self.token._col,
+				title=self.title,
+				descr=self.description,
+			);
+		}
+		
 	}
 
 
@@ -633,7 +736,7 @@ mod qu_tokens {
 
 
 		/// Makes a new empty [`Token`].
-		pub fn empty() -> QuToken {
+		pub fn default() -> QuToken {
 		return QuToken{
 			begin:0,
 			end:0,
@@ -676,6 +779,7 @@ mod qu_tokens {
 					self.row,
 					self.indent,);
 		}
+
 	} impl Debug for QuToken {
 		fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 			return write!(f, "Hi: {}", 0);
@@ -724,6 +828,7 @@ mod qu_tokens {
 use std::{fmt::{self, Display, Debug, format}, vec, collections::HashMap, rc::Rc, mem, hash::Hash};
 use derive_new::new;
 use qu_tokens::{RULES, TOKEN_TYPE_NAME, tokenize, QuToken};
+use qu_error::{QuMsg};
 
 
 /// A tuple of for specifying arguments for a [QuOperation].
@@ -1085,13 +1190,13 @@ pub struct Qu {
 
 
 	/// Compiles Qu code into bytecode.
-	pub fn compile(&self, code:&str) -> Result<Vec<u8>, String> {
+	pub fn compile(&self, code:&str) -> Result<Vec<u8>, QuMsg> {
 		// Tokenize
 		let code_str = code.to_string();
 		let tokens = &mut tokenize(&code_str, RULES);
 
 		// Parse
-		let mut parser = QuParser::new(tokens, &code_str);
+		let mut parser = QuParser::new(tokens);
 		let leaf_block = parser.parse()?;
 
 		// Compile
@@ -1101,7 +1206,7 @@ pub struct Qu {
 
 
 	/// Compiles Qu code to Qu assembly.
-	pub fn compile_to_asm(&mut self, code:&str) -> Result<String, String> {
+	pub fn compile_to_asm(&mut self, code:&str) -> Result<String, QuMsg> {
 		let code = self.compile(code)?;
 
 		return Ok(self.vm.code_to_asm(&code, false));
@@ -1109,26 +1214,38 @@ pub struct Qu {
 
 
 	/// Runs a [String] of Qu code.
-	pub fn run(&mut self, script:&str) -> Result<(), String> {
-		let code = self.compile(script)?;
-		return self.run_bytes(&code);
+	pub fn run(&mut self, script:&str) -> Result<(), QuMsg> {
+		let code_res = self.compile(script);
+		match code_res{
+			Ok(code) => {
+				let run_res = self.run_bytes(&code);
+				if let Err(msg) = &run_res {
+					msg.print(&script);
+				}
+				return run_res;
+			}
+			Err(msg) => {
+				msg.print(&script);
+				return Err(msg);
+			}
+		}
 	}
 
 
 	/// Runs Qu bytecode.
-	pub fn run_bytes(&mut self, bytes:&[u8]) -> Result<(), String> {
+	pub fn run_bytes(&mut self, bytes:&[u8]) -> Result<(), QuMsg> {
 		return self.vm.run_bytes(bytes);
 	}
 	
 
 	/// Runs a [QuFunc].
-	pub fn run_fn(&mut self, glob_fn:&QuFunc) -> Result<(), String> {
+	pub fn run_fn(&mut self, glob_fn:&QuFunc) -> Result<(), QuMsg> {
 		return self.vm.run_bytes(&glob_fn.code);
 	}
 
 
 	/// Runs a global scope [QuFunc].
-	pub fn run_global_fn(&mut self, glob_fn:&QuFunc) -> Result<(), String> {
+	pub fn run_global_fn(&mut self, glob_fn:&QuFunc) -> Result<(), QuMsg> {
 		return self.run_fn(glob_fn);
 	}
 
@@ -1163,7 +1280,6 @@ pub struct QuCompiler<'a> {
 	stack_idx:u8,
 	types:Vec<QuType>,
 	types_map:HashMap<String, usize>,
-	oplib:QuOpLibrary<'a>,
 } impl<'a> QuCompiler<'a> {
 
 	// TODO: Refactor so that QuCompiler does not need the script to be
@@ -1179,7 +1295,6 @@ pub struct QuCompiler<'a> {
 			stack_idx:0,
 			types:vec![QuType::int(), QuType::uint(), QuType::bool()],
 			types_map:HashMap::new(),
-			oplib:QuOpLibrary::new(),
 		};
 
 		let mut i:usize = 0;
@@ -1194,7 +1309,7 @@ pub struct QuCompiler<'a> {
 
 	/// Compiles an expression into bytecode.
 	fn cmp_expr(&mut self, leaf:&QuLeafExpr, output_reg:u8)
-			-> Result<Vec<u8>, String> {
+			-> Result<Vec<u8>, QuMsg> {
 		return match leaf {
 			QuLeafExpr::Equation(
 				op,
@@ -1211,7 +1326,7 @@ pub struct QuCompiler<'a> {
 
 	/// Compiles a math or logic expression into bytecode.
 	fn cmp_expr_math(&mut self, op:u8, left:&QuLeafExpr, right:&QuLeafExpr,
-			output_reg:u8) -> Result<Vec<u8>, String> {
+			output_reg:u8) -> Result<Vec<u8>, QuMsg> {
 		
 		let right_reg = self.stack_reserve();
 
@@ -1242,7 +1357,7 @@ pub struct QuCompiler<'a> {
 
 		let mut code = vec![];
 		// The vm operation
-		code.push(self.oplib.load_val_u8);
+		code.push(OPLIB.load_val_u8);
 		// The number as bytes
 		code.append(&mut (val as u8).to_be_bytes().to_vec());
 		// The register to load into
@@ -1254,17 +1369,18 @@ pub struct QuCompiler<'a> {
 
 	/// Compiles a variable-expression into bytecode.
 	fn cmp_expr_val(&mut self, token:&QuToken, output_reg:u8)
-			-> Result<Vec<u8>, String> {
+			-> Result<Vec<u8>, QuMsg> {
 		
 		// The register to copy the variable value from
 		let var_reg
 			= self.get_var_register(token.text.as_str())
-			.ok_or(qu_error::make_message(
-				qu_error::msg_read_undefined_variable(
-					token.text(self.script)
-				),
-				token, self.script
-			))?;
+			.ok_or_else(||{
+				let mut msg
+					= QuMsg::undefined_var_access(&token.text);
+				msg.token = token.clone();
+				return msg;
+			}
+		)?;
 		// Copying to same register location, return nothing
 		if var_reg == output_reg {
 			return Ok(Vec::default());
@@ -1272,7 +1388,7 @@ pub struct QuCompiler<'a> {
 
 		let mut code = Vec::with_capacity(3);
 		// The vm operation
-		code.push(self.oplib.copy_reg);
+		code.push(OPLIB.copy_reg);
 		code.append(&mut (var_reg as u8).to_be_bytes().to_vec());
 		// The register to copy the variable value into
 		code.push(output_reg);
@@ -1283,7 +1399,7 @@ pub struct QuCompiler<'a> {
 
 	/// Compiles an *if* statement into bytecode.
 	fn cmp_flow_if(&mut self, condition:&QuLeafExpr, body:&Box<QuLeaf>
-	) -> Result<Vec<u8>, String> {
+	) -> Result<Vec<u8>, QuMsg> {
 		// Get expression register
 		self.stack_frame_push();
 		let if_expr_reg = self.stack_reserve();
@@ -1297,7 +1413,7 @@ pub struct QuCompiler<'a> {
 		// Compile pieces
 		let mut block_code = self.cmp_scope(body)?;
 		let mut jump_code = Vec::with_capacity(7);
-		jump_code.push(self.oplib.jump_by_if_not);
+		jump_code.push(OPLIB.jump_by_if_not);
 		jump_code.append(&mut (block_code.len() as i32).to_be_bytes().to_vec());
 
 		// Combine code pieces together
@@ -1316,7 +1432,7 @@ pub struct QuCompiler<'a> {
 
 	/// Compiles a *while* statement into bytecode.
 	fn cmp_flow_while(&mut self, condition:&QuLeafExpr, body:&Box<QuLeaf>
-	) -> Result<Vec<u8>, String> {
+	) -> Result<Vec<u8>, QuMsg> {
 		// Get expression register
 		self.stack_frame_push();
 		let if_expr_reg = self.stack_reserve();
@@ -1335,7 +1451,7 @@ pub struct QuCompiler<'a> {
 		let mut jump_code = Vec::with_capacity(7);
 		let jump_distance = block_code.len() as i32
 			+ 1 + OPLIB.op_args_size(OPLIB.jump_by) as i32;
-		jump_code.push(self.oplib.jump_by_if_not);
+		jump_code.push(OPLIB.jump_by_if_not);
 		jump_code.append(&mut jump_distance.to_be_bytes().to_vec());
 		// Jump back code
 		let mut jump_back_code = Vec::default();
@@ -1361,11 +1477,15 @@ pub struct QuCompiler<'a> {
 	}
 
 
-	fn cmp_fn_call(&mut self, name:&str
-	) -> Result<Vec<u8>, String> {
+	fn cmp_fn_call(&mut self, name:&str) -> Result<Vec<u8>, QuMsg> {
 		let name_index = *self.functions.get(&name.to_string())
-		.ok_or("Compiler attempted to call a function that was not defined. TODO: Better error message".to_owned())?
-		as u32;
+			.ok_or_else(||{
+				panic!("TODO: Need token for QuMsg");
+				let msg = QuMsg::general(
+					"Compiler attempted to call a function that was not defined. TODO: Better error message");
+				return msg;
+			}
+		)? as u32;
 
 		let mut code = vec![];
 		// Add fn declaration operation
@@ -1377,7 +1497,7 @@ pub struct QuCompiler<'a> {
 
 
 	fn cmp_fn_decl(&mut self, name:&str, body:&QuLeaf
-	) -> Result<Vec<u8>, String> {
+	) -> Result<Vec<u8>, QuMsg> {
 		let name_index = self.str_constants.len() as u32;
 		self.str_constants.push(name.to_owned());
 
@@ -1400,7 +1520,7 @@ pub struct QuCompiler<'a> {
 	}
 
 	/// Compiles a [QuLeaf] into bytecode.
-	fn cmp_leaf(&mut self, leaf:&QuLeaf) -> Result<Vec<u8>, String> {
+	fn cmp_leaf(&mut self, leaf:&QuLeaf) -> Result<Vec<u8>, QuMsg> {
 		let result = match leaf {
 			QuLeaf::Block(leafs) => {
 				let mut code = vec![];
@@ -1444,7 +1564,7 @@ pub struct QuCompiler<'a> {
 					= self.cmp_expr(leaf_expr, print_reg)?;
 				
 				code.append(&mut expression_code);
-				code.push(self.oplib.print);
+				code.push(OPLIB.print);
 				code.push(print_reg);
 				return Ok(code);
 			},
@@ -1477,35 +1597,34 @@ pub struct QuCompiler<'a> {
 
 	/// Compiles code variable assignment.
 	fn cmp_var_assign(&mut self,
-			variable_name_token:&QuToken, assign_to:&QuLeafExpr
-	) -> Result<Vec<u8>, String> {
+			var_token:&QuToken, assign_to:&QuLeafExpr
+	) -> Result<Vec<u8>, QuMsg> {
 		// Get variable register
 		let var_reg
-			= self.get_var_register(&variable_name_token.text)
-				.ok_or(qu_error::make_message(
-					qu_error::msg_assign_undefined_variable(
-						variable_name_token.text(self.script),
-					),
-					variable_name_token, self.script,
-				))?;
+			= self.get_var_register(&var_token.text)
+				.ok_or_else(||{
+					let mut msg = QuMsg::undefined_var_assign(
+						&var_token.text);
+					msg.token = var_token.clone();
+					return msg;
+				}
+			)?
+		;
 		// Compile assignment to expression
 		return self.cmp_expr(assign_to, var_reg);
 	}
 
 
 	/// Compiles a variable declaration.
-	fn cmp_var_decl(&mut self, variable_name_token:&QuToken,
+	fn cmp_var_decl(&mut self, var_token:&QuToken,
 			variable_type_token:&Option<QuToken>,
-	assign_to:&Option<QuLeafExpr>) -> Result<Vec<u8>, String> {
+	assign_to:&Option<QuLeafExpr>) -> Result<Vec<u8>, QuMsg> {
 
 		// Check if the variable is already defined
-		if self.is_var_defined(&variable_name_token.text) {
-			return Err(qu_error::make_message(
-				qu_error::msg_var_redefinition(
-					variable_name_token.text(self.script),
-				),
-				variable_name_token, self.script,
-			));
+		if self.is_var_defined(&var_token.text) {
+			let mut msg = QuMsg::var_redefined(&var_token.text);
+			msg.token = var_token.clone();
+			return Err(msg);
 		}
 
 		// Get var type
@@ -1513,13 +1632,13 @@ pub struct QuCompiler<'a> {
 		if let Some(type_tk) = variable_type_token {
 			let var_type_str = type_tk.text.as_str();
 			if var_type_str != "" {
-				var_type = *self.types_map.get(var_type_str).ok_or(
-					qu_error::make_message(
-						qu_error::msg_cmp_nonexistent_type(
-							type_tk.text(&self.script)),
-						type_tk,
-						self.script
-					)
+				var_type = *self.types_map.get(var_type_str)
+					.ok_or_else(|| {
+						let mut msg = QuMsg::undefined_type_access(
+							&type_tk.text);
+						msg.token = type_tk.clone();
+						return msg;
+					}
 				)?;
 			}
 		}
@@ -1527,7 +1646,7 @@ pub struct QuCompiler<'a> {
 		// Create variable
 		let var_reg = self.stack_reserve();
 		self.variables.push(
-			(variable_name_token.text.clone(), var_type, var_reg)
+			(var_token.text.clone(), var_type, var_reg)
 		);
 
 		// Compile variable assignment
@@ -1540,7 +1659,7 @@ pub struct QuCompiler<'a> {
 			None => {
 				// TODO: Support u64
 				let mut code = Vec::with_capacity(3);
-				code.push(self.oplib.load_val_u8); 
+				code.push(OPLIB.load_val_u8); 
 				code.push(0);
 				code.push(var_reg);
 				Ok(code)
@@ -1550,7 +1669,7 @@ pub struct QuCompiler<'a> {
 
 
 	/// Compiles a scope.
-	fn cmp_scope(&mut self, leaf:&QuLeaf) -> Result<Vec<u8>, String> {
+	fn cmp_scope(&mut self, leaf:&QuLeaf) -> Result<Vec<u8>, QuMsg> {
 		self.stack_frame_push();
 		let compiled = self.cmp_leaf(leaf);
 		self.stack_frame_pop();
@@ -1558,14 +1677,18 @@ pub struct QuCompiler<'a> {
 	}
 
 
-	fn cmp_str_constants(&mut self) -> Result<Vec<u8>, String> {
+	fn cmp_str_constants(&mut self) -> Result<Vec<u8>, QuMsg> {
 		let mut code = vec![];
 		for s in &self.str_constants {
 			code.push(OPLIB.define_const_str);
 			code.push(s.len() as u8);
 			for char in s.chars() {
 				if !char.is_ascii() {
-					return Err("String is not ASCII. TODO: Better error message".to_string());
+					let msg = QuMsg::general(
+						"String is not ASCII. TODO: Better error message"
+					);
+					panic!("TODO: Need token for QuMsg");
+					return Err(msg);
 				}
 				code.push(char as u8);
 			}
@@ -1575,10 +1698,10 @@ pub struct QuCompiler<'a> {
 
 
 	/// Compiles from a [QuLeaf] instruction into bytecode (into a [Vec]<[u8]>.)
-	pub fn compile(&mut self, leafs:&QuLeaf) -> Result<Vec<u8>, String> {
+	pub fn compile(&mut self, leafs:&QuLeaf) -> Result<Vec<u8>, QuMsg> {
 		// Main code
 		let mut code = self.cmp_scope(leafs)?;
-		code.push(self.oplib.end);
+		code.push(OPLIB.end);
 
 		// Constants and joining with main code
 		let mut constants_code = self.cmp_str_constants()?;
@@ -1686,15 +1809,13 @@ pub struct QuParser<'a> {
 	tk_idx:usize,
 	tk_stack:Vec<usize>,
 	tokens:&'a Vec<QuToken>,
-	script:&'a String,
 	opslib:QuOpLibrary<'a>,
 
 } impl<'a> QuParser<'a> {
 
-	// TODO: Refactor so that QuParser does not need the script or tokens to be
 	// instantiated. Instead, it should be passed to the parse function.
 	/// Creates and returns a new [QuParser].
-	pub fn new(tokens:&'a mut Vec<QuToken>, script:&'a String) -> Self {
+	pub fn new(tokens:&'a mut Vec<QuToken>) -> Self {
 		tokens.push(
 			QuToken::new(tokens.len() as u64, tokens.len() as u64, 
 			0, 0, 0, u8::MAX)
@@ -1705,14 +1826,13 @@ pub struct QuParser<'a> {
 			tk_idx:0,
 			tk_stack:vec![],
 			tokens:tokens,
-			script:script,
 			opslib:QuOpLibrary::new(),
 		}
 	}
 
 
 	/// Attempts to parse a code block.
-	fn ck_code_block(&mut self) -> Result<Option<Vec<QuLeaf>>, String> {
+	fn ck_code_block(&mut self) -> Result<Option<Vec<QuLeaf>>, QuMsg> {
 		let mut leafs = vec![];
 
 		macro_rules! ck_parse {
@@ -1746,15 +1866,15 @@ pub struct QuParser<'a> {
 			// Function call
 			ck_parse!(ck_fn_call);
 
-			// End block
-			break;
+			// Unexpected token
+			return Err(QuMsg::invalid_token(
+				&self.tokens[self.tk_idx].text));
 		}
 
 		if leafs.len() == 0 {
-			return Err(qu_error::make_message(
-				qu_error::msg_missing_code_block(),
-				&QuToken::empty(), &self.script
-			));
+			// TODO: Add real token to QuMsg
+			return Err(QuMsg::missing_code_block()
+			);
 		}
 
 		return Ok(Some(leafs));
@@ -1762,7 +1882,7 @@ pub struct QuParser<'a> {
 
 
 	/// Attempts to pasrse a code scope.
-	fn ck_code_scope(&mut self) -> Result<Option<Vec<QuLeaf>>, String> {
+	fn ck_code_scope(&mut self) -> Result<Option<Vec<QuLeaf>>, QuMsg> {
 		self.tk_state_save();
 
 		// Check operator
@@ -1780,7 +1900,7 @@ pub struct QuParser<'a> {
 
 
 	/// Attempts to parse a flow statement (Exp: if, while, for, etc).
-	fn ck_flow(&mut self, token_type:u8) -> Result<Option<QuLeaf>, String> {
+	fn ck_flow(&mut self, token_type:u8) -> Result<Option<QuLeaf>, QuMsg> {
 		if self.utl_statement_start()?.is_none() {
 			return Ok(None);
 		}
@@ -1802,23 +1922,25 @@ pub struct QuParser<'a> {
 
 		// Check expression
 		let expr = self.ck_expr()?.ok_or(
-			qu_error::make_message(
-				qu_error::msg_flow_lacks_expression(
-					keyword.to_string()
-				),
-				&self.tokens[self.tk_idx-1], &self.script
-			)
+			QuMsg::flow_statement_lacks_expression(keyword)
 		)?;
 
 		// Check for code block
-		let scope_data = self.ck_code_scope()?.ok_or(
-			qu_error::make_message(
-				qu_error::msg_flow_lacks_expression(
-					keyword.to_string()
-				),
-				&self.tokens[self.tk_idx-1], &self.script
-			)
-		)?;
+		let scope_data = match self.ck_code_scope() {
+			Ok(leaf) => leaf.ok_or(
+				QuMsg::missing_code_block()
+			)?,
+			Err(msg) => {
+				// If the error is related to indentation, replace the error
+				// with a missing value error
+				if msg.title == qu_error::ERR_TITLE_INVALID_INDENTATION {
+					self.tk_idx -= 1;
+					return Err(QuMsg::missing_code_block_in_flow());
+				}
+				// Return normal error
+				return Err(msg);
+			}
+		};
 
 		return Ok(Some(
 			QuLeaf::FlowStatement(
@@ -1830,19 +1952,19 @@ pub struct QuParser<'a> {
 
 
 	/// Attempts to parse an if statement.
-	fn ck_flow_if(&mut self) -> Result<Option<QuLeaf>, String> {
+	fn ck_flow_if(&mut self) -> Result<Option<QuLeaf>, QuMsg> {
 		return self.ck_flow(FLOW_IF);
 	}
 
 
 	/// Attempts to parse a while statement.
-	fn ck_flow_while(&mut self) -> Result<Option<QuLeaf>, String> {
+	fn ck_flow_while(&mut self) -> Result<Option<QuLeaf>, QuMsg> {
 		return self.ck_flow(FLOW_WHILE);
 	}
 
 
 	/// Attempts to parse a function call.
-	fn ck_fn_call(&mut self) -> Result<Option<QuLeaf>, String> {
+	fn ck_fn_call(&mut self) -> Result<Option<QuLeaf>, QuMsg> {
 		if self.utl_statement_start()?.is_none() {
 			return Ok(None);
 		}
@@ -1850,27 +1972,21 @@ pub struct QuParser<'a> {
 		self.tk_state_save();
 
 		// Check function name
-		let fn_name_tk = self.ck_fn_name()?.ok_or(
-			qu_error::make_message(
-				qu_error::msg_missing_code_block(),
-				&self.tokens[self.tk_idx-1], &self.script
-			)
-		)?;
+		let fn_name_opt = self.ck_fn_name()?;
+
+		let fn_name_tk = match fn_name_opt {
+			Some(name) => name,
+			None => {return Ok(None)},
+		};
 
 		// Match an open '('
 		if self.tk_next()? != "(" {
-			return Err(qu_error::make_message(
-				qu_error::msg_missing_token("("),
-				&self.tokens[self.tk_idx-1], &self.script
-			));
+			return Err(QuMsg::missing_token("("));
 		}
 
 		// Match a close ')'
 		if self.tk_next()? != ")" {
-			return Err(qu_error::make_message(
-				qu_error::msg_missing_token(")"),
-				&self.tokens[self.tk_idx-1], &self.script
-			));
+			return Err(QuMsg::missing_token(")"));
 		}
 
 		return Ok(Some(QuLeaf::FnCall(fn_name_tk.text)));
@@ -1878,7 +1994,7 @@ pub struct QuParser<'a> {
 
 
 	/// Attempts to parse a function definition.
-	fn ck_fn_decl(&mut self) -> Result<Option<QuLeaf>, String> {
+	fn ck_fn_decl(&mut self) -> Result<Option<QuLeaf>, QuMsg> {
 		if self.utl_statement_start()?.is_none() {
 			return Ok(None);
 		}
@@ -1887,7 +2003,8 @@ pub struct QuParser<'a> {
 
 		// Check keyword
 		let keyword_tk = self.tk_next()
-				.expect("Improper indentation TODO: Bette message");
+				.expect("Improper indentation TODO: Bette message")
+				.clone();
 		if keyword_tk != KEYWORD_FUNCTION {
 			// Check failed. Stop checking silently
 			self.tk_state_pop();
@@ -1896,33 +2013,25 @@ pub struct QuParser<'a> {
 
 		// Check function name
 		let fn_name_tk = self.ck_fn_name()?.ok_or(
-			qu_error::make_message(
-				qu_error::msg_missing_code_block(),
-				&self.tokens[self.tk_idx-1], &self.script
-			)
+			// TODO: Change to more appropriate message
+			QuMsg::missing_code_block()
 		)?;
 
 		// Match an open '('
 		if self.tk_next()? != "(" {
-			return Err(qu_error::make_message(
-				qu_error::msg_missing_token("("),
-				&self.tokens[self.tk_idx-1], &self.script
-			));
+			return Err(QuMsg::missing_token("("));
 		}
 
 		// Match a close ')'
-		if self.tk_next()? != ")" {
-			return Err(qu_error::make_message(
-				qu_error::msg_missing_token(")"),
-				&self.tokens[self.tk_idx-1], &self.script
-			));
+		let closing_paren = self.tk_next()?.clone();
+		if closing_paren != ")" {
+			return Err(QuMsg::missing_token(")"));
 		}
 
 		// Check for code block
-		let scope_leafs = self.ck_code_scope()?.ok_or(qu_error::make_message(
-			qu_error::msg_missing_code_block(),
-			&self.tokens[self.tk_idx-1], &self.script
-		))?;
+		let scope_leafs = self.ck_code_scope()?.ok_or(
+			QuMsg::missing_code_block()
+		)?;
 
 		return Ok(Some(
 			QuLeaf::FnDecl(
@@ -1933,14 +2042,14 @@ pub struct QuParser<'a> {
 
 
 	/// Attempts to parse a function name.
-	fn ck_fn_name(&mut self) -> Result<Option<QuToken>, String> {
+	fn ck_fn_name(&mut self) -> Result<Option<QuToken>, QuMsg> {
 		// TODO: Implement function specific check for names
 		return self.ck_var_name();
 	}
 
 
 	/// Attempts to parse a print statement.
-	fn ch_print(&mut self) -> Result<Option<QuLeaf>, String> {
+	fn ch_print(&mut self) -> Result<Option<QuLeaf>, QuMsg> {
 		if self.utl_statement_start()?.is_none() {
 			return Ok(None);
 		}
@@ -1965,65 +2074,64 @@ pub struct QuParser<'a> {
 
 
 	/// Attempts to parse an expression
-	fn ck_expr(&mut self) -> Result<Option<QuLeafExpr>, String> {
+	fn ck_expr(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
 		return self.ck_op_les();
 	}
 
 
 	/// Attempts to parse a lesser than expression.
-	fn ck_op_les(&mut self) -> Result<Option<QuLeafExpr>, String>{
+	fn ck_op_les(&mut self) -> Result<Option<QuLeafExpr>, QuMsg>{
 		return self.ck_operation("<", &Self::ck_op_grt);
 	}
 
 
 	/// Attempts to parse a greater than expression.
-	fn ck_op_grt(&mut self) -> Result<Option<QuLeafExpr>, String> {
+	fn ck_op_grt(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
 		return self.ck_operation(">", &Self::ck_op_eql);
 	}
 
 
 	/// Attempts to parse an equal to expression.
-	fn ck_op_eql(&mut self) -> Result<Option<QuLeafExpr>, String> {
+	fn ck_op_eql(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
 		return self.ck_operation("==", &Self::ck_op_not_eql);
 	}
 
 
 	/// Attempts to parse a not equal to expression.
-	fn ck_op_not_eql(&mut self) -> Result<Option<QuLeafExpr>, String> {
+	fn ck_op_not_eql(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
 		return self.ck_operation("!=", &Self::ck_op_sub);
 	}
 
 
 	/// Attempts to parse a subtraction expression.
-	fn ck_op_sub(&mut self) -> Result<Option<QuLeafExpr>, String> {
+	fn ck_op_sub(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
 		return self.ck_operation("-", &Self::ck_op_add);
 	}
 
 
 	/// Attempts to parse an addition expression.
-	fn ck_op_add(&mut self) -> Result<Option<QuLeafExpr>, String>  {
+	fn ck_op_add(&mut self) -> Result<Option<QuLeafExpr>, QuMsg>  {
 		return self.ck_operation("+", &Self::ck_op_div);
 	}
 
 
 	/// Attempts to parse a division expression.
-	fn ck_op_div(&mut self) -> Result<Option<QuLeafExpr>, String> {
+	fn ck_op_div(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
 		return self.ck_operation("/", &Self::ck_op_mul);
 	}
 
 
 	/// Attempts to parse a multiplication expression.
-	fn ck_op_mul(&mut self) -> Result<Option<QuLeafExpr>, String> {
+	fn ck_op_mul(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
 		return self.ck_operation("*", &Self::ck_op_paren_expr);
 	}
 
 
 	/// Attempts to parse a parenthesized expression.
-	fn ck_op_paren_expr(&mut self) -> Result<Option<QuLeafExpr>, String> {
+	fn ck_op_paren_expr(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
 		self.tk_state_save();
 
-		let tk = self.tk_next()
-				.expect("Improper indentation TODO: Better message");
+		let tk = self.tk_next()?;
 		if tk != "(" {
 			self.tk_state_pop();
 			self.tk_state_save();
@@ -2043,13 +2151,9 @@ pub struct QuParser<'a> {
 			return Ok(None);
 		}
 
-		let closing_tk = self.tk_next()
-				.expect("Improper indentation TODO: Better message");
+		let closing_tk = self.tk_next()?;
 		if closing_tk != ")" {
-			return Err(qu_error::make_message(
-				qu_error::msg_unclosed_parethesy_expression(),
-				&self.tokens[self.tk_idx], &self.script
-			));
+			return Err(QuMsg::unclosed_paren_expr());
 		}
 
 		return Ok(data);
@@ -2059,8 +2163,8 @@ pub struct QuParser<'a> {
 	/// A helper function for checking operations like addition or equality.
 	fn ck_operation(
 			&mut self, operator:&str,
-			next:&dyn Fn(&mut Self)->Result<Option<QuLeafExpr>, String>,
-			) -> Result<Option<QuLeafExpr>, String> {
+			next:&dyn Fn(&mut Self)->Result<Option<QuLeafExpr>, QuMsg>,
+			) -> Result<Option<QuLeafExpr>, QuMsg> {
 
 		self.tk_state_save();
 
@@ -2098,17 +2202,16 @@ pub struct QuParser<'a> {
 
 
 	/// Attempts to parse a type name.
-	fn ck_type_name(&mut self) -> Result<Option<QuToken>, String> {
+	fn ck_type_name(&mut self) -> Result<Option<QuToken>, QuMsg> {
 		// TODO: Implement type specific check for names
 		return self.ck_var_name();
 	}
 
 
 	/// Attempts to parse a value.
-	fn ck_value(&mut self) -> Result<Option<QuLeafExpr>, String> {
+	fn ck_value(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
 		self.tk_state_save();
-		let tk = self.tk_next()
-				.expect("Improper indentation TODO: Bette message");
+		let tk = self.tk_next()?;
 
 		return match tk.text.parse::<u64>() {
 			Ok(x) => Ok(Some(QuLeafExpr::Int(x))),
@@ -2129,7 +2232,7 @@ pub struct QuParser<'a> {
 
 
 	/// Attempts to parse a variable assignment.
-	fn ck_var_assign(&mut self) -> Result<Option<QuLeaf>, String> {
+	fn ck_var_assign(&mut self) -> Result<Option<QuLeaf>, QuMsg> {
 		if self.utl_statement_start()?.is_none() {
 			return Ok(None);
 		}
@@ -2145,11 +2248,7 @@ pub struct QuParser<'a> {
 		
 		
 		// Match assign operator
-		let assign_op_tk = self.tk_next()
-			.expect(format!("{} {}",
-				"Improper indentation TODO: Bette message (I don't think",
-				"this error message is reachable...)"
-		).as_str());
+		let assign_op_tk = self.tk_next()?;
 		if assign_op_tk != OP_ASSIGN_WORD {
 			self.tk_state_pop();
 			return Ok(None);
@@ -2161,12 +2260,8 @@ pub struct QuParser<'a> {
 			None => {
 				self.tk_state_pop();
 				let false_expr = self.tk_spy(2).clone();
-				return Err(qu_error::make_message(
-					qu_error::msg_invalid_variable_assignment(
-						name_tk.text,
-						false_expr.text.clone()
-					),
-					&false_expr, &self.script
+				return Err(QuMsg::var_assign_invalid_value(
+					&name_tk.text, &false_expr.text
 				));
 			},
 		};
@@ -2178,36 +2273,52 @@ pub struct QuParser<'a> {
 
 
 	/// Attempts to parse a variable declaration.
-	fn ck_var_decl(&mut self) -> Result<Option<QuLeaf>, String> {
+	fn ck_var_decl(&mut self) -> Result<Option<QuLeaf>, QuMsg> {
 		if self.utl_statement_start()?.is_none() {
 			return Ok(None);
 		}
+
+		self.tk_state_save();
 		
 		// Match keyword
-		let keyword_tk = self.tk_spy(0);
+		let keyword_tk = self.tk_next()?;
 		if keyword_tk != KEYWORD_VAR {
+			self.tk_state_pop();
 			return Ok(None);
 		}
-		self.tk_next().expect("Improper indentation TODO:Better msg");
+		
 
 		// Match variable name
 		let name_tk = self.ck_var_name()?.ok_or(
-			"Token after 'var' does not match a name. 'TODO:Better msg'"
-				.to_string()
+			QuMsg::general(
+				"Token after 'var' does not match a name. 'TODO:Better msg'")
 		)?;
 
 		// Match variable type
 		let type_tk_opt = self.ck_type_name()?;
 
 		// Match assign operator
-		let keyword_tk = self.tk_spy(0);
+		let operation_tk = self.tk_spy(0);
 		let mut assign_leaf_opt = None;
-		if keyword_tk == OP_ASSIGN_WORD {
-			self.tk_next()
-					.expect("Improper indentation TODO:Better msg");
-			assign_leaf_opt = self.ck_expr()?;
+		if operation_tk == OP_ASSIGN_WORD {
+			self.tk_next()?;
+			assign_leaf_opt = match self.ck_expr() {
+				Ok(leaf) => leaf,
+				Err(msg) => {
+					// If the error is related to indentation, replace the error
+					// with a missing value error
+					if msg.title == qu_error::ERR_TITLE_INVALID_INDENTATION {
+						self.tk_idx -= 1;
+						return Err(QuMsg::var_assign_lacks_value(
+							&name_tk.text))
+					}
+					// Return normal error
+					return Err(msg);
+				}
+			};
 			if let None = assign_leaf_opt {
-				return Err("Expected expression after '='. TODO:Better msg".to_string());
+				return Err(QuMsg::general(
+					"Expected expression after '='. TODO:Better msg"));
 			}
 		}
 		
@@ -2220,7 +2331,7 @@ pub struct QuParser<'a> {
 
 
 	/// Attempts to parse a variable name.
-	fn ck_var_name(&mut self) -> Result<Option<QuToken>, String> {
+	fn ck_var_name(&mut self) -> Result<Option<QuToken>, QuMsg> {
 		let tk = self.tk_spy(0);
 
 		if tk.tk_type != TOKEN_TYPE_NAME {
@@ -2236,20 +2347,30 @@ pub struct QuParser<'a> {
 
 
 	/// Parses a Qu script.
-	pub fn parse(&mut self) -> Result<QuLeaf, String> {
+	pub fn parse(&mut self) -> Result<QuLeaf, QuMsg> {
 		self.tk_idx = 0;
 		self.line = 0;
 		self.indent = u8::MAX;
 
-		let leafs = self.ck_code_block()?
-			.ok_or("TODO: Proper error for the function 'parse' not getting a vec of leafs")?;
-				
-		return Ok(QuLeaf::Block(leafs));
+		let leafs_res = self.ck_code_block();
+		match leafs_res {
+			Ok(leafs_op) => {
+				let leafs = leafs_op.ok_or(
+					QuMsg::general(
+						"TODO: Proper error for the function 'parse' not getting a vec of leafs")
+				)?;
+				return Ok(QuLeaf::Block(leafs));
+			}
+			Err(mut msg) => {
+				msg.token = self.tk_spy(0).clone();
+				return Err(msg);
+			}
+		}
 	}
 
 
 	/// A helper function for whenever starting to parse a statement.
-	fn utl_statement_start(&mut self) -> Result<Option<()>, String> {
+	fn utl_statement_start(&mut self) -> Result<Option<()>, QuMsg> {
 		let tk = self.tk_spy(0);
 		let tk_row = tk.row as usize;
 		let tk_indent = tk.indent as u8;
@@ -2264,19 +2385,13 @@ pub struct QuParser<'a> {
 			}
 
 			if self.line == tk_row {
-				let tk = self.tokens[self.tk_idx].clone();
-				return Err(qu_error::make_message(
-					qu_error::msg_prs_bad_indentation2(),
-					&tk, &self.script
-				));
+				let tk = &self.tokens[self.tk_idx];
+				return Err(QuMsg::one_liner());
 			}
 
-			let tk = self.tokens[self.tk_idx-0].clone();
+			let tk = &self.tokens[self.tk_idx-0];
 			self.line = tk_row;
-			return Err(qu_error::make_message(
-				qu_error::msg_prs_bad_indentation(),
-				&tk, &self.script
-			));
+			return Err(QuMsg::invalid_indent());
 		}
 		
 		self.line = tk_row;
@@ -2312,16 +2427,15 @@ pub struct QuParser<'a> {
 	/// vl counter = 1
 	/// + 2
 	/// ```
-	fn tk_next(&mut self) -> Result<&QuToken, String> {
+	fn tk_next(&mut self) -> Result<&QuToken, QuMsg> {
+		let (line, indent) = (self.line, self.indent);
 		let tk = &self.tokens[self.tk_idx];
 
 		// Check for proper indentation
-		if tk.row != self.line as u64 {
-			if tk.indent != self.indent+2 {
-				return Err(qu_error::make_message(
-					qu_error::msg_prs_bad_indentation(),
-					&self.tokens[self.tk_idx], &self.script
-				));
+		if tk.row != line as u64 {
+			if tk.indent != indent+2 {
+				//panic!("");
+				return Err(QuMsg::invalid_indent());
 			}
 		}
 
@@ -2738,11 +2852,11 @@ pub struct QuVm {
 
 	/// Runs inputed bytecode in a loop.
 	fn do_loop(&mut self, frame:&mut QuCallFrame, bytecode:&[u8]
-	) -> Result<(), String>{
+	) -> Result<(), QuMsg>{
 		while frame.pc != bytecode.len() {
 			let result = self.do_next(frame, bytecode);
 			if let Err(e) = result {
-				if e == "Done" {return Ok(())};
+				if e.description == "Done" {return Ok(())};
 			}
 		}
 		return Ok(());
@@ -2750,12 +2864,12 @@ pub struct QuVm {
 
 
 	/// Runs the next command in the given bytecode.
-	fn do_next(&mut self, frame:&mut QuCallFrame, bytecode:&[u8]) -> Result<(), String> {
+	fn do_next(&mut self, frame:&mut QuCallFrame, bytecode:&[u8]) -> Result<(), QuMsg> {
 		// TODO: Error handling for running operations
 		let op = self.next_u8(frame, bytecode);
 //		println!("DidOp {}", OPLIB.ops[op as usize].name);
 		match op {
-			x if x == OPLIB.end as u8 => {return Err("Done".to_string())},
+			x if x == OPLIB.end as u8 => {return Err(QuMsg::general("Done"))},
 
 			x if x == OPLIB.load_val_u8 => self.exc_load_val_u8(frame, bytecode),
 			x if x == OPLIB.load_val_u16 => self.exc_load_val_u16(frame, bytecode),
@@ -2792,13 +2906,13 @@ pub struct QuVm {
 
 
 	/// Run the passed [QuFunc] in a new [QuCallFrame].
-	pub fn run_func(&mut self, func:&QuFunc) -> Result<(), String> {
+	pub fn run_func(&mut self, func:&QuFunc) -> Result<(), QuMsg> {
 		return self.run_bytes(&func.code);
 	}
 
 
 	/// Run the passed bytecode in the topmost [QuCallFrame].
-	pub fn run_bytes(&mut self, bytecode:&[u8]) -> Result<(), String> {
+	pub fn run_bytes(&mut self, bytecode:&[u8]) -> Result<(), QuMsg> {
 		let mut call_frame = QuCallFrame::new();
 		while call_frame.pc != bytecode.len() {
 			match self.do_next(&mut call_frame, bytecode) {
@@ -2807,7 +2921,7 @@ pub struct QuVm {
 				// Encountered error; check if done and finish, otherwise
 				// propogate error
 				Err(msg) => {
-					if msg == "Done" {
+					if msg.description == "Done" {
 						break;
 					}
 					return Err(msg);
