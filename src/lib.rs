@@ -861,13 +861,13 @@ enum QuAsmTypes {
 pub enum QuLeaf {
 	/// A Block of leafs.
 	Block(Vec<QuLeaf>),
+	/// A floating expression
+	Expression(QuLeafExpr),
 	/// An if statement. Contains an assertion statement and a [`Vec`] of
 	/// instructions.
 	FlowStatement(u8, QuLeafExpr, Box<QuLeaf>),
-	// A function declaration branch.
+	/// A function declaration branch.
 	FnDecl(String, Box<QuLeaf>),
-	// Call function branch.
-	FnCall(String), // TODO: Implement arguments
 	/// Prints a register to the console.
 	Print(QuLeafExpr),
 	/// A variable assignment. Contains a var name and a [`QuLeafExpr`].
@@ -894,13 +894,13 @@ pub enum QuLeaf {
 				}
 				return format!("BLOCK:{}", bodystr);
 			}
+			QuLeaf::Expression(expr_leaf) => {
+				return format!("{}EXPR {}", indentstr, expr_leaf);
+			}
 			QuLeaf::FlowStatement(op, cond, body
 					) => {
 				let bodystr = body.tree_fmt(indent + 1);
 				return format!("{}FLOW {} {} {}", indentstr, op, cond, bodystr);
-			}
-			QuLeaf::FnCall(name) => {
-				return format!("{}CALL {}", indentstr, name);
 			}
 			QuLeaf::FnDecl(name, body) => {
 				let bodystr = body.tree_fmt(indent + 1);
@@ -936,6 +936,8 @@ pub enum QuLeaf {
 #[derive(Debug, Clone)]
 /// Defines an expression in a Qu program tree.
 pub enum QuLeafExpr {
+	// Call function branch.
+	FnCall(String), // TODO: Implement arguments
 	/// A calculable expression. Contains an operator and two [`QuLeafExpr`]s.
 	Equation(u8, Box<QuLeafExpr>, Box<QuLeafExpr>),
 	/// A literal int value.
@@ -946,6 +948,9 @@ pub enum QuLeafExpr {
 
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
+			QuLeafExpr::FnCall(name) => {
+				return write!(f, "FnCall({name})");
+			}
 			QuLeafExpr::Equation(op, lft, rht) => {
 				let string = format!("{}", op);
 				let opstr:&str = string.as_str();
@@ -1142,10 +1147,14 @@ macro_rules! vm_exc_math_all {
 /// Acts like a Python 'with' statement. Takes an opening and closing function,
 /// calling the code between them.
 macro_rules! with {
-	($($start:ident).+, $($end:ident).+: $($code:stmt;)*) => {
-		$($start).+();
-		$($code)*
-		$($end).+();
+	($($start:ident).+, $($end:ident).+ $code:block) => {
+		{
+			$($start).+();
+			let mut lmda = ||{$code};
+			let output = lmda();
+			$($end).+();
+			/*return*/ output
+		}
 	};
 }
 
@@ -1329,6 +1338,9 @@ pub struct QuCompiler {
 	fn cmp_expr(&mut self, leaf:&QuLeafExpr, output_reg:u8)
 			-> Result<Vec<u8>, QuMsg> {
 		return match leaf {
+			QuLeafExpr::FnCall(
+				name
+			) => self.cmp_fn_call(name),
 			QuLeafExpr::Equation(
 				op,
 				left,
@@ -1419,27 +1431,30 @@ pub struct QuCompiler {
 	fn cmp_flow_if(&mut self, condition:&QuLeafExpr, body:&Box<QuLeaf>
 	) -> Result<Vec<u8>, QuMsg> {
 		// Get expression register
-		with!{self.stack_frame_start, self.stack_frame_end:
-			let if_expr_reg = self.stack_reserve();
-			let mut expr_code
-				= self.cmp_expr(condition, if_expr_reg)?;
-		};
+		let mut expr_code = with!{
+			self.stack_frame_start, self.stack_frame_end {
+				let if_expr_reg = self.stack_reserve();
+				/*return*/ self.cmp_expr(condition, if_expr_reg)
+			}
+		}?;
 
 		// New frame for the code in the 'if' body
-		with!{self.stack_frame_start, self.stack_frame_end:
-			// Compile pieces
-			let mut block_code = self.cmp_scope(body)?;
-			let mut jump_code = Vec::with_capacity(7);
-			jump_code.push(OPLIB.jump_by_if_not);
-			jump_code.append(&mut (block_code.len() as i32).to_be_bytes().to_vec());
+		let code = with!{
+			self.stack_frame_start, self.stack_frame_end {
+				// Compile pieces
+				let mut block_code = self.cmp_scope(body)?;
+				let mut jump_code = Vec::with_capacity(7);
+				jump_code.push(OPLIB.jump_by_if_not);
+				jump_code.append(&mut (block_code.len() as i32).to_be_bytes().to_vec());
 
-			// Combine code pieces together
-			let mut code = Vec::with_capacity(
-					expr_code.len() + jump_code.len() + block_code.len());
-			code.append(&mut expr_code);
-			code.append(&mut jump_code);
-			code.append(&mut block_code);
-		};
+				// Combine code pieces together
+				let mut code = Vec::default();
+				code.append(&mut expr_code);
+				code.append(&mut jump_code);
+				code.append(&mut block_code);
+				/*return*/ Ok(code)
+			}
+		}?;
 
 		return Ok(code);
 	}
@@ -1449,42 +1464,45 @@ pub struct QuCompiler {
 	fn cmp_flow_while(&mut self, condition:&QuLeafExpr, body:&Box<QuLeaf>
 	) -> Result<Vec<u8>, QuMsg> {
 		// Get expression register
-		with!{self.stack_frame_start, self.stack_frame_end:
-			let if_expr_reg = self.stack_reserve();
-			// Expression code
-			let mut expr_code
-				= self.cmp_expr(condition, if_expr_reg)?;
-		};
+		let mut expr_code = with!(
+			self.stack_frame_start, self.stack_frame_end {
+				let if_expr_reg = self.stack_reserve();
+				// Expression code
+				/*return*/ self.cmp_expr(condition, if_expr_reg)
+			}
+		)?;
 
 		// New frame for the code in the 'if' body
-		with!{self.stack_frame_start, self.stack_frame_end:
-			// --- Compile Pieces ---
-			// Code block
-			let mut block_code = self.cmp_scope(body)?;
-			// Assertion jump code
-			let mut jump_code = Vec::with_capacity(7);
-			let jump_distance = block_code.len() as i32
-				+ 1 + OPLIB.op_args_size(OPLIB.jump_by) as i32;
-			jump_code.push(OPLIB.jump_by_if_not);
-			jump_code.append(&mut jump_distance.to_be_bytes().to_vec());
-			// Jump back code
-			let mut jump_back_code = Vec::default();
-			jump_back_code.push(OPLIB.jump_by);
-			let jump_back_distance = -(block_code.len() as i32
-				+ jump_code.len() as i32
-				+ expr_code.len() as i32
-				+ 1 + OPLIB.op_args_size(OPLIB.jump_by) as i32);
-			jump_back_code.append(&mut (jump_back_distance).to_be_bytes().to_vec());
+		let code= with!{
+			self.stack_frame_start, self.stack_frame_end {
+				// --- Compile Pieces ---
+				// Code block
+				let mut block_code = self.cmp_scope(body)?;
+				// Assertion jump code
+				let mut jump_code = Vec::with_capacity(7);
+				let jump_distance = block_code.len() as i32
+					+ 1 + OPLIB.op_args_size(OPLIB.jump_by) as i32;
+				jump_code.push(OPLIB.jump_by_if_not);
+				jump_code.append(&mut jump_distance.to_be_bytes().to_vec());
+				// Jump back code
+				let mut jump_back_code = Vec::default();
+				jump_back_code.push(OPLIB.jump_by);
+				let jump_back_distance = -(block_code.len() as i32
+					+ jump_code.len() as i32
+					+ expr_code.len() as i32
+					+ 1 + OPLIB.op_args_size(OPLIB.jump_by) as i32);
+				jump_back_code.append(&mut (jump_back_distance).to_be_bytes().to_vec());
 
-			// Combine code pieces together
-			let mut code = Vec::with_capacity(
-					expr_code.len() + jump_code.len() + block_code.len());
-			code.append(&mut expr_code);
-			code.append(&mut jump_code);
-			code.append(&mut block_code);
-			code.append(&mut jump_back_code);
-
-		};
+				// Combine code pieces together
+				let mut code = Vec::with_capacity(
+						expr_code.len() + jump_code.len() + block_code.len());
+				code.append(&mut expr_code);
+				code.append(&mut jump_code);
+				code.append(&mut block_code);
+				code.append(&mut jump_back_code);
+				/*return*/ Ok(code)
+			}
+		}?;
 		
 		return Ok(code);
 	}
@@ -1534,7 +1552,7 @@ pub struct QuCompiler {
 
 	/// Compiles a [QuLeaf] into bytecode.
 	fn cmp_leaf(&mut self, leaf:&QuLeaf) -> Result<Vec<u8>, QuMsg> {
-		let result = match leaf {
+		match leaf {
 			QuLeaf::Block(leafs) => {
 				let mut code = vec![];
 				for block_leaf in leafs {
@@ -1543,6 +1561,14 @@ pub struct QuCompiler {
 				}
 				return Ok(code);
 			},
+			QuLeaf::Expression(
+				expr_leaf,
+			) => {
+				return with!(self.stack_frame_start, self.stack_frame_end {
+					let reg = self.stack_reserve();
+					/*return*/ self.cmp_expr(expr_leaf, reg)
+				});
+			}
 			QuLeaf::FlowStatement(
 				flow_type,
 				expr,
@@ -1557,11 +1583,6 @@ pub struct QuCompiler {
 					}
 					_ => unimplemented!(),
 				}
-			}
-			QuLeaf::FnCall(
-				name,
-			) => {
-				return self.cmp_fn_call(name);
 			}
 			QuLeaf::FnDecl(
 				name,
@@ -1604,7 +1625,6 @@ pub struct QuCompiler {
 				unimplemented!()
 			}
 		};
-		return result;
 	}
 
 
@@ -1684,8 +1704,10 @@ pub struct QuCompiler {
 
 	/// Compiles a scope.
 	fn cmp_scope(&mut self, leaf:&QuLeaf) -> Result<Vec<u8>, QuMsg> {
-		with!{self.stack_frame_start, self.stack_frame_end:
-			let compiled = self.cmp_leaf(leaf);
+		let compiled = with!{
+			self.stack_frame_start, self.stack_frame_end {
+				/*return*/ self.cmp_leaf(leaf)
+			}
 		};
 		return compiled;
 	}
@@ -1884,8 +1906,13 @@ pub struct QuParser<'a> {
 			// Function declaration
 			ck_parse!(ck_fn_decl);
 
-			// Function call
-			ck_parse!(ck_fn_call);
+			// Expressions
+			if !self.utl_statement_start()?.is_none() {
+				if let Some(expr_leaf) = self.ck_expr()? {
+					leafs.push(QuLeaf::Expression(expr_leaf));
+					continue;
+				}
+			}
 
 			break;
 		}
@@ -1983,7 +2010,7 @@ pub struct QuParser<'a> {
 
 
 	/// Attempts to parse a function call.
-	fn ck_fn_call(&mut self) -> Result<Option<QuLeaf>, QuMsg> {
+	fn ck_fn_call(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
 		if self.utl_statement_start()?.is_none() {
 			return Ok(None);
 		}
@@ -1999,8 +2026,13 @@ pub struct QuParser<'a> {
 		};
 
 		// Match an open '('
-		if self.tk_next()? != "(" {
-			return Err(QuMsg::missing_token("("));
+		let opening_p = match self.tk_next() {
+			Ok(tk) => tk,
+			Err(_) => {return Ok(None)},
+		};
+		if opening_p!= "(" {
+			self.tk_state_pop();
+			return Ok(None);
 		}
 
 		// Match a close ')'
@@ -2008,7 +2040,7 @@ pub struct QuParser<'a> {
 			return Err(QuMsg::missing_token(")"));
 		}
 
-		return Ok(Some(QuLeaf::FnCall(fn_name_tk.text)));
+		return Ok(Some(QuLeafExpr::FnCall(fn_name_tk.text)));
 	}
 
 
@@ -2031,9 +2063,11 @@ pub struct QuParser<'a> {
 		}
 
 		// Check function name
-		let fn_name_tk = self.ck_fn_name()?.ok_or(
-			// TODO: Change to more appropriate message
-			QuMsg::missing_code_block()
+		let fn_name_tk = self.ck_fn_name()?.ok_or_else(
+			|| {
+				// TODO: Change to more appropriate message
+				QuMsg::missing_code_block()
+			}
 		)?;
 
 		// Match an open '('
@@ -2230,6 +2264,13 @@ pub struct QuParser<'a> {
 	/// Attempts to parse a value.
 	fn ck_value(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
 		self.tk_state_save();
+		// Check function call
+		if let Some(leaf) = self.ck_fn_call()? {
+			return Ok(Some(leaf));
+		}
+		self.tk_state_pop();
+
+		self.tk_state_save();
 		let tk = self.tk_next()?;
 
 		return match tk.text.parse::<u64>() {
@@ -2308,9 +2349,12 @@ pub struct QuParser<'a> {
 		
 
 		// Match variable name
-		let name_tk = self.ck_var_name()?.ok_or(
-			QuMsg::general(
-				"Token after 'var' does not match a name. 'TODO:Better msg'")
+		let name_tk = self.ck_var_name()?.ok_or_else(
+			|| {
+				QuMsg::general(
+					"Token after 'var' does not match a name. 'TODO:Better msg'"
+				)
+			}
 		)?;
 
 		// Match variable type
@@ -2376,7 +2420,12 @@ pub struct QuParser<'a> {
 			Ok(leafs_op) => {
 				if self.tk_idx != self.tokens.len()-1 {
 					// Parsing ended early, must be an unexpected token
-					return Err(QuMsg::invalid_token("hhhhh"));
+					panic!();
+					let mut msg = QuMsg::invalid_token(
+						&self.tk_spy(0).text
+					);
+					msg.token = self.tk_spy(0).clone();
+					return Err(msg);
 				}
 
 				let leafs = leafs_op.ok_or(
