@@ -1358,7 +1358,7 @@ pub struct QuCompiler {
 	fn cmp_expr_math(&mut self, op:u8, left:&QuLeafExpr, right:&QuLeafExpr,
 			output_reg:u8) -> Result<Vec<u8>, QuMsg> {
 		
-		let right_reg = self.stack_reserve();
+		let right_reg = self.get_expr_reg(right)?;
 
 		let mut code:Vec<u8> = vec![];
 		
@@ -1433,7 +1433,7 @@ pub struct QuCompiler {
 		// Get expression register
 		let mut expr_code = with!{
 			self.stack_frame_start, self.stack_frame_end {
-				let if_expr_reg = self.stack_reserve();
+				let if_expr_reg = self.get_expr_reg(condition)?;
 				/*return*/ self.cmp_expr(condition, if_expr_reg)
 			}
 		}?;
@@ -1466,7 +1466,7 @@ pub struct QuCompiler {
 		// Get expression register
 		let mut expr_code = with!(
 			self.stack_frame_start, self.stack_frame_end {
-				let if_expr_reg = self.stack_reserve();
+				let if_expr_reg = self.get_expr_reg(condition)?;
 				// Expression code
 				/*return*/ self.cmp_expr(condition, if_expr_reg)
 			}
@@ -1550,6 +1550,7 @@ pub struct QuCompiler {
 		return Ok(code);
 	}
 
+
 	/// Compiles a [QuLeaf] into bytecode.
 	fn cmp_leaf(&mut self, leaf:&QuLeaf) -> Result<Vec<u8>, QuMsg> {
 		match leaf {
@@ -1565,7 +1566,7 @@ pub struct QuCompiler {
 				expr_leaf,
 			) => {
 				return with!(self.stack_frame_start, self.stack_frame_end {
-					let reg = self.stack_reserve();
+					let reg = self.get_expr_reg(expr_leaf)?;
 					/*return*/ self.cmp_expr(expr_leaf, reg)
 				});
 			}
@@ -1593,7 +1594,7 @@ pub struct QuCompiler {
 			QuLeaf::Print(leaf_expr) => {
 				// TODO Handle errors for compiling Print
 				let mut code = vec![];
-				let print_reg = self.stack_reserve();
+				let print_reg = self.get_expr_reg(leaf_expr)?;
 				let mut expression_code
 					= self.cmp_expr(leaf_expr, print_reg)?;
 				
@@ -1747,6 +1748,29 @@ pub struct QuCompiler {
 	}
 
 
+	/// Returns an appropriate location to store an expression.
+	/// 
+	/// Most expressions require a new memory location, but variables
+	/// should just return the register of the variable.
+	fn get_expr_reg(&mut self, expr_leaf:&QuLeafExpr) -> Result<u8, QuMsg> {
+		return  match expr_leaf {
+			QuLeafExpr::Equation(_, _, _) => Ok(self.stack_reserve()),
+			QuLeafExpr::FnCall(_) => Ok(self.stack_reserve()),
+			QuLeafExpr::Int(_) => Ok(self.stack_reserve()),
+			QuLeafExpr::Var(name) => {
+				self.get_var_register(&name.text)
+					.ok_or_else(||{
+						let mut msg
+							= QuMsg::undefined_var_access(&name.text);
+						msg.token = name.clone();
+						return msg;
+					}
+				)
+			}
+		};
+	}
+
+
 	/// Gets the pointer to a variable by the variable's name.
 	fn get_var_register(&self, var_name:&str) -> Option<u8> {
 		for var_metadata in &self.variables {
@@ -1850,7 +1874,7 @@ pub struct QuParser<'a> {
 	indent:u8,
 	line:usize,
 	tk_idx:usize,
-	tk_stack:Vec<usize>,
+	tk_stack:Vec<usize>, // TODO: Fix tk_stack mem-leak
 	tokens:&'a Vec<QuToken>,
 	opslib:QuOpLibrary<'a>,
 

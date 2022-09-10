@@ -20,12 +20,15 @@ fn main() {
 	calc()
 	calc()
 
+	vl crazy = 5*(2 + 3)/4 + 2-1
+
 	print stuff
+	print crazy
 	"##;
 
 	let mut qu = Qu::new();
 
-	//println!("{}", qu.compile_to_asm(script));
+	println!("{}", qu.compile_to_asm(script).unwrap());
 	qu.run(script);
 
 }
