@@ -7,16 +7,20 @@ fn main() {
 	println!("---START---\n");
 
 	let script = r##"
-	vl count = 0
-	vl count = 0
-	while 
-			count
-			<
-			10
-			:
-		count = count + 1
-		if count > 4:
-			print count
+	fn calc():
+		vl left = 10
+		vl right = 23
+		vl result = left + right
+		print result
+	
+	vl stuff = 3
+
+	calc()
+	calc()
+	calc()
+	calc()
+
+	print stuff
 	"##;
 
 	let mut qu = Qu::new();
