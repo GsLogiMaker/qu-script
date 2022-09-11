@@ -122,6 +122,8 @@ pub enum QuLeafExpr {
 	Equation(u8, Box<QuLeafExpr>, Box<QuLeafExpr>),
 	/// A literal int value.
 	Int(u64),
+	/// A tuple.
+	Tuple(Vec<QuLeafExpr>),
 	/// A variable name.
 	Var(QuToken),
 } impl Display for QuLeafExpr {
@@ -138,6 +140,9 @@ pub enum QuLeafExpr {
 			}
 			QuLeafExpr::Int(val) => {
 				return write!(f, "{val}:Int");
+			}
+			QuLeafExpr::Tuple(items) => {
+				return write!(f, "({items:?})");
 			}
 			QuLeafExpr::Var(name) => {
 				return write!(f, "{}:Var", name.text);
@@ -256,7 +261,7 @@ pub struct QuParser<'a> {
 
 	/// Attempts to parse an expression
 	fn ck_expr(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
-		return self.ck_op_les();
+		return self.ck_tuple();
 	}
 
 
@@ -465,7 +470,8 @@ pub struct QuParser<'a> {
 
 
 	/// Attempts to parse a parenthesized expression.
-	fn ck_op_paren_expr(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
+	fn ck_op_paren_expr(&mut self
+	) -> Result<Option<QuLeafExpr>, QuMsg> {
 		self.tk_state_save();
 
 		let tk = self.tk_next()?;
@@ -535,6 +541,51 @@ pub struct QuParser<'a> {
 				Box::new(data_r)
 			)
 		));
+	}
+
+
+	/// Attempts to parse a tuple, otherwise attempts to parse a "<"
+	/// expression.
+	/// 
+	/// A tuple is denoted by expressions separated by commas (Ex: "1,2,3").
+	/// Parenthesis technicly have nothing to do with tuples.
+	fn ck_tuple(&mut self) -> Result<Option<QuLeafExpr>, QuMsg>{
+		match self.ck_op_les()? {
+			// Matched an expression
+			Some(expr) => {
+				if self.tk_spy(0) == "," {
+					// Matched tuple, get more tuple elements
+					let mut elements = vec![expr];
+					self.tk_next()?;
+					loop {
+						match self.ck_op_les()? {
+							Some(next_expr) => {
+								// Found another expression, add to tuple
+								elements.push(next_expr);
+								if self.tk_spy(0) != "," {
+									// No comma found, tuple must have ended.
+									// Return tuple.
+									return Ok(Some(QuLeafExpr::Tuple(elements)));
+								} else {
+									// Comma found, continue adding to tuple
+									self.tk_next()?;
+								}
+							},
+							None => {
+								// No more expressions found, return tuple
+								return Ok(Some(QuLeafExpr::Tuple(elements)))
+							},
+						};
+					}
+
+				} else {
+					// Did not match tuple, return expression
+					return Ok(Some(expr));
+				}
+			},
+			// Did not match an expression, return quietly
+			None => {return Ok(None)},
+		};
 	}
 
 

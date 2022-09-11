@@ -72,6 +72,8 @@ pub struct QuCompiler {
 			) => self.cmp_expr_math(*op, &**left, &**right, output_reg),
 			QuLeafExpr::Int(val)
 				=> Ok(self.cmp_expr_int(*val, output_reg)),
+				QuLeafExpr::Tuple(items)
+				=> self.cmp_expr_tuple(items, output_reg),
 			QuLeafExpr::Var(token)
 				=> self.cmp_expr_val(token, output_reg),
 		};
@@ -118,6 +120,22 @@ pub struct QuCompiler {
 		code.push(output_reg);
 
 		return code;
+	}
+
+
+	/// Compiles a tuple construction into bytecode.
+	fn cmp_expr_tuple(&mut self, items:&[QuLeafExpr], to_reg:u8
+	) -> Result<Vec<u8>, QuMsg> {
+		let mut code = Vec::default();
+		let mut i = to_reg;
+		for item in items {
+			code.append(
+				&mut self.cmp_expr(item, i)?
+			);
+			i += 1;
+		}
+
+		return Ok(code);
 	}
 
 
@@ -483,6 +501,7 @@ pub struct QuCompiler {
 			QuLeafExpr::Equation(_, _, _) => Ok(self.stack_reserve()),
 			QuLeafExpr::FnCall(_) => Ok(self.stack_reserve()),
 			QuLeafExpr::Int(_) => Ok(self.stack_reserve()),
+			QuLeafExpr::Tuple(_) => Ok(self.stack_reserve()),
 			QuLeafExpr::Var(name) => {
 				self.get_var_register(&name.text)
 					.ok_or_else(||{

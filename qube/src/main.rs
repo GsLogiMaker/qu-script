@@ -29,14 +29,7 @@ use qu::Qu;
 fn main() {
 	println!("---START---\n");
 
-	let script = r##"
-	fn add():
-		vl left = 2
-		vl right = 5
-		return left + right
-
-	print 1 + add() + 2 + add() + 3
-	"##;
+	let script = r##"vl tup = 5, 6, 7"##;
 
 	let mut qu = Qu::new();
 
