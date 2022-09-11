@@ -201,21 +201,6 @@ pub struct Qu {
 }
 
 
-struct QuCallFrame {
-	/// The index for the [QuVm]'s program counter to return to after excecution
-	/// of this frame is done.
-	pc_return:usize,
-
-} impl QuCallFrame {
-
-	fn new(pc_return:usize, register_offset:usize) -> Self {
-		QuCallFrame {
-			pc_return: pc_return,
-		}
-	}
-
-}
-
 /// A declared Qu function. Contains all the metadata for a defined function.
 pub struct QuFunc {
 	/// The name of this funciton.

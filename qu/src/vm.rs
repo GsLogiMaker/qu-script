@@ -1,5 +1,4 @@
 
-use crate::QuCallFrame;
 use crate::QuFunc;
 use crate::QuMsg;
 
@@ -246,8 +245,6 @@ pub struct QuVm {
 	registers:Vec<RegisterValue>,
 	/// The offset of reading and writing to registers.
 	register_offset:usize,
-	/// A [Vec] of the register offsets for each frame.
-	frames:Vec<QuCallFrame>,
 	/// The program counter.
 	pc:usize,
 
@@ -261,7 +258,6 @@ pub struct QuVm {
 			hold: usize::default(),
 			registers:Vec::with_capacity(u8::MAX as usize),
 			register_offset: 0,
-			frames: Vec::default(),
 			pc: 0,
 		};
 
@@ -569,23 +565,14 @@ pub struct QuVm {
 	}
 
 
-	/// Ends the topmost [QuCallFrame].
+	/// Ends the current frame.
 	fn frame_end(&mut self) -> Result<(), QuMsg>{
 		return Err(QuMsg::general("Done"));
 	}
 
 
-	/// Starts a new [QuCallFrame] from a [QuFunc].
+	/// Starts a new frame.
 	fn frame_start(&mut self, at_code:usize) {
-		let next_frame
-			= QuCallFrame::new(
-				self.pc,
-				self.register_offset,
-			)
-		;
-
-		self.frames.push(next_frame);
-
 		self.pc = at_code;
 	}
 
