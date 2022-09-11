@@ -1,4 +1,28 @@
 
+/*
+MIT License
+
+Copyright (c) 2022 GsLogiMaker
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
 //! TODO: Project level documentation.
 
 #![warn(missing_docs)]
@@ -6,8 +30,6 @@
 #![warn(rustdoc::broken_intra_doc_links)]
 
 
-#[macro_use]
-extern crate derive_new;
 #[macro_use]
 extern crate lazy_static;
 
@@ -17,7 +39,7 @@ mod qu_error {
 	use crate::qu_tokens::QuToken;
 	use std::{fmt::{self, Display, Debug}};
 
-	type QuErrorMessage = (String, String);
+	//type QuErrorMessage = (String, String);
 
 
 	pub const ERR_TITLE_EMPTY_CODE_BLOCK:&str = "EMPTY CODE BLOCK";
@@ -115,7 +137,7 @@ mod qu_error {
 
 		// --- Messages ---
 
-		pub fn empty_code_block(expected_token:&str) -> Self{
+		pub fn empty_code_block() -> Self{
 			let mut msg = Self::new();
 			msg.title = ERR_TITLE_EMPTY_CODE_BLOCK.to_string();
 			msg.description = "A code block was started, but no code was found.".to_string();
@@ -123,7 +145,7 @@ mod qu_error {
 		}
 
 
-		pub fn flow_statement_lacks_expression(flow_keyword:&str) -> Self{
+		pub fn flow_statement_lacks_expression() -> Self{
 			let mut msg = Self::new();
 			msg.title = ERR_TITLE_INVALID_FLOW_STATEMENT.to_string();
 			msg.description = format!("Flow statement requires an expression but non was given.");
@@ -171,7 +193,7 @@ mod qu_error {
 		}
 
 
-		pub fn invalid_syntax(expected_token:&str) -> Self{
+		pub fn invalid_syntax() -> Self{
 			let mut msg = Self::new();
 			msg.title = ERR_TITLE_INVALID_INDENTATION.to_string();
 			msg.description = "A line has an incorrect indentation level.".to_string();
@@ -266,79 +288,11 @@ mod qu_error {
 		
 	}
 
-
-	/// Creates a Qu error message as a [String].
-	/// 
-	/// Examples:
-	/// ```
-	/// use qu_script::err_msg_make;
-	/// use qu_script::QuError;
-	/// use qu_script::QuToken;
-	/// 
-	/// let script = "print 1";
-	/// let token = QuToken::new(0, 4, 0, 0, 0, 0);
-	/// 
-	/// let err_msg = err_msg_make(
-	/// 	("My Error", "It crashed with My Error!"), token, script);
-	/// println!(err_msg);
-	/// ```
-	pub fn make_message(err_msg:QuErrorMessage, tk:&QuToken, script:&String) -> String {
-		// Line numbers
-		let line_nm_pre_pre = (tk.row as usize).saturating_sub(1);
-		let line_nm_pre = (tk.row as usize).saturating_sub(0);
-		let line_nm = (tk.row as usize).saturating_add(1);
-		let line_nm_post = (tk.row as usize).saturating_add(2);
-		let line_nm_post_post = (tk.row as usize).saturating_add(3);
-
-		// Line text
-		let mut script_lines = script.split("\n");
-		let line_pre_pre = if tk.row > 1 {
-			script_lines.nth(line_nm_pre_pre-1).unwrap_or("").to_string()
-		} else {
-			"".to_string()
-		};
-		let line_pre = if tk.row > 0 {
-			script_lines.next().unwrap_or("").to_string()
-		} else {
-			"".to_string()
-		};
-		let line = script_lines.next().unwrap_or("");
-		let line_post =
-				script_lines.next().unwrap_or("");
-		let line_post_post =
-				script_lines.next().unwrap_or("");
-
-		// Build code view
-		let code_view = format!(
-"    {:0>4}:{}\n    {:0>4}:{}\n >> {:0>4}:{}\n    {:0>4}:{}\n    {:0>4}:{}\n\n",
-			line_nm_pre_pre,
-			line_pre_pre,
-			line_nm_pre,
-			line_pre,
-			line_nm,
-			line,
-			line_nm_post,
-			line_post,
-			line_nm_post_post,
-			line_post_post,
-		);
-
-		// Build error message
-		let msg = format!(
-			"ERROR on line {row}, col {col}; {m0}:\"{m1}\"\n{script}",
-			row=tk.row+1, col=tk._col, m0=err_msg.0, m1=err_msg.1,
-			script=code_view
-		);
-		return msg;
-		
-	}
-
 }
 
 
 mod qu_tokens {
 
-	//use std::{fmt::{self, Display, Debug}, vec, collections::HashMap};
 	use std::fmt::{self, Display, Debug};
 
 	use super::{
@@ -365,14 +319,6 @@ mod qu_tokens {
 		(&tokenrule_name, TOKEN_TYPE_NAME),
 	];
 
-	/// Token rules for Qu assembly.
-	pub const ASM_RULES:&Rules = &[
-		(&tokenrule_symbols, TOKEN_TYPE_KEYWORD),
-		(&tokenrule_flagref, 0),
-		(&tokenrule_number, TOKEN_TYPE_NUMBER),
-		(&tokenrule_name, TOKEN_TYPE_NAME),
-	];
-
 
 	/// A [Vec] of tokenfule_* functions and their types.
 	///
@@ -381,27 +327,6 @@ mod qu_tokens {
 	/// [tokenrule_keyword] for examples of how a `tokenrule_*` function should
 	/// be structured.
 	pub type Rules<'a> = [(&'a dyn Fn(&[char])->bool, u8)];
-
-
-	/// Returns *true* if the passed characters matches to an assembly line-flag.
-	pub fn tokenrule_flagref(added_so_far:&[char]) -> bool {
-		if added_so_far[0] != '$' {
-			return false;
-		}
-
-		let mut i = 1; // Set to 1 because first checked previously
-		while i < added_so_far.len() {
-			if added_so_far[i] == ' ' {
-				return false
-			}
-			if !added_so_far[i].is_alphanumeric() && added_so_far[i] != '_' {
-				return false;
-			}
-			i += 1;
-		}
-
-		return true;
-	}
 
 
 	/// Returns *true* if the passed characters match to a name.
@@ -825,32 +750,30 @@ mod qu_tokens {
 }
 
 
-use std::{fmt::{self, Display, Debug, format}, vec, collections::HashMap, rc::Rc, mem, hash::Hash};
+use std::{fmt::{self, Display, Debug}, vec, collections::HashMap, rc::Rc};
 use qu_tokens::{RULES, TOKEN_TYPE_NAME, tokenize, QuToken};
 use qu_error::{QuMsg};
 
 
 /// A tuple of for specifying arguments for a [QuOperation].
 type CommandArg = QuAsmTypes;
-/// A typle of stack index, 
-type FrameMetadata = (/*stack_idx*/u8, /*variables*/Vec<QuVarMetadata>);
 type QuRegisterValue = usize;
 
 
 enum QuAsmTypes {
-	uint8,
-	uint16,
-	uint32,
-	uint64,
-	str,
+	UInt8,
+	UInt16,
+	Uint32,
+	UInt64,
+	Str,
 } impl QuAsmTypes {
 	fn size(&self, code:&Vec<u8>, at:usize) -> usize {
 		return match self {
-			Self::uint8 => 1,
-			Self::uint16 => 2,
-			Self::uint32 => 4,
-			Self::uint64 => 8,
-			Self::str => code[at] as usize,
+			Self::UInt8 => 1,
+			Self::UInt16 => 2,
+			Self::Uint32 => 4,
+			Self::UInt64 => 8,
+			Self::Str => code[at] as usize,
 		};
 	}
 }
@@ -936,7 +859,7 @@ pub enum QuLeaf {
 #[derive(Debug, Clone)]
 /// Defines an expression in a Qu program tree.
 pub enum QuLeafExpr {
-	// Call function branch.
+	/// Call function branch.
 	FnCall(String), // TODO: Implement arguments
 	/// A calculable expression. Contains an operator and two [`QuLeafExpr`]s.
 	Equation(u8, Box<QuLeafExpr>, Box<QuLeafExpr>),
@@ -961,9 +884,6 @@ pub enum QuLeafExpr {
 			}
 			QuLeafExpr::Var(name) => {
 				return write!(f, "{}:Var", name.text);
-			}
-			_ => {
-				return write!(f, "<QuLeafExpr Unimplemented Format>");
 			}
 		}
 	}
@@ -992,7 +912,10 @@ const OP_ASSIGN_WORD:&str = "=";
 const OP_BLOCK_START_WORD:&str = ":";
 
 
-lazy_static!{pub static ref OPLIB:QuOpLibrary<'static> = QuOpLibrary::new();}
+lazy_static!{
+	/// I don't know what this is documenting...
+	pub static ref OPLIB:QuOpLibrary<'static> = QuOpLibrary::new();
+}
 
 
 /// Defines a [QuOpLibrary] struct
@@ -1052,9 +975,13 @@ macro_rules! struct_QuOpLibrary {
 
 
 	( $(  [$idx:expr] $name:ident:$asm_keyword:ident( $($args:expr),* )  )+ ) => {
+		/// A struct that holds all the metadata for [QuVm]'s operations. Meant
+		/// to be used as a static variable.
 		pub struct QuOpLibrary<'a> {
+			/// The [Vec] of [QuOperations]. It holds the metadata.
 			pub ops:Vec<QuOperation<'a>>,
 			$(
+				/// The index of &name in [ops].
 				pub $name:u8,
 			)+
 		} impl<'a> QuOpLibrary<'a> {
@@ -1163,38 +1090,38 @@ macro_rules! with {
 struct_QuOpLibrary!{
 	[  0] end:END()
 
-	[  1] load_val_u8:LDU8(QuAsmTypes::uint8, QuAsmTypes::uint8)
-	[  2] load_val_u16:LDU16(QuAsmTypes::uint16, QuAsmTypes::uint8)
-	[  3] load_val_u32:LDU32(QuAsmTypes::uint32, QuAsmTypes::uint8)
-	[  4] load_val_u64:LDU64(QuAsmTypes::uint64, QuAsmTypes::uint8)
+	[  1] load_val_u8:LDU8(QuAsmTypes::UInt8, QuAsmTypes::UInt8)
+	[  2] load_val_u16:LDU16(QuAsmTypes::UInt16, QuAsmTypes::UInt8)
+	[  3] load_val_u32:LDU32(QuAsmTypes::Uint32, QuAsmTypes::UInt8)
+	[  4] load_val_u64:LDU64(QuAsmTypes::UInt64, QuAsmTypes::UInt8)
 
-	[  5] load_mem:LDM(QuAsmTypes::uint32, QuAsmTypes::uint8)
-	[  6] store_mem:STM(QuAsmTypes::uint8, QuAsmTypes::uint32)
-	[  7] copy_reg:CPY(QuAsmTypes::uint8, QuAsmTypes::uint8)
+	[  5] load_mem:LDM(QuAsmTypes::Uint32, QuAsmTypes::UInt8)
+	[  6] store_mem:STM(QuAsmTypes::UInt8, QuAsmTypes::Uint32)
+	[  7] copy_reg:CPY(QuAsmTypes::UInt8, QuAsmTypes::UInt8)
 
-	[  8] add:ADD(QuAsmTypes::uint8, QuAsmTypes::uint8, QuAsmTypes::uint8)
-	[  9] sub:SUB(QuAsmTypes::uint8, QuAsmTypes::uint8, QuAsmTypes::uint8)
-	[ 10] mul:MUL(QuAsmTypes::uint8, QuAsmTypes::uint8, QuAsmTypes::uint8)
-	[ 11] div:DIV(QuAsmTypes::uint8, QuAsmTypes::uint8, QuAsmTypes::uint8)
-	[ 12] modulate:MOD(QuAsmTypes::uint8, QuAsmTypes::uint8, QuAsmTypes::uint8)
-	[ 13] pow:POW(QuAsmTypes::uint8, QuAsmTypes::uint8, QuAsmTypes::uint8)
-	[ 14] lesser:LES(QuAsmTypes::uint8, QuAsmTypes::uint8, QuAsmTypes::uint8)
-	[ 15] greater:GRT(QuAsmTypes::uint8, QuAsmTypes::uint8, QuAsmTypes::uint8)
-	[ 16] equal:EQ(QuAsmTypes::uint8, QuAsmTypes::uint8, QuAsmTypes::uint8)
-	[ 17] not_equal:NEQ(QuAsmTypes::uint8, QuAsmTypes::uint8, QuAsmTypes::uint8)
-	[ 18] not:NOT(QuAsmTypes::uint8, QuAsmTypes::uint8)
+	[  8] add:ADD(QuAsmTypes::UInt8, QuAsmTypes::UInt8, QuAsmTypes::UInt8)
+	[  9] sub:SUB(QuAsmTypes::UInt8, QuAsmTypes::UInt8, QuAsmTypes::UInt8)
+	[ 10] mul:MUL(QuAsmTypes::UInt8, QuAsmTypes::UInt8, QuAsmTypes::UInt8)
+	[ 11] div:DIV(QuAsmTypes::UInt8, QuAsmTypes::UInt8, QuAsmTypes::UInt8)
+	[ 12] modulate:MOD(QuAsmTypes::UInt8, QuAsmTypes::UInt8, QuAsmTypes::UInt8)
+	[ 13] pow:POW(QuAsmTypes::UInt8, QuAsmTypes::UInt8, QuAsmTypes::UInt8)
+	[ 14] lesser:LES(QuAsmTypes::UInt8, QuAsmTypes::UInt8, QuAsmTypes::UInt8)
+	[ 15] greater:GRT(QuAsmTypes::UInt8, QuAsmTypes::UInt8, QuAsmTypes::UInt8)
+	[ 16] equal:EQ(QuAsmTypes::UInt8, QuAsmTypes::UInt8, QuAsmTypes::UInt8)
+	[ 17] not_equal:NEQ(QuAsmTypes::UInt8, QuAsmTypes::UInt8, QuAsmTypes::UInt8)
+	[ 18] not:NOT(QuAsmTypes::UInt8, QuAsmTypes::UInt8)
 
-	[ 19] jump_to:JP(QuAsmTypes::uint32)
-	[ 20] jump_by:JB(QuAsmTypes::uint32)
-	[ 21] jump_to_if_not:JPIN(QuAsmTypes::uint32)
-	[ 22] jump_by_if_not:JBIN(QuAsmTypes::uint32)
+	[ 19] jump_to:JP(QuAsmTypes::Uint32)
+	[ 20] jump_by:JB(QuAsmTypes::Uint32)
+	[ 21] jump_to_if_not:JPIN(QuAsmTypes::Uint32)
+	[ 22] jump_by_if_not:JBIN(QuAsmTypes::Uint32)
 
-	[ 23] print:PRT(QuAsmTypes::uint8)
+	[ 23] print:PRT(QuAsmTypes::UInt8)
 
-	[ 24] call:CALL(QuAsmTypes::uint32)
+	[ 24] call:CALL(QuAsmTypes::Uint32)
 
-	[ 25] define_fn:DFFN(QuAsmTypes::uint32, QuAsmTypes::uint32)
-	[ 26] define_const_str:DFCS(QuAsmTypes::str)
+	[ 25] define_fn:DFFN(QuAsmTypes::Uint32, QuAsmTypes::Uint32)
+	[ 26] define_const_str:DFCS(QuAsmTypes::Str)
 }
 
 
@@ -1304,8 +1231,6 @@ pub struct QuCompiler {
 	types:Vec<QuType>,
 	types_map:HashMap<String, usize>,
 
-	frames: Vec<QuFrameMetadata>,
-
 
 } impl QuCompiler {
 
@@ -1321,7 +1246,6 @@ pub struct QuCompiler {
 			stack_idx:0,
 			types:vec![QuType::int(), QuType::uint(), QuType::bool()],
 			types_map:HashMap::new(),
-			frames:Vec::default(),
 		};
 
 		let mut i:usize = 0;
@@ -1512,9 +1436,9 @@ pub struct QuCompiler {
 		let name_index = *self.functions.get(&name.to_string())
 			.ok_or_else(||{
 				panic!("TODO: Need token for QuMsg");
-				let msg = QuMsg::general(
-					"Compiler attempted to call a function that was not defined. TODO: Better error message");
-				return msg;
+//				let msg = QuMsg::general(
+//					"Compiler attempted to call a function that was not defined. TODO: Better error message");
+//				return msg;
 			}
 		)? as u32;
 
@@ -1621,10 +1545,6 @@ pub struct QuCompiler {
 				return  self.cmp_var_assign(
 					name_rk, value_leaf);
 			}
-
-			_ => {
-				unimplemented!()
-			}
 		};
 	}
 
@@ -1721,11 +1641,11 @@ pub struct QuCompiler {
 			code.push(s.len() as u8);
 			for char in s.chars() {
 				if !char.is_ascii() {
-					let msg = QuMsg::general(
-						"String is not ASCII. TODO: Better error message"
-					);
+//					let msg = QuMsg::general(
+//						"String is not ASCII. TODO: Better error message"
+//					);
 					panic!("TODO: Need token for QuMsg");
-					return Err(msg);
+//					return Err(msg);
 				}
 				code.push(char as u8);
 			}
@@ -1814,13 +1734,6 @@ pub struct QuCompiler {
 		self.stack_layers.push(self.stack_idx);
 	}
 
-}
-
-
-/// Stores metadata for a Qu frame.
-struct QuFrameMetadata {
-	offset:u8,
-	variables:Vec<QuVarMetadata>
 }
 
 
@@ -1992,7 +1905,7 @@ pub struct QuParser<'a> {
 
 		// Check expression
 		let expr = self.ck_expr()?.ok_or(
-			QuMsg::flow_statement_lacks_expression(keyword)
+			QuMsg::flow_statement_lacks_expression()
 		)?;
 
 		// Check for code block
@@ -2445,11 +2358,11 @@ pub struct QuParser<'a> {
 				if self.tk_idx != self.tokens.len()-1 {
 					// Parsing ended early, must be an unexpected token
 					panic!();
-					let mut msg = QuMsg::invalid_token(
-						&self.tk_spy(0).text
-					);
-					msg.token = self.tk_spy(0).clone();
-					return Err(msg);
+//					let mut msg = QuMsg::invalid_token(
+//						&self.tk_spy(0).text
+//					);
+//					msg.token = self.tk_spy(0).clone();
+//					return Err(msg);
 				}
 
 				let leafs = leafs_op.ok_or(
@@ -2482,11 +2395,9 @@ pub struct QuParser<'a> {
 			}
 
 			if self.line == tk_row {
-				let tk = &self.tokens[self.tk_idx];
 				return Err(QuMsg::one_liner());
 			}
 
-			let tk = &self.tokens[self.tk_idx-0];
 			self.line = tk_row;
 			return Err(QuMsg::invalid_indent());
 		}
@@ -2714,30 +2625,30 @@ pub struct QuVm {
 				let size = asm_type.size(code, i+1);
 				// Get value
 				let val = match asm_type {
-					QuAsmTypes::uint8 => {
+					QuAsmTypes::UInt8 => {
 						let bytes = [code[i+1]];
 						i += 1;
 						format!("{}", u8::from_be_bytes(bytes))
 					}
-					QuAsmTypes::uint16 => {
+					QuAsmTypes::UInt16 => {
 						let bytes = [code[i+1], code[i+2]];
 						i += 2;
 						format!("{}", u16::from_be_bytes(bytes))
 					}
-					QuAsmTypes::uint32 => {
+					QuAsmTypes::Uint32 => {
 						let bytes = [
 							code[i+1], code[i+2], code[i+3], code[i+4]];
 						i += 4;
 						format!("{}", u32::from_be_bytes(bytes))
 					}
-					QuAsmTypes::uint64 => {
+					QuAsmTypes::UInt64 => {
 						let bytes = [
 							code[i+1], code[i+2], code[i+3], code[i+4],
 							code[i+5], code[i+6], code[i+7], code[i+8]];
 						i += 8;
 						format!("{}", u64::from_be_bytes(bytes))
 					}
-					QuAsmTypes::str => {
+					QuAsmTypes::Str => {
 						let mut val = "\"".to_string();
 						for _ in 0..size+1 {
 							val.push(code[i+1] as char);
@@ -2746,7 +2657,6 @@ pub struct QuVm {
 						val.push('"');
 						val
 					}
-					_ => panic!(),
 				};
 				asm.push_str(format!(" {}{}", "", val).as_str());
 			}
@@ -2779,11 +2689,12 @@ pub struct QuVm {
 
 
 	/// Reads the bytecode of a function call command and executes it.
-	fn exc_call_fn(&mut self, code:&[u8]) {
+	fn exc_call_fn(&mut self, code:&[u8]) -> Result<(), QuMsg> {
 		let fn_id = self.next_u32(code) as usize;
 		self.frame_start(self.functions[fn_id].code_start);
 
-		self.do_loop(code);
+		self.do_loop(code)?;
+		return Ok(());
 	}
 
 
@@ -2798,10 +2709,10 @@ pub struct QuVm {
 		let name_const_idx = self.next_u32(code) as usize;
 		let fn_length = self.next_u32(code) as usize;
 
-		let name = &self.str_constants[name_const_idx];
+		let name = &self.str_constants[name_const_idx].clone();
 		let code_start = self.pc;
 
-		self.define_fn(&name.clone(), code_start);
+		self.define_fn(&name, code_start);
 		self.pc += fn_length;
 	}
 
@@ -2833,7 +2744,7 @@ pub struct QuVm {
 	}
 
 
-	fn exc_jump_to(&mut self, code:&[u8]) {
+	fn exc_jump_to(&mut self, _:&[u8]) {
 		unimplemented!()
 	}
 
@@ -2874,7 +2785,7 @@ pub struct QuVm {
 	}
 
 
-	fn exc_load_mem(&mut self, code:&[u8]) {
+	fn exc_load_mem(&mut self, _:&[u8]) {
 		unimplemented!();
 	}
 
@@ -2886,7 +2797,7 @@ pub struct QuVm {
 	}
 
 
-	fn exc_store_mem(&mut self, code:&[u8]) {
+	fn exc_store_mem(&mut self, _:&[u8]) {
 		unimplemented!();
 	}
 
@@ -2959,19 +2870,6 @@ pub struct QuVm {
 	#[inline]
 	fn is_hold_true(&mut self) -> bool {
 		return self.hold != 0;
-	}
-
-
-	/// Loads a constant [String] from the specified location in the bytecode.
-	fn load_constant_string(&mut self, code:&[u8],
-	at:usize) -> String {
-		let str_size = code[at] as usize;
-		let mut str_vec = Vec::with_capacity(str_size);
-		for i in at+1..(at+1+str_size) {
-			str_vec.push(code[i]);
-		}
-		
-		return String::from_utf8(str_vec).expect("TODO: Handle this error");
 	}
 
 
@@ -3082,7 +2980,7 @@ pub struct QuVm {
 			x if x == OPLIB.jump_to_if_not => self.exc_jump_to_if_not(bytecode),
 			x if x == OPLIB.jump_by_if_not => self.exc_jump_by_if_not(bytecode),
 			x if x == OPLIB.print => self.exc_print(bytecode),
-			x if x == OPLIB.call => self.exc_call_fn(bytecode),
+			x if x == OPLIB.call => self.exc_call_fn(bytecode)?,
 			x if x == OPLIB.define_fn => self.exc_define_fn(bytecode),
 			x if x == OPLIB.define_const_str => self.exc_define_const_str(bytecode),
 

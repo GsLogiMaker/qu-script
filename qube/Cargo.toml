@@ -21,9 +21,17 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-[workspace]
+[package]
+name = "qube"
+version = "0.1.0"
+edition = "2021"
 
-members = [
-	"qu",
-	"qube",
-]
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+lazy_static = "1.4.0"
+qu = {path = "../qu"}
+
+[dev-dependencies]
+criterion = "0.3"
+
