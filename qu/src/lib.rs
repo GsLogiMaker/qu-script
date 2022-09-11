@@ -195,7 +195,7 @@ mod qu_error {
 
 		pub fn invalid_syntax() -> Self{
 			let mut msg = Self::new();
-			msg.title = ERR_TITLE_INVALID_INDENTATION.to_string();
+			msg.title = ERR_TITLE_INVALID_SYNTAX.to_string();
 			msg.description = "A line has an incorrect indentation level.".to_string();
 			return msg;
 		}
@@ -321,31 +321,10 @@ mod qu_tokens {
 
 
 	/// A [Vec] of tokenfule_* functions and their types.
-	///
-	/// This is used by [chars_fit_rule] to determin if a pattern of
-	/// characters should be turned into a [QuToken]. See [tokenrule_name] or 
-	/// [tokenrule_keyword] for examples of how a `tokenrule_*` function should
-	/// be structured.
 	pub type Rules<'a> = [(&'a dyn Fn(&[char])->bool, u8)];
 
 
 	/// Returns *true* if the passed characters match to a name.
-	///
-	/// A name could be a type, class, function name, or variable name.
-	/// 
-	/// Examples
-	/// ```
-	/// use qu_script::tokenrule_name;
-	///
-	///	let chars1:&[char] = &['_', '_', 'i', 'n', 'i', 't', '_', '_',];
-	///	assert!(qu_script::tokenrule_name(chars1));
-	///
-	///	let chars2:&[char] = &['a', 'b', '1', ];
-	///	assert!(qu_script::tokenrule_name(chars2));
-	///
-	///	let chars3:&[char] = &['a', '+', '=', ];
-	///	assert!(!qu_script::tokenrule_name(chars3));
-	/// ```
 	pub fn tokenrule_name(added_so_far:&[char]) -> bool {
 		for char in  added_so_far {
 			if *char == ' ' {
@@ -362,20 +341,6 @@ mod qu_tokens {
 
 	/// Returns *true* if the passed characters match to a number (like *int* or
 	/// *float*).
-	/// 
-	/// Examples
-	/// ```
-	/// use qu_script::tokenrule_number;
-	///
-	///	let chars1:&[char] = &['5', '.', '6',];
-	///	assert!(qu_script::tokenrule_number(chars1));
-	///
-	///	let chars2:&[char] = &['1','0',];
-	///	assert!(qu_script::tokenrule_number(chars2));
-	///
-	///	let chars3:&[char] = &['a', ];
-	///	assert!(!qu_script::tokenrule_number(chars3));
-	/// ```
 	pub fn tokenrule_number(added_so_far:&[char]) -> bool {
 		
 		for char in  added_so_far {
@@ -391,23 +356,7 @@ mod qu_tokens {
 	}
 
 
-	/// Returns *true* if the passed characters match to a keyword. 
-	/// 
-	/// Some examples of keywords are *var*, *if*, and *fn*.
-	/// 
-	/// Example
-	/// ```
-	/// use qu_script::tokenrule_keyword;
-	///
-	///	let chars1:&[char] = &['v', 'a', 'r',];
-	///	assert!(qu_script::tokenrule_keyword(chars1));
-	///
-	///	let chars2:&[char] = &['i','f',];
-	///	assert!(qu_script::tokenrule_keyword(chars2));
-	///
-	///	let chars3:&[char] = &['d', 'u', 'd', 'e',];
-	///	assert!(!qu_script::tokenrule_keyword(chars3));
-	/// ```
+	/// Returns *true* if the passed characters match to a keyword.
 	pub fn tokenrule_keyword(added_so_far:&[char]) -> bool {
 		for word in [
 			KEYWORD_VAR,
@@ -434,22 +383,6 @@ mod qu_tokens {
 
 
 	/// Returns *true* if the passed characters match to a symbol.
-	/// 
-	/// Some examples of operators are *+*, *-*, and *+=*.
-	/// 
-	/// Examples
-	/// ```
-	/// use qu_script::tokenrule_symbols;
-	///
-	///	let chars1:&[char] = &['*',];
-	///	assert!(qu_script::tokenrule_symbols(chars1));
-	///
-	///	let chars2:&[char] = &['=','=',];
-	///	assert!(qu_script::tokenrule_symbols(chars2));
-	///
-	///	let chars3:&[char] = &['+', '1'];
-	///	assert!(!qu_script::tokenrule_symbols(chars3));
-	/// ```
 	pub fn tokenrule_symbols(added_so_far:&[char]) -> bool {
 		return match added_so_far {
 			['*',] => true,
@@ -496,33 +429,6 @@ mod qu_tokens {
 
 
 	/// Tokenizes a [String] according to the passed [Rules].
-	/// 
-	/// Examples
-	/// ```
-	/// use qu_script::Token;
-	/// use qu_script::tokenize;
-	/// use qu_script::tokenrule_name;
-	/// use qu_script::tokenrule_symbols;
-	/// use qu_script::TOKEN_TYPE_NAME;
-	/// use qu_script::TOKEN_TYPE_SYMBOL;
-	/// 
-	/// let script:&str = " hello=world ;! ";
-	/// 
-	/// let tokens:Vec<Token> = tokenize(
-	/// 	&script,
-	/// 	&[
-	/// 		(&tokenrule_name, TOKEN_TYPE_NAME),
-	/// 		(&tokenrule_symbols, TOKEN_TYPE_SYMBOL),
-	/// 	]
-	/// );
-	/// 
-	///	assert!(tokens.len() == 5);
-	///	assert!(tokens[0].text(&script) == "hello");
-	///	assert!(tokens[1].text(&script) == "=");
-	///	assert!(tokens[2].text(&script) == "world");
-	///	assert!(tokens[3].text(&script) == ";");
-	///	assert!(tokens[4].text(&script) == "!");
-	/// ```
 	pub fn tokenize<'a>(script:&'a String, rules:&Rules<'a>) -> Vec<QuToken> {
 		let mut tokens = vec!();
 
@@ -750,6 +656,22 @@ mod qu_tokens {
 }
 
 
+#[cfg(test)]
+mod tests {
+
+	use crate::Qu;
+
+	#[test]
+	fn var_define() {
+		let mut vm = Qu::new();
+		let result = vm.run("vl a_variable = 1");
+		
+		assert!(result.is_ok());
+	}
+
+}
+
+
 use std::{fmt::{self, Display, Debug}, vec, collections::HashMap, rc::Rc};
 use qu_tokens::{RULES, TOKEN_TYPE_NAME, tokenize, QuToken};
 use qu_error::{QuMsg};
@@ -767,7 +689,7 @@ enum QuAsmTypes {
 	UInt64,
 	Str,
 } impl QuAsmTypes {
-	fn size(&self, code:&Vec<u8>, at:usize) -> usize {
+	fn size(&self, code:&[u8], at:usize) -> usize {
 		return match self {
 			Self::UInt8 => 1,
 			Self::UInt16 => 2,
@@ -1128,9 +1050,24 @@ struct_QuOpLibrary!{
 /// The interface for the Qu programming language.
 pub struct Qu {
 	vm:QuVm,
+
 } impl Qu {
+	//!
+	//! # Examples
+	//! ```
+	//! use qu::Qu;
+	//! let mut qu = Qu::new();
+	//! qu.run("
+	//! 	fn add():
+	//! 		vl left = 2
+	//! 		vl right = 5
+	//! 		print left + right
+	//! 
+	//! 	add()
+	//! ").unwrap();
+	//! ```
 	
-	/// Creates a new Qu instance.
+	/// Instantiates the [Qu] struct.
 	pub fn new() -> Self {
 		Qu {
 			vm:QuVm::new(),
@@ -1138,8 +1075,20 @@ pub struct Qu {
 	}
 
 
-	/// Compiles Qu code into bytecode.
+	/// Compiles Qu script into bytecode.
 	pub fn compile(&self, code:&str) -> Result<Vec<u8>, QuMsg> {
+		//!
+		//! Examples:
+		//! 
+		//! ```
+		//! use qu::Qu;
+		//! use qu::OPLIB;
+		//! 
+		//! let qu = Qu::new();
+		//! let bytecode = qu.compile("vl count = 0").unwrap();
+		//! 
+		//! assert_eq!(bytecode, vec![OPLIB.load_val_u8, 0, 0, OPLIB.end]);
+		//! ```
 		// Tokenize
 		let code_str = code.to_string();
 		let tokens = &mut tokenize(&code_str, RULES);
@@ -1155,14 +1104,45 @@ pub struct Qu {
 
 
 	/// Compiles Qu code to Qu assembly.
+	/// 
+	/// Example:
+	/// 
+	/// ```
+	/// use qu::Qu;
+	/// use qu::OPLIB;
+	/// 		//! 
+	/// let mut qu = Qu::new();
+	/// let asm = qu.compile_to_asm("vl added = 5 + 6").unwrap();
+	/// 		//! 
+	/// assert_eq!(asm, "\nLDU8 6 1\nLDU8 5 0\nADD 0 1 0\nEND".to_string());
+	/// ```
+	/// 
+	/// Errors:
+	/// 
+	/// Returns a [String] if compilation is successful, otherwise returns a
+	/// [QuMsg] if invalid syntax was given.
 	pub fn compile_to_asm(&mut self, code:&str) -> Result<String, QuMsg> {
 		let code = self.compile(code)?;
 
-		return Ok(self.vm.code_to_asm(&code, false));
+		return Ok(QuVm::code_to_asm(&code, false));
 	}
 
 
 	/// Runs a [String] of Qu code.
+	/// 
+	/// Example:
+	/// 
+	/// ```
+	/// use qu::Qu;
+	/// 
+	/// let mut qu = Qu::new();
+	/// qu.run("vl count = 5 + 6").unwrap();
+	/// ```
+	/// 
+	/// Errors:
+	/// 
+	/// Returns an empty [Ok] when ran successfully, otherwise returns a [QuMsg]
+	/// if improper syntax was given, or if there was a runtime error raised.
 	pub fn run(&mut self, script:&str) -> Result<(), QuMsg> {
 		let code_res = self.compile(script);
 		match code_res{
@@ -1182,20 +1162,23 @@ pub struct Qu {
 
 
 	/// Runs Qu bytecode.
+	/// 
+	/// Example:
+	/// 
+	/// ```
+	/// use qu::Qu;
+	/// 
+	/// let mut qu = Qu::new();
+	/// let bytecode = qu.compile("vl count = 5 + 6").unwrap();
+	/// qu.run_bytes(&bytecode).unwrap();
+	/// ```
+	/// 
+	/// Errors:
+	/// 
+	/// Returns an empty [Ok] when ran successfully, otherwise returns a [QuMsg]
+	/// if improper syntax was given, or if there was a runtime error raised.
 	pub fn run_bytes(&mut self, bytes:&[u8]) -> Result<(), QuMsg> {
 		return self.vm.run_bytes(bytes);
-	}
-	
-
-	/// Runs a [QuFunc].
-	pub fn run_fn(&mut self, glob_fn:&QuFunc) -> Result<(), QuMsg> {
-		return self.vm.run_bytes(&glob_fn.code);
-	}
-
-
-	/// Runs a global scope [QuFunc].
-	pub fn run_global_fn(&mut self, glob_fn:&QuFunc) -> Result<(), QuMsg> {
-		return self.run_fn(glob_fn);
 	}
 
 }
@@ -1540,8 +1523,6 @@ pub struct QuCompiler {
 					name_rk,
 					value_leaf
 			) => {
-				// TODO: Make cmp_var_assign return Result and remove this
-				// Ok wrapper
 				return  self.cmp_var_assign(
 					name_rk, value_leaf);
 			}
@@ -1743,9 +1724,8 @@ pub struct QuFunc {
 	name:String,
 	/// The index that is function is stored at in the function list.
 	id:usize,
+	/// The arguments accepted by this function.
 	arg_list:Vec<u8>,
-	/// The code of this function.
-	code:Vec<u8>,
 	/// The start index of this function's code.
 	code_start:usize,
 
@@ -1756,7 +1736,6 @@ pub struct QuFunc {
 			name: name.to_owned(),
 			id: id,
 			arg_list: Vec::default(),
-			code: Vec::default(),
 			code_start: code_start,
 		}
 	}
@@ -1764,13 +1743,19 @@ pub struct QuFunc {
 }
 
 
-/// A single Qu VM operation.
+/// Contains metadata for a single Qu VM operation.
 pub struct QuOperation<'a> {
+	/// The name of this operation.
 	name:String,
+	/// The assembly keyword that represents this operation.
 	asm_keyword:String,
+	/// The arguments that this operation takes.
 	args:&'a [CommandArg],
+	/// The index that this operation is stored at in the op [Vec].
 	id:u8,
+
 } impl<'a> QuOperation<'a> {
+
 	fn new(name:&str, asm_keyword:&str, id:u8, args:&'a [CommandArg]) -> Self {
 		return Self{
 			name:name.to_string(),
@@ -1779,17 +1764,22 @@ pub struct QuOperation<'a> {
 			id:id,
 		};
 	}
+
 }
 
 
-/// Parses Qu code into a [QuLeaf] tree.
+/// A parser for Qu scripts.
 pub struct QuParser<'a> {
+	/// The current indentation of the script.
 	indent:u8,
+	/// The current line being paresd.
 	line:usize,
+	/// The current [QuToken] being anylized.
 	tk_idx:usize,
+	/// The saved token indexs to return to.
 	tk_stack:Vec<usize>, // TODO: Fix tk_stack mem-leak
+	/// The [QuTokens] being parsed.
 	tokens:&'a Vec<QuToken>,
-	opslib:QuOpLibrary<'a>,
 
 } impl<'a> QuParser<'a> {
 
@@ -1806,7 +1796,6 @@ pub struct QuParser<'a> {
 			tk_idx:0,
 			tk_stack:vec![],
 			tokens:tokens,
-			opslib:QuOpLibrary::new(),
 		}
 	}
 
@@ -2183,7 +2172,7 @@ pub struct QuParser<'a> {
 
 		return Ok(Some(
 			QuLeafExpr::Equation(
-				self.opslib.op_id_from_symbol(operator),
+				OPLIB.op_id_from_symbol(operator),
 				Box::new(data_l),
 				Box::new(data_r)
 			)
@@ -2345,7 +2334,6 @@ pub struct QuParser<'a> {
 	}
 
 
-
 	/// Parses a Qu script.
 	pub fn parse(&mut self) -> Result<QuLeaf, QuMsg> {
 		self.tk_idx = 0;
@@ -2465,7 +2453,7 @@ pub struct QuParser<'a> {
 	}
 
 
-	/// Returns a &[`QuToken`] relative to the current token index without
+	/// Returns a &[QuToken] relative to the current token index without
 	/// incrementing the current token index.
 	/// 
 	/// This function will not check if the token follows indentation rules.
@@ -2478,7 +2466,7 @@ pub struct QuParser<'a> {
 
 }
 
-/// An object type (Example: int, bool, String, Object).
+/// An object type (Ex: int, bool, String, Object).
 pub struct QuType {
 	name:String,
 	size:usize,
@@ -2493,21 +2481,21 @@ pub struct QuType {
 	}
 
 
-	/// Makes a boolean [`QuType`].
+	/// Instantiates a boolean [`QuType`].
 	fn bool() -> QuType {
 		// TODO:: Make "bool" string a constant
 		return QuType::new("bool".to_string(), 1);
 	}
 
 
-	/// Makes an integer [`QuType`].
+	/// Instantiates an integer [`QuType`].
 	fn int() -> QuType {
 		// TODO: Make "int" string a constant
 		return QuType::new("int".to_string(), 1);
 	}
 
 
-	/// Makes an unsigned integer [`QuType`].
+	/// Instantiates an unsigned integer [`QuType`].
 	fn uint() -> QuType {
 		// TODO:: Make "uint" string a constant
 		return QuType::new("uint".to_string(), 1);
@@ -2516,6 +2504,7 @@ pub struct QuType {
 }
 
 
+/// Metadata for a Qu variable.
 struct QuVarMetadata {
 	/// The name of this variable.
 	name:String,
@@ -2525,6 +2514,7 @@ struct QuVarMetadata {
 	register:u8,
 } impl QuVarMetadata {
 	
+	/// Instantiate a [QuVarMetadata] struct.
 	fn new(name:&str, static_type:Option<usize>, register:u8) -> Self {
 		return Self{
 			name: name.to_owned(),
@@ -2534,6 +2524,7 @@ struct QuVarMetadata {
 	}
 
 
+	/// Instantiate a [QuVarMetadata] struct with default values.
 	fn default() -> Self {
 		return Self {
 			name: String::default(),
@@ -2554,6 +2545,7 @@ pub struct QuVm {
 	/// Holds the outputed value of the last executed operation.
 	hold:usize,
 
+	/// The memory registers. Holds all primatives of the VM.
 	registers:Vec<QuRegisterValue>,
 	/// The offset of reading and writing to registers.
 	register_offset:usize,
@@ -2563,8 +2555,11 @@ pub struct QuVm {
 	pc:usize,
 
 } impl QuVm {
+	//!
+	//! This struct is not meant to be accessed directly (is most cases). See
+	//! [Qu] for interfacing with Qu script.
 
-	/// Makes a new [QuVm].
+	/// Instantiate a new [QuVm] struct.
 	pub fn new() -> Self {
 		let mut vm = QuVm { 
 			functions: Vec::default(),
@@ -2582,15 +2577,22 @@ pub struct QuVm {
 	}
 
 
-	/// Returns a new [QuVm] wrapped in an [Rc].
-	pub fn new_rc() -> Rc<Self> {
-		return Rc::new(Self::new());
-	}
-
-
 	/// Converts byte code to human readable Qu assembly instructions.
-	pub fn code_to_asm(&mut self, code:&Vec<u8>, include_line_columns:bool
+	pub fn code_to_asm(code:&[u8], include_line_columns:bool
 	) -> String {
+		//!
+		//! Example:
+		//! 
+		//! ```
+		//! use qu::QuVm;
+		//! use qu::OPLIB;
+		//! 
+		//! // Bytecode representing an add operation which adds 5 and 6, then
+		//! // stores the result in register 0.
+		//! let asm = QuVm::code_to_asm(&[8, 5, 6, 0], false);
+		//! 
+		//! assert_eq!(asm, "\nADD 5 6 0".to_string());
+		//! ```
 		let mut asm = String::new();
 		
 		let mut i = 0;
@@ -2667,15 +2669,27 @@ pub struct QuVm {
 	}
 
 
-	/// Defines a constant [String]. TODO: Better documentation
+	/// Defines a constant [String] in the VM.
 	pub fn define_const_string(&mut self, value:&str) {
-		// TODO: Error handling
+		//!
+		//! Example:
+		//! 
+		//! ```
+		//! use qu::QuVm;
+		//! 
+		//! let mut vm = QuVm::new();
+		//! vm.define_const_string("Hello world!");
+		//! vm.define_const_string("The second!");
+		//! 
+		//! assert_eq!(vm.get_const_string(0), "Hello world!");
+		//! assert_eq!(vm.get_const_string(1), "The second!");
+		//! ```
 		self.str_constants.push(value.to_owned());
 	}
 
 
-	/// Defines a Qu function. TODO: Better documentation
-	pub fn define_fn(&mut self, name:&str, code_start:usize) {
+	/// Defines a Qu function in the VM.
+	fn define_fn(&mut self, name:&str, code_start:usize) {
 		let id = self.functions.len();
 		self.functions.push(QuFunc::new(&name, id, code_start));
 	}
@@ -2700,7 +2714,7 @@ pub struct QuVm {
 
 	fn exc_define_const_str(&mut self, code:&[u8]) {
 		let string = self.next_ascii(code);
-		self.str_constants.push(string);
+		self.define_const_string(&string);
 	}
 
 
@@ -2709,7 +2723,7 @@ pub struct QuVm {
 		let name_const_idx = self.next_u32(code) as usize;
 		let fn_length = self.next_u32(code) as usize;
 
-		let name = &self.str_constants[name_const_idx].clone();
+		let name = self.get_const_string(name_const_idx).to_owned();
 		let code_start = self.pc;
 
 		self.define_fn(&name, code_start);
@@ -2828,6 +2842,26 @@ pub struct QuVm {
 	}
 
 
+	#[inline]
+	/// Returns a previously defined constant &[str] by its index.
+	pub fn get_const_string(&self, at:usize) -> &str {
+		//!
+		//! Example:
+		//! 
+		//! ```
+		//! use qu::QuVm;
+		//! 
+		//! let mut vm = QuVm::new();
+		//! vm.define_const_string("Hello world!");
+		//! vm.define_const_string("The second!");
+		//! 
+		//! assert_eq!(vm.get_const_string(0), "Hello world!");
+		//! assert_eq!(vm.get_const_string(1), "The second!");
+		//! ```
+		return self.str_constants[at].as_str();
+	}
+
+
 	/// Ends the topmost [QuCallFrame].
 	fn frame_end(&mut self) -> Result<(), QuMsg>{
 		let frame = self.frames.pop()
@@ -2868,11 +2902,13 @@ pub struct QuVm {
 
 
 	#[inline]
+	/// Returns *true* if *hold* is a *true* value.
 	fn is_hold_true(&mut self) -> bool {
 		return self.hold != 0;
 	}
 
 
+	/// Reads a [String] from the next bytes in the code.
 	fn next_ascii(&mut self, code:&[u8]) -> String {
 		let str_size = self.next_u8(code);
 		let mut str_vec = Vec::with_capacity(str_size as usize);
@@ -2925,12 +2961,14 @@ pub struct QuVm {
 
 
 	#[inline]
+	/// Gets a register value.
 	fn reg_get(&self, at:usize) -> QuRegisterValue {
 		return self.registers[self.register_offset+at];
 	}
 
 
 	#[inline]
+	/// Sets a register value.
 	fn reg_set(&mut self, at:usize, with:QuRegisterValue) {
 		return self.registers[self.register_offset+at] = with;
 	}
@@ -2990,13 +3028,7 @@ pub struct QuVm {
 	}
 
 
-	/// Run the passed [QuFunc] in a new [QuCallFrame].
-	pub fn run_func(&mut self, func:&QuFunc) -> Result<(), QuMsg> {
-		return self.run_bytes(&func.code);
-	}
-
-
-	/// Run the passed bytecode in the topmost [QuCallFrame].
+	/// Run the passed bytecode.
 	pub fn run_bytes(&mut self, bytecode:&[u8]) -> Result<(), QuMsg> {
 		while self.pc != bytecode.len() {
 			match self.do_next(&bytecode) {
