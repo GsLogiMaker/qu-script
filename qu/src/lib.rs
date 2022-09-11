@@ -205,15 +205,12 @@ struct QuCallFrame {
 	/// The index for the [QuVm]'s program counter to return to after excecution
 	/// of this frame is done.
 	pc_return:usize,
-	/// The offset in the register to store values.
-	register_offset:usize,
 
 } impl QuCallFrame {
 
 	fn new(pc_return:usize, register_offset:usize) -> Self {
 		QuCallFrame {
 			pc_return: pc_return,
-			register_offset: register_offset,
 		}
 	}
 
@@ -242,7 +239,6 @@ pub struct QuFunc {
 	}
 
 }
-
 
 
 /// An object type (Ex: int, bool, String, Object).

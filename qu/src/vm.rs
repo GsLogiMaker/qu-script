@@ -198,7 +198,7 @@ struct_QuOpLibrary!{
 
 	[ 23] print:PRT(QuAsmTypes::UInt8)
 
-	[ 24] call:CALL(QuAsmTypes::Uint32)
+	[ 24] call:CALL(QuAsmTypes::Uint32, QuAsmTypes::UInt8)
 
 	[ 25] define_fn:DFFN(QuAsmTypes::Uint32, QuAsmTypes::Uint32)
 	[ 26] define_const_str:DFCS(QuAsmTypes::Str)
@@ -399,9 +399,22 @@ pub struct QuVm {
 	/// Reads the bytecode of a function call command and executes it.
 	fn exc_call_fn(&mut self, code:&[u8]) -> Result<(), QuMsg> {
 		let fn_id = self.next_u32(code) as usize;
-		self.frame_start(self.functions[fn_id].code_start);
+		let frame_offset = self.next_u8(code) as usize;
 
+		self.register_offset += frame_offset;
+		// Assure registers is big enought to fit u8::MAX more values
+		if (self.register_offset + u8::MAX as usize) > self.registers.len() {
+			self.registers.resize(
+				self.register_offset + u8::MAX as usize, 0);
+		}
+		let return_pc = self.pc;
+
+		self.frame_start(self.functions[fn_id].code_start);
 		self.do_loop(code)?;
+
+		self.register_offset -= frame_offset;
+		self.pc = return_pc;
+
 		return Ok(());
 	}
 
@@ -558,36 +571,18 @@ pub struct QuVm {
 
 	/// Ends the topmost [QuCallFrame].
 	fn frame_end(&mut self) -> Result<(), QuMsg>{
-		let frame = self.frames.pop()
-			.ok_or_else(|| {
-				QuMsg::general("Done")
-			}
-		)?;
-		self.pc = frame.pc_return;
-		self.register_offset -= frame.register_offset;
-
-		return Ok(());
+		return Err(QuMsg::general("Done"));
 	}
 
 
 	/// Starts a new [QuCallFrame] from a [QuFunc].
 	fn frame_start(&mut self, at_code:usize) {
-		// TODO: utilize register offsets
-		if self.frames.len() != 0 {
-			self.register_offset += u8::MAX as usize;
-		}
 		let next_frame
 			= QuCallFrame::new(
 				self.pc,
 				self.register_offset,
 			)
 		;
-
-		// Assure registers is big enought to fit u8::MAX more values
-		if (self.register_offset + u8::MAX as usize) > self.registers.len() {
-			self.registers.resize(
-				self.register_offset + u8::MAX as usize, 0);
-		}
 
 		self.frames.push(next_frame);
 
@@ -685,7 +680,7 @@ pub struct QuVm {
 	fn do_next(&mut self, bytecode:&[u8]) -> Result<(), QuMsg> {
 		// TODO: Error handling for running operations
 		let op = self.next_u8(bytecode);
-//		println!("DidOp {}", OPLIB.ops[op as usize].name);
+//		println!("Doing op: {}", OPLIB.ops[op as usize].name);
 		match op {
 			x if x == OPLIB.end as u8 => {self.frame_end()?},
 

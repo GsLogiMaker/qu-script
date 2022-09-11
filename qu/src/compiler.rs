@@ -64,7 +64,7 @@ pub struct QuCompiler {
 		return match leaf {
 			QuLeafExpr::FnCall(
 				name
-			) => self.cmp_fn_call(name),
+			) => self.cmp_fn_call(name, output_reg),
 			QuLeafExpr::Equation(
 				op,
 				left,
@@ -86,14 +86,14 @@ pub struct QuCompiler {
 
 		let mut code:Vec<u8> = vec![];
 		
-		// Compile right expression
-		let mut rgh_bytes
-			= self.cmp_expr(right, right_reg)?;
-		code.append(&mut rgh_bytes);
 		// Compile left expression
 		let mut lft_bytes
 			= self.cmp_expr(left, output_reg)?;
 		code.append(&mut lft_bytes);
+		// Compile right expression
+		let mut rgh_bytes
+			= self.cmp_expr(right, right_reg)?;
+		code.append(&mut rgh_bytes);
 
 		// Compile expression calculation
 		code.append(&mut vec![op]);
@@ -232,7 +232,7 @@ pub struct QuCompiler {
 	}
 
 
-	fn cmp_fn_call(&mut self, name:&str) -> Result<Vec<u8>, QuMsg> {
+	fn cmp_fn_call(&mut self, name:&str, store_to:u8) -> Result<Vec<u8>, QuMsg> {
 		let name_index = *self.functions.get(&name.to_string())
 			.ok_or_else(||{
 				panic!("TODO: Need token for QuMsg");
@@ -246,6 +246,7 @@ pub struct QuCompiler {
 		// Add fn declaration operation
 		code.push(OPLIB.call);
 		code.append(&mut name_index.to_be_bytes().to_vec());
+		code.push(store_to);
 
 		return Ok(code);
 	}
@@ -253,23 +254,28 @@ pub struct QuCompiler {
 
 	fn cmp_fn_decl(&mut self, name:&str, body:&QuLeaf
 	) -> Result<Vec<u8>, QuMsg> {
-		let name_index = self.str_constants.len() as u32;
-		self.str_constants.push(name.to_owned());
+		let code = with!(self.stack_frame_start, self.stack_frame_end {
+			let name_index = self.str_constants.len() as u32;
+			self.str_constants.push(name.to_owned());
 
-		self.functions.insert(name.to_string(), name_index);
+			self.functions.insert(name.to_string(), name_index);
 
-		// Compile code block
-		let mut body_compiled = self.cmp_leaf(body)?;
-		body_compiled.push(OPLIB.end);
-		let code_length = body_compiled.len() as u32;
+			// Compile code block
+			let mut body_compiled = self.cmp_leaf(body)?;
+			body_compiled.push(OPLIB.end);
+			let code_length = body_compiled.len() as u32;
 
-		let mut code = vec![];
-		// Add fn declaration operation
-		code.push(OPLIB.define_fn);
-		code.append(&mut name_index.to_be_bytes().to_vec());
-		code.append(&mut code_length.to_be_bytes().to_vec());
-		// Add body
-		code.append(&mut body_compiled);
+			let mut code = vec![];
+			// Add fn declaration operation
+			code.push(OPLIB.define_fn);
+			code.append(&mut name_index.to_be_bytes().to_vec());
+			code.append(&mut code_length.to_be_bytes().to_vec());
+			// Add body
+			code.append(&mut body_compiled);
+			
+			/*return */ Ok(code)
+		})?;
+		
 
 		return Ok(code);
 	}
@@ -327,6 +333,9 @@ pub struct QuCompiler {
 				code.push(print_reg);
 				return Ok(code);
 			},
+			QuLeaf::Return(expr) => {
+				return self.cmp_expr(expr, 0);
+			}
 			QuLeaf::VarDecl(
 					name_tk,
 					type_tk,
@@ -335,7 +344,6 @@ pub struct QuCompiler {
 				return self.cmp_var_decl(
 					name_tk, type_tk, value_leaf);
 			}
-
 			QuLeaf::VarAssign(
 					name_rk,
 					value_leaf

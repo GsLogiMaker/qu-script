@@ -33,14 +33,14 @@ fn main() {
 	fn add():
 		vl left = 2
 		vl right = 5
-		print left + right
+		return left + right
 
-	add()
+	print 1 + add() + 2 + add() + 3
 	"##;
 
 	let mut qu = Qu::new();
 
-	//println!("{}", QuVm.compile_to_asm(script).unwrap());
+	println!("{}", qu.compile_to_asm(script).unwrap());
 	match qu.run(script) {
 		Ok(_) => {/*pass*/},
 		Err(_) => {/*pass*/},

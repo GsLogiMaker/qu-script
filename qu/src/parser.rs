@@ -22,6 +22,7 @@ pub const KEYWORD_FUNCTION:&str = "fn";
 pub const KEYWORD_IF:&str = "if";
 pub const KEYWORD_PRINT:&str = "print";
 pub const KEYWORD_TRAIT:&str = "tr";
+pub const KEYWORD_RETURN:&str = "return";
 pub const KEYWORD_TRAIT_IMPL:&str = "does";
 pub const KEYWORD_VAR:&str = "vl";
 pub const KEYWORD_WHILE:&str = "while";
@@ -44,6 +45,8 @@ pub enum QuLeaf {
 	FnDecl(String, Box<QuLeaf>),
 	/// Prints a register to the console.
 	Print(QuLeafExpr),
+	/// A return statement for a function
+	Return(QuLeafExpr),
 	/// A variable assignment. Contains a var name and a [`QuLeafExpr`].
 	VarAssign(QuToken, QuLeafExpr),
 	/// A variable declaration. Contains a var name, type(TODO), and
@@ -82,6 +85,9 @@ pub enum QuLeaf {
 			}
 			QuLeaf::Print(register) => {
 				return format!("{}PRINT {}", indentstr, register);
+			}
+			QuLeaf::Return(val) => {
+				return format!("{}RETURN {}", indentstr, val);
 			}
 			QuLeaf::VarAssign(name, val) => {
 				return format!("{}ASSIGN {} = {}", indentstr, name.text, val);
@@ -203,6 +209,9 @@ pub struct QuParser<'a> {
 			// Print Statement
 			ck_parse!(ch_print);
 
+			// Return Statement
+			ck_parse!(ch_return);
+
 			// Function declaration
 			ck_parse!(ck_fn_decl);
 
@@ -242,6 +251,12 @@ pub struct QuParser<'a> {
 		let block_data = self.ck_code_block();
 		self.indent -= 1;
 		return block_data;
+	}
+
+
+	/// Attempts to parse an expression
+	fn ck_expr(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
+		return self.ck_op_les();
 	}
 
 
@@ -401,37 +416,6 @@ pub struct QuParser<'a> {
 	}
 
 
-	/// Attempts to parse a print statement.
-	fn ch_print(&mut self) -> Result<Option<QuLeaf>, QuMsg> {
-		if self.utl_statement_start()?.is_none() {
-			return Ok(None);
-		}
-
-		// Match keyword
-		let keyword_tk = self.tk_spy(0);
-		if keyword_tk != KEYWORD_PRINT {
-			return Ok(None);
-		}
-		self.tk_next().expect("Improper indentation TODO:Better msg");
-
-		// Match register
-		// Hack: Using unwrap and expect rather than properly handling errors.
-		// 	Probobly isn't an issue since the print keyword is a hack and will
-		// 	be removed anyway.
-		let reg_tk = self.ck_expr()
-			.unwrap() 
-			.expect("Print needs number TODO: Better msg");
-
-		return Ok(Some(QuLeaf::Print(reg_tk)));
-	}
-
-
-	/// Attempts to parse an expression
-	fn ck_expr(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
-		return self.ck_op_les();
-	}
-
-
 	/// Attempts to parse a lesser than expression.
 	fn ck_op_les(&mut self) -> Result<Option<QuLeafExpr>, QuMsg>{
 		return self.ck_operation("<", &Self::ck_op_grt);
@@ -551,6 +535,56 @@ pub struct QuParser<'a> {
 				Box::new(data_r)
 			)
 		));
+	}
+
+
+	/// Attempts to parse a print statement.
+	fn ch_print(&mut self) -> Result<Option<QuLeaf>, QuMsg> {
+		if self.utl_statement_start()?.is_none() {
+			return Ok(None);
+		}
+
+		// Match keyword
+		let keyword_tk = self.tk_spy(0);
+		if keyword_tk != KEYWORD_PRINT {
+			return Ok(None);
+		}
+		self.tk_next().expect("Improper indentation TODO:Better msg");
+
+		// Match register
+		// Hack: Using unwrap and expect rather than properly handling errors.
+		// 	Probobly isn't an issue since the print keyword is a hack and will
+		// 	be removed anyway.
+		let reg_tk = self.ck_expr()
+			.unwrap() 
+			.expect("Print needs number TODO: Better msg");
+
+		return Ok(Some(QuLeaf::Print(reg_tk)));
+	}
+
+
+	/// Attempts to parse a print statement.
+	fn ch_return(&mut self) -> Result<Option<QuLeaf>, QuMsg> {
+		if self.utl_statement_start()?.is_none() {
+			return Ok(None);
+		}
+
+		// Match return keyword
+		let keyword_tk = self.tk_spy(0);
+		if keyword_tk != KEYWORD_RETURN {
+			return Ok(None);
+		}
+		self.tk_next()?;
+
+		// Match returning expression
+		let reg_tk = self.ck_expr()?.ok_or_else(
+			||{
+				// TODO: Proper error message
+				return QuMsg::flow_statement_lacks_expression();
+			}
+		)?;
+
+		return Ok(Some(QuLeaf::Return(reg_tk)));
 	}
 
 
