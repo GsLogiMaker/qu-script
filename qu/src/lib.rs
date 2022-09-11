@@ -2055,7 +2055,7 @@ pub struct QuParser<'a> {
 		// Hack: Using unwrap and expect rather than properly handling errors.
 		// 	Probobly isn't an issue since the print keyword is a hack and will
 		// 	be removed anyway.
-		let reg_tk = self.ck_value()
+		let reg_tk = self.ck_expr()
 			.unwrap() 
 			.expect("Print needs number TODO: Better msg");
 

@@ -30,28 +30,17 @@ fn main() {
 	println!("---START---\n");
 
 	let script = r##"
-	fn calc():
-		vl left = 10
-		vl right = 23
-		vl result = left + right
-		print result
+	fn add():
+		vl left = 2
+		vl right = 5
+		print left + right
 	
-	vl stuff = 3
-
-	calc()
-	calc()
-	calc()
-	calc()
-
-	vl crazy = 5*(2 + 3)/4 + 2-1
-
-	print stuff
-	print crazy
+	add()
 	"##;
 
 	let mut qu = Qu::new();
 
-	println!("{}", qu.compile_to_asm(script).unwrap());
+	//println!("{}", qu.compile_to_asm(script).unwrap());
 	match qu.run(script) {
 		Ok(_) => {/*pass*/},
 		Err(_) => {/*pass*/},
