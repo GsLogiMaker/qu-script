@@ -1,6 +1,6 @@
 
 # Qu Script
-![alt text](https://github.com/GsLogiMaker/qu-script/blob/main/Logo.png?raw=true)
+![alt text](https://github.com/GsLogiMaker/qu-script/blob/6d593de1afebed6874ffff39b046e8f8c071e020/Logo.png)
 
 Qu is an interpreted scripting language with a focus on portability, speed, and ease of use. I was inspired to make Qu when looking for a modding script language and found that the most popular one was Lua. In my humble opinion, a good language needs at least optional static typing for saftey, a minmal yet readable syntax, and array indexes to begin at 0, so Lua is no good to me so I decided to make my own, thus Qu was born! I also find that there's also not enough programming languages that use indents instead of curly braces.
 
