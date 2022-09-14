@@ -1,12 +1,23 @@
 
 # Qu Script
-![alt text](https://github.com/GsLogiMaker/qu-script/blob/main/Logo.png?raw=true)
+![alt text](https://github.com/GsLogiMaker/qu-script/blob/6d593de1afebed6874ffff39b046e8f8c071e020/Logo.png)
 
-Qu is an interpreted scripting language with a focus on portability, speed, and ease of use. I was inspired to make Qu when looking for a modding script language and found that the most popular one was Lua. In my humble opinion, a good language needs at least optional static typing for saftey, a minmal yet readable syntax, and array indexes to begin at 0, so Lua is no good to me so I decided to make my own, thus Qu was born! I also find that there's also not enough programming languages that use indents instead of curly braces.
+```
+fn main():
+  print("Hello world!")
+```
 
-> __Note__: Qu is in early development and is likely to change.
+> __Warning__ 'Qu' related puns lie ahead!
 
-### Here's what Qu looks like:
+
+## What is Qu?
+Good **qu**estion, glad you asked! Qu is both a dynamicly and staticly typed interpreted language that utilizes traits rather than object inheritance. Qu is geared toward being lightweight and fast for the purpose of embedding into games and game engines as a main programming language and/or as modding scripts. Qu was inspired by GDScript, Rust, Python, Wren, Lua, and C# in that order.
+
+> __Note__: The following are part of the design goals; they are not implemented yet. The following is also a progress.
+
+Easy to interop with C, maybe, WHOO! You can remove the default Qu standard library and replace it with your own standard library if you need to ensure scripts can't be used for anything malicous (Pariculary useful in modding!) Qu comes with a Rust-like package manager called **Qu**be for creating projects, running projects, and installing dependencies.
+
+## What Does it Look Like?
 ```
 # A single line comment
 
@@ -16,7 +27,8 @@ line comment /#
 const JUMP_VELOCITY = 100.0
 
 trait Life:
-  #/ For an object to implement this trait it must declare the following variables and functions. /#
+  #/ For an object to implement this trait it
+  must declare the following variables and functions. /#
   vl health = 100.0
   vl attack = 20.0
   
@@ -33,9 +45,11 @@ class Player:
   vl velocity_y float = 0.0
   
   fn jump():
-    #/ The 'self' is not required by default, but accessing global variables requires the 'glob' keyword /#
+    #/ The 'self' is not required by default, but
+    accessing global variables requires the 'glob'
+    keyword /#
     velocity_y -= glob.JUMP_VELOCITY
-    self.velocity_y -= glob.JUMP_VELOCITY
+    self.velocity_x = 0.0
   
   # A static function, the 'self' keyword does not
   # work here.
@@ -48,7 +62,14 @@ class Player:
   fn Life.eat(food String):
     print("That", food, "was delicous!")
     
-  #/ The preceding 'Life.' is optional as long as no other functions share the same name. /#
+  #/ The preceding 'Life.' is optional as long as
+  no other functions share the same name. /#
   fn revive():
     print("revived")
 ```
+## Want to Contribute?
+You are more than welcome to contribute whatever you have, wheather that be an idea or code!
+### Contributing Ideas
+If you want to contribute your thoughts and ideas to the project navigate over to `issues` and create an new issue with your thoughts, even criticism is welcome!
+### Contributing Code
+Qu is written in Rust and I'll assume you are already familiar with it and Git. The entry point of Qu is `qube/src/main.rs` and the api to the language is `qu/src/lib.rs`. These are the most important files to understand first. If you have any questions contact me, even though `issues`, and I'll do my best to help!
