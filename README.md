@@ -67,3 +67,9 @@ class Player:
   fn revive():
     print("revived")
 ```
+## Want to Contribute?
+You are more than welcome to contribute whatever you have, wheather that be an idea or code!
+### Contributing Ideas
+If you want to contribute your thoughts and ideas to the project navigate over to `issues` and create an new issue with your thoughts, even criticism is welcome!
+### Contributing Code
+Qu is written in Rust and I'll assume you are already familiar with it and Git. The entry point of Qu is `qube/src/main.rs` and the api to the language is `qu/src/lib.rs`. These are the most important files to understand first. If you have any questions contact me, even though `issues`, and I'll do my best to help!
