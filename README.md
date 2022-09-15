@@ -13,7 +13,7 @@ Good **qu**estion, glad you asked! Qu is both a dynamicly and staticly typed int
 
 > __Note__: The following are part of the design goals; they are not implemented yet. The following text is also a work in progress.
 
-Easy to interop with C, maybe, WHOO! You can remove the default Qu standard library and replace it with your own standard library if you need to ensure scripts can't be used for anything malicous (Pariculary useful in modding!) Qu comes with a Rust-like package manager called **Qu**be for creating projects, running projects, and installing dependencies.
+Easy to interop with C, maybe, WHOO! You can remove the default Qu standard library and replace it with your own standard library if you need to ensure scripts can't be used for anything malicous (Pariculary useful in modding!) Qu comes with a Rust-like package manager called **Qu**be for creating projects, running projects, and installing dependencies. Also may add a linter called **Qu**cumber and documentation called **Qu**rriculum.
 
 ## What Does it Look Like?
 ``` GDScript
@@ -78,4 +78,4 @@ You are more than welcome to contribute whatever you have, wheather that be an i
 ### Contributing Ideas
 If you want to contribute your thoughts and ideas to the project navigate over to `issues` and create an new issue with your thoughts, even criticism is welcome!
 ### Contributing Code
-Qu is written in Rust and I'll assume you are already familiar with it and Git. The entry point of Qu is `qube/src/main.rs` and the api to the language is `qu/src/lib.rs`. These are the most important files to understand first. If you have any questions contact me, even through the `issues` page, and I'll do my best to help!
+Qu is written in Rust and I'll assume you are already familiar with it and Git. The entry point of Qu is `qube/src/main.rs` and the api to the language is `qu/src/lib.rs`. These are the most important files to understand first. If you have any **qu**estions contact me, even through the `issues` page, and I'll do my best to help!
