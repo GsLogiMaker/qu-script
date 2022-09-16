@@ -71,6 +71,11 @@ class Player:
 	# no other functions share the same name.
 	fn revive():
 		print("revived")
+
+
+fn main():
+  var character = Player()
+  character.jump()
 ```
 
 ## Want to Contribute?
