@@ -74,8 +74,8 @@ class Player:
 
 
 fn main():
-  var character = Player()
-  character.jump()
+	var character = Player()
+	character.jump()
 ```
 
 ## Want to Contribute?
