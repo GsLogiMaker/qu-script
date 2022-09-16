@@ -1,6 +1,6 @@
 
 # Qu Script
-![alt text](https://github.com/GsLogiMaker/qu-script/blob/53e7cdf7ba6d68444b4ef333a815a36933b1f51d/Logo.png)
+![alt text](https://github.com/GsLogiMaker/qu-script/blob/e4c8fddc010feb76daadbda53f2bdfd27078d6ee/Logo.png)
 ```
 fn main():
   print("Hello world!")
