@@ -319,15 +319,17 @@ pub struct QuToken {
 
 } impl Debug for QuToken {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		return write!(f, "Hi: {}", 0);
-		//f.debug_struct("QuToken")
+		//return write!(f, "Tokwn: {txt}", 0);
+		f.debug_struct("QuToken")
 		//	.field("begin", &self.begin)
 		//	.field("end", &self.end)
 		//	.field("row", &self.row)
 		//	.field("_col", &self._col)
 		//	.field("indent", &self.indent)
 		//	.field("source", &self.source)
+			.field("text", &self.text)
 		//	.field("tk_type", &self.tk_type).finish()
+			.finish()
 	}
 } impl PartialEq for QuToken {
 	fn eq(&self, other:&Self) -> bool {

@@ -165,13 +165,9 @@ pub struct Qu {
 		match code_res{
 			Ok(code) => {
 				let run_res = self.run_bytes(&code);
-				if let Err(msg) = &run_res {
-					msg.print(&script);
-				}
 				return run_res;
 			}
 			Err(msg) => {
-				msg.print(&script);
 				return Err(msg);
 			}
 		}

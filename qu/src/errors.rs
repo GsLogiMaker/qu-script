@@ -4,6 +4,7 @@ use std::{fmt::{self, Display, Debug}};
 
 
 pub const ERR_TITLE_EMPTY_CODE_BLOCK:&str = "EMPTY CODE BLOCK";
+pub const ERR_TITLE_PARSER_MATCH_FAILED:&str = "PARSER MATCH FAILED";
 pub const ERR_TITLE_GENERAL:&str = "GENERAL";
 pub const ERR_TITLE_INVALID_FLOW_STATEMENT:&str = "INVALID FLOW STATEMENT";
 pub const ERR_TITLE_INVALID_INDENTATION:&str = "INVALID INDENTATION";
@@ -110,6 +111,14 @@ pub struct QuMsg {
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_INVALID_FLOW_STATEMENT.to_string();
 		msg.description = format!("Flow statement requires an expression but non was given.");
+		return msg;
+	}
+
+
+	pub fn failed_parser_match() -> Self{
+		let mut msg = Self::new();
+		msg.title = ERR_TITLE_PARSER_MATCH_FAILED.to_string();
+		msg.description = "Failed to parse something.".to_string();
 		return msg;
 	}
 

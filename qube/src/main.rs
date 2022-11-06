@@ -29,14 +29,16 @@ use qu::Qu;
 fn main() {
 	println!("---START---\n");
 
-	let script = r##"vl tup = 5, 6, 7"##;
+	let script = r##"
+	var num
+	"##;
 
 	let mut qu = Qu::new();
 
-	println!("{}", qu.compile_to_asm(script).unwrap());
+//	println!("{}", qu.compile_to_asm(script).ok_or_else());
 	match qu.run(script) {
 		Ok(_) => {/*pass*/},
-		Err(_) => {/*pass*/},
+		Err(msg) => {msg.print(script)},
 	};
 
 }

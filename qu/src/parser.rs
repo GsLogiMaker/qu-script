@@ -15,16 +15,16 @@ pub const FLOW_FOR:u8 = 2;
 pub const FLOW_ELIF:u8 = 3;
 pub const FLOW_ELSE:u8 = 4;
 
-pub const KEYWORD_CLASS:&str = "cl";
+pub const KEYWORD_CLASS:&str = "stamp";
 pub const KEYWORD_ELSE:&str = "else";
 pub const KEYWORD_ELIF:&str = "elif";
 pub const KEYWORD_FUNCTION:&str = "fn";
 pub const KEYWORD_IF:&str = "if";
 pub const KEYWORD_PRINT:&str = "print";
-pub const KEYWORD_TRAIT:&str = "tr";
+pub const KEYWORD_TRAIT:&str = "trait";
 pub const KEYWORD_RETURN:&str = "return";
-pub const KEYWORD_TRAIT_IMPL:&str = "does";
-pub const KEYWORD_VAR:&str = "vl";
+pub const KEYWORD_TRAIT_IMPL:&str = "impl";
+pub const KEYWORD_VAR:&str = "var";
 pub const KEYWORD_WHILE:&str = "while";
 
 pub const OP_ASSIGN_WORD:&str = "=";
@@ -154,6 +154,7 @@ pub enum QuLeafExpr {
 
 
 /// A parser for Qu scripts.
+#[derive(Debug)]
 pub struct QuParser<'a> {
 	/// The current indentation of the script.
 	indent:u8,
@@ -675,7 +676,6 @@ pub struct QuParser<'a> {
 	}
 
 
-
 	/// Attempts to parse a variable assignment.
 	fn ck_var_assign(&mut self) -> Result<Option<QuLeaf>, QuMsg> {
 		if self.utl_statement_start()?.is_none() {
@@ -899,6 +899,32 @@ pub struct QuParser<'a> {
 	}
 
 
+	fn tk_next_option(&mut self) -> Option<&QuToken> {
+		let (line, indent) = (self.line, self.indent);
+
+		// Return null if out of range
+		if self.tk_idx == self.tokens.len() {
+			return None;
+		}
+
+		let tk = &self.tokens[self.tk_idx];
+
+		// Check for proper indentation
+		if tk.row != line as u64 {
+			if tk.indent != indent+2 {
+				return None;
+			}
+		}
+
+		if tk.tk_type == u8::MAX {
+			return None;
+		}
+
+		self.tk_idx += 1;
+		return Some(tk);
+	}
+
+
 	/// Returns to a previously saved token index.
 	fn tk_state_pop(&mut self) {
 		self.tk_idx = self.tk_stack.pop().unwrap();
@@ -921,6 +947,217 @@ pub struct QuParser<'a> {
 			return &self.tokens[self.tokens.len()-1];
 		}
 		return &self.tokens[self.tk_idx+at];
+	}
+
+
+	/// Returns a &[QuToken] relative to the current token index without
+	/// incrementing the current token index.
+	/// 
+	/// This function will not check if the token follows indentation rules.
+	fn tk_spy_option(&mut self, at:usize) -> Option<&QuToken> {
+		if self.tk_idx+at >= self.tokens.len() {
+			return None;
+		}
+		let token = &self.tokens[self.tk_idx+at];
+		if token.tk_type == u8::MAX {
+			return None;
+		}
+		return Some(&self.tokens[self.tk_idx+at]);
+	}
+
+}
+
+
+/*
+
+let parse_matcher = ParseMatcher::new(parser)
+	.match_str("let")
+	.some_else(||{ Err() })
+	.finish;
+
+let pm = ParseMatcher::new(parser)
+	.match_str("let")?
+	.match_variable()?.else("expected variable name")?
+	.match_type()?.optional()
+	.match_str("=")?.else("expected a 'e'")?
+	.match_expression()?.else("expected expression")?
+
+*/
+
+
+#[derive(Debug)]
+struct QuMatcher<'a, 'b> {
+	parser:&'a mut QuParser<'b>,
+	last_op:Option<QuToken>,
+	matched:Vec<Option<QuToken>>,
+} impl<'a, 'b> QuMatcher<'a, 'b> {
+
+	fn new(parser:&'a mut QuParser<'b>) -> Self {
+		return QuMatcher{parser, last_op:None, matched:vec![]}
+	}
+
+
+	fn dbg(&mut self) {
+		dbg!(self);
+	}
+
+
+	fn fin(&self) -> &Vec<Option<QuToken>> {
+		return &self.matched;
+	}
+
+
+	fn keep(&mut self) -> Result<&mut Self, QuMsg> {
+		self.matched.push(self.last_op.clone());
+		return Ok(self);
+	}
+
+
+	fn match_name(&mut self) -> Result<&mut Self, QuMsg> {
+		let tk_op = self.parser.tk_spy_option(0);
+
+		match tk_op {
+			Some(tk) => {
+				if tk.tk_type == TOKEN_TYPE_NAME {
+					self.last_op = Some(tk.clone());
+					self.parser.tk_next_option();
+				} else {
+					self.last_op = None;
+				}
+				
+			},
+			None => {
+				self.last_op = None;
+			},
+		}
+
+		return Ok(self);
+	}
+
+
+	fn match_str(&mut self, match_against:&str) -> Result<&mut Self, QuMsg> {
+		let tk_op = self.parser.tk_spy_option(0);
+
+		match tk_op {
+			Some(tk) => {
+				if tk == match_against {
+					self.last_op = Some(tk.clone());
+					self.parser.tk_next_option();
+				} else {
+					self.last_op = None;
+				}
+			},
+			None => {
+				self.last_op = None;
+			},
+		}
+
+		return Ok(self);
+}
+
+
+	fn err<F: FnOnce()->QuMsg>(
+		&mut self, else_clause:F
+	) -> Result<&mut Self, QuMsg> {
+		match &self.last_op {
+			Some(token) => {
+				return Ok(self);
+			},
+			None => {
+				let msg = else_clause();
+				return Err(msg);
+			},
+		}
+	}
+
+
+	fn required(&mut self) -> Result<&mut Self, QuMsg> {
+		match &self.last_op {
+			Some(token) => {
+				return Ok(self);
+			},
+			None => {
+				return Err(QuMsg::failed_parser_match());
+			},
+		}
+	}
+
+}
+
+
+#[cfg(test)]
+mod test_qu_matcher {
+    use crate::{QuParser, tokens::tokenize, tokens::RULES};
+	use crate::QuMsg;
+
+    use super::{QuMatcher, KEYWORD_VAR, OP_ASSIGN_WORD};
+
+
+	#[test]
+	fn match_str() -> Result<(), QuMsg>{
+		let script = "Hello world!".to_owned();
+		let tokens = &mut tokenize(&script, RULES);
+		let mut p = QuParser::new(tokens);
+		let mut m = QuMatcher::new(&mut p);
+		let matched = m
+			.match_str("Hello")?
+			.match_str("world")?
+				.keep()?
+			.match_str("?")?
+				.keep()?
+			.fin();
+		
+		assert_eq!(matched.len(), 2);
+		match &matched[0] {
+			Some(tk) => {
+				assert_eq!(tk.text, "world");
+			},
+			None => {assert!(false);},
+		}
+		assert_eq!(matched[1], None);
+
+		return Ok(());
+	}
+
+
+	#[test]
+	fn match_variable() -> Result<(), QuMsg> {
+		// Boilerplace
+		let tokens
+			= &mut tokenize(&"var count int =".to_owned(), RULES);
+		let mut p = QuParser::new(tokens);
+		let mut m = QuMatcher::new(&mut p); 
+
+		// The test
+		let mut matched = m
+			// Match 'var' keyword
+			.match_str(KEYWORD_VAR)?
+				.required()?
+
+			// Match variable name
+			.match_name()?
+				.err(||{QuMsg::general(
+					"Variable definition expected a name."
+				)})?
+				.keep()?
+
+			// Match variable type
+			.match_name()?
+				.keep()?
+			
+			// Match '=' symbol
+			.match_str(OP_ASSIGN_WORD)?
+				.err(||{QuMsg::general(
+					"Variable definitions expect a '='."
+				)})?
+			
+			// TODO: Match the expression to assign to variable
+
+			.fin();
+		
+			dbg!(matched);
+		
+		return Ok(());
 	}
 
 }
