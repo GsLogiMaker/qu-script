@@ -16,9 +16,6 @@ use crate::QuMsg;
 
 pub const FLOW_IF:u8 = 0;
 pub const FLOW_WHILE:u8 = 1;
-pub const FLOW_FOR:u8 = 2;
-pub const FLOW_ELIF:u8 = 3;
-pub const FLOW_ELSE:u8 = 4;
 
 pub const KEYWORD_CLASS:&str = "stamp";
 pub const KEYWORD_ELSE:&str = "else";
@@ -30,10 +27,18 @@ pub const KEYWORD_RETURN:&str = "return";
 pub const KEYWORD_VAR:&str = "var";
 pub const KEYWORD_WHILE:&str = "while";
 
-pub const OP_ADD_SYMBOL:&str = "+";
 pub const OP_ASSIGN_SYMBOL:&str = "=";
 pub const OP_BLOCK_START:&str = ":";
-
+pub const OP_MATH_ADD:&str = "+";
+pub const OP_MATH_DIV:&str = "/";
+pub const OP_MATH_EQL:&str = "==";
+pub const OP_MATH_GRT:&str = ">";
+pub const OP_MATH_GTE:&str = ">=";
+pub const OP_MATH_LES:&str = "<";
+pub const OP_MATH_LSE:&str = "<=";
+pub const OP_MATH_MUL:&str = "*";
+pub const OP_MATH_NEQ:&str = "!=";
+pub const OP_MATH_SUB:&str = "-";
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum QuAction {
@@ -59,32 +64,28 @@ pub enum QuAction {
 	Add(Box<QuAction>, Box<QuAction>),
 	/// Holds two expressions.
 	Div(Box<QuAction>, Box<QuAction>),
+	/// Holds two expressions.
+	Eql(Box<QuAction>, Box<QuAction>),
 	/// Holds an expression action.
 	Expression(Box<QuAction>),
+	/// Greater. Holds two expressions.
+	Grt(Box<QuAction>, Box<QuAction>),
+	/// Greater or equal. Holds two expressions.
+	Gte(Box<QuAction>, Box<QuAction>),
+	/// Lesser . Holds two expressions.
+	Les(Box<QuAction>, Box<QuAction>),
+	/// Lesser or equal. Holds two expressions.
+	Lse(Box<QuAction>, Box<QuAction>),
 	/// Holds two expressions.
 	Mul(Box<QuAction>, Box<QuAction>),
+	/// Holds two expressions.
+	Neq(Box<QuAction>, Box<QuAction>),
 	/// Holds it's numeric value.
 	Number(usize),
 	/// Holds two expressions.
 	Sub(Box<QuAction>, Box<QuAction>),
 	/// Holds the name of the variable.
 	VarRef(String),
-} impl QuAction {
-
-	/// Returns *true* if the [QuAction] is an expression.
-	fn is_expression(&self) -> bool {
-		return match self {
-			QuAction::Add(_, _) => true,
-			QuAction::Div(_, _) => true,
-			QuAction::Expression(_) => true,
-			QuAction::Mul(_, _) => true,
-			QuAction::Number(_) => true,
-			QuAction::Sub(_, _) => true,
-			QuAction::VarRef(_) => true,
-			_ => false,
-		};
-	}
-
 }
 
 
@@ -137,7 +138,7 @@ pub enum QuLeaf {
 				let bodystr = body.tree_fmt(indent + 1);
 				return format!("{}FLOW {} {} {}", indentstr, op, cond, bodystr);
 			}
-			QuLeaf::FnDecl(name, body, parameters) => {
+			QuLeaf::FnDecl(name, body, _parameters) => {
 				let bodystr = body.tree_fmt(indent + 1);
 				return format!("{}DECL FN {} {}", indentstr, name, bodystr);
 			}
@@ -528,37 +529,37 @@ pub struct QuParser {
 
 	/// Attempts to parse a lesser than expression.
 	fn ck_op_les(&mut self) -> Result<Option<QuLeafExpr>, QuMsg>{
-		return self.ck_operation("<", &Self::ck_op_grt);
+		return self.ck_operation(OP_MATH_LES, &Self::ck_op_grt);
 	}
 
 
 	/// Attempts to parse a greater than expression.
 	fn ck_op_grt(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
-		return self.ck_operation(">", &Self::ck_op_eql);
+		return self.ck_operation(OP_MATH_GRT, &Self::ck_op_eql);
 	}
 
 
 	/// Attempts to parse an equal to expression.
 	fn ck_op_eql(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
-		return self.ck_operation("==", &Self::ck_op_not_eql);
+		return self.ck_operation(OP_MATH_EQL, &Self::ck_op_not_eql);
 	}
 
 
 	/// Attempts to parse a not equal to expression.
 	fn ck_op_not_eql(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
-		return self.ck_operation("!=", &Self::ck_op_sub);
+		return self.ck_operation(OP_MATH_NEQ, &Self::ck_op_sub);
 	}
 
 
 	/// Attempts to parse a subtraction expression.
 	fn ck_op_sub(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
-		return self.ck_operation("-", &Self::ck_op_add);
+		return self.ck_operation(OP_MATH_SUB, &Self::ck_op_add);
 	}
 
 
 	/// Attempts to parse an addition expression.
 	fn ck_op_add(&mut self) -> Result<Option<QuLeafExpr>, QuMsg>  {
-		return self.ck_operation("+", &Self::ck_op_div);
+		return self.ck_operation(OP_MATH_ADD, &Self::ck_op_div);
 	}
 
 
@@ -570,7 +571,7 @@ pub struct QuParser {
 
 	/// Attempts to parse a multiplication expression.
 	fn ck_op_mul(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
-		return self.ck_operation("*", &Self::ck_op_paren_expr);
+		return self.ck_operation(OP_MATH_MUL, &Self::ck_op_paren_expr);
 	}
 
 
@@ -649,7 +650,7 @@ pub struct QuParser {
 	}
 
 
-	/// Attempts to parse a tuple, otherwise attempts to parse a "<"
+	/// Attempts to parse a tuple, otherwise attempts to parse a
 	/// expression.
 	/// 
 	/// A tuple is denoted by expressions separated by commas (Ex: "1,2,3").
@@ -1025,10 +1026,130 @@ pub struct QuParser {
 	}
 
 
+	fn match_expr_les(&mut self) -> Result<&mut Self, QuMsg> {
+		let (l, r)
+			= self.get_match_operation(
+				OP_MATH_LES,
+				&Self::match_expr_lse,
+				&Self::match_expr_les
+			)?;
+		let Some(l) = l else {
+			self.last_op = None;
+			return Ok(self);
+		};
+		let Some(r) = r else {
+			self.last_op = Some(l);
+			return Ok(self);
+		};
+		self.last_op = Some(QuAction::Les(Box::new(l), Box::new(r)));
+		return Ok(self);
+	}
+
+
+	fn match_expr_lse(&mut self) -> Result<&mut Self, QuMsg> {
+		let (l, r)
+			= self.get_match_operation(
+				OP_MATH_LSE,
+				&Self::match_expr_grt,
+				&Self::match_expr_lse
+			)?;
+		let Some(l) = l else {
+			self.last_op = None;
+			return Ok(self);
+		};
+		let Some(r) = r else {
+			self.last_op = Some(l);
+			return Ok(self);
+		};
+		self.last_op = Some(QuAction::Lse(Box::new(l), Box::new(r)));
+		return Ok(self);
+	}
+
+
+	fn match_expr_grt(&mut self) -> Result<&mut Self, QuMsg> {
+		let (l, r)
+			= self.get_match_operation(
+				OP_MATH_GRT,
+				&Self::match_expr_gte,
+				&Self::match_expr_grt
+			)?;
+		let Some(l) = l else {
+			self.last_op = None;
+			return Ok(self);
+		};
+		let Some(r) = r else {
+			self.last_op = Some(l);
+			return Ok(self);
+		};
+		self.last_op = Some(QuAction::Grt(Box::new(l), Box::new(r)));
+		return Ok(self);
+	}
+
+
+	fn match_expr_gte(&mut self) -> Result<&mut Self, QuMsg> {
+		let (l, r)
+			= self.get_match_operation(
+				OP_MATH_GTE,
+				&Self::match_expr_eql,
+				&Self::match_expr_gte
+			)?;
+		let Some(l) = l else {
+			self.last_op = None;
+			return Ok(self);
+		};
+		let Some(r) = r else {
+			self.last_op = Some(l);
+			return Ok(self);
+		};
+		self.last_op = Some(QuAction::Gte(Box::new(l), Box::new(r)));
+		return Ok(self);
+	}
+
+
+	fn match_expr_eql(&mut self) -> Result<&mut Self, QuMsg> {
+		let (l, r)
+			= self.get_match_operation(
+				OP_MATH_EQL,
+				&Self::match_expr_neq,
+				&Self::match_expr_eql
+			)?;
+		let Some(l) = l else {
+			self.last_op = None;
+			return Ok(self);
+		};
+		let Some(r) = r else {
+			self.last_op = Some(l);
+			return Ok(self);
+		};
+		self.last_op = Some(QuAction::Eql(Box::new(l), Box::new(r)));
+		return Ok(self);
+	}
+
+
+	fn match_expr_neq(&mut self) -> Result<&mut Self, QuMsg> {
+		let (l, r)
+			= self.get_match_operation(
+				OP_MATH_NEQ,
+				&Self::match_expr_sub,
+				&Self::match_expr_neq
+			)?;
+		let Some(l) = l else {
+			self.last_op = None;
+			return Ok(self);
+		};
+		let Some(r) = r else {
+			self.last_op = Some(l);
+			return Ok(self);
+		};
+		self.last_op = Some(QuAction::Neq(Box::new(l), Box::new(r)));
+		return Ok(self);
+	}
+
+
 	fn match_expr_sub(&mut self) -> Result<&mut Self, QuMsg> {
 		let (l, r)
 			= self.get_match_operation(
-				"-",
+				OP_MATH_SUB,
 				&Self::match_expr_add,
 				&Self::match_expr_sub
 			)?;
@@ -1048,7 +1169,7 @@ pub struct QuParser {
 	fn match_expr_add(&mut self) -> Result<&mut Self, QuMsg> {
 		let (l, r)
 			= self.get_match_operation(
-				"+",
+				OP_MATH_ADD,
 				&Self::match_expr_div,
 				&Self::match_expr_add
 			)?;
@@ -1068,7 +1189,7 @@ pub struct QuParser {
 	fn match_expr_div(&mut self) -> Result<&mut Self, QuMsg> {
 		let (l, r)
 			= self.get_match_operation(
-				"/",
+				OP_MATH_DIV,
 				&Self::match_expr_mul,
 				&Self::match_expr_div
 			)?;
@@ -1088,8 +1209,8 @@ pub struct QuParser {
 	fn match_expr_mul(&mut self) -> Result<&mut Self, QuMsg> {
 		let (l, r)
 			= self.get_match_operation(
-				"*",
-				&Self::match_number,
+				OP_MATH_MUL,
+				&Self::match_expr_parenth,
 				&Self::match_expr_mul
 			)?;
 		let Some(l) = l else {
@@ -1105,8 +1226,41 @@ pub struct QuParser {
 	}
 
 
+	fn match_expr_parenth(&mut self) -> Result<&mut Self, QuMsg> {
+		if !self.match_str("(")?.required().is_ok() {
+			self.match_expr_factor()?;
+			return Ok(self);
+		}
+		self.match_expression()?
+				.keep()
+			.match_str(")")?
+				.err(||{QuMsg::general("Expected a ')'")})?
+			;
+
+		self.last_op = self.matched.pop().unwrap();
+
+		return Ok(self);
+	}
+
+
+	fn match_expr_factor(&mut self) -> Result<&mut Self, QuMsg> {
+		self.match_number()?;
+		if let Some(_) = &self.last_op {
+			return Ok(self);
+		}
+
+		self.match_variable()?;
+		if let Some(_) = &self.last_op {
+			return Ok(self);
+		}
+
+		self.last_op = None;
+		return Ok(self);
+	}
+
+
 	fn match_expression(&mut self) -> Result<&mut Self, QuMsg> {
-		self.match_expr_sub();
+		self.match_expr_les()?;
 		return Ok(self);
 	}
 
@@ -1162,12 +1316,11 @@ pub struct QuParser {
 
 
 	fn match_number(&mut self) -> Result<&mut Self, QuMsg> {
-		let num_tk
-			= self.get_match_token_type(TOKEN_TYPE_NUMBER)
-				.ok_or_else(||{
-					self.last_op = None;
-					QuMsg::failed_parser_match()
-				})?;
+		let Some(num_tk)
+		= self.get_match_token_type(TOKEN_TYPE_NUMBER) else {
+			self.last_op = None;
+			return Ok(self);
+		};
 
 		let num = num_tk.text
 			.parse::<usize>()
@@ -1192,6 +1345,11 @@ pub struct QuParser {
 		}
 
 		self.match_flow(FLOW_IF)?;
+		if let Some(_) = &self.last_op {
+			return Ok(self);
+		}
+
+		self.match_flow(FLOW_WHILE)?;
 		if let Some(_) = &self.last_op {
 			return Ok(self);
 		}
@@ -1238,7 +1396,7 @@ pub struct QuParser {
 		// HACK: I don't know if saving the token state is needed here. Might
 		// be removable.
 		self.tk_state_save();
-		self.match_var_name()?;
+		self.match_variable()?;
 		if !self.required().is_ok() {
 			return Ok(self);
 		}
@@ -1335,6 +1493,14 @@ pub struct QuParser {
 	}
 
 
+	/// Matches an in-scope variable.
+	fn match_variable(&mut self) -> Result<&mut Self, QuMsg> {
+		// TODO: Implement match_variable
+		self.match_var_name()?;
+		return Ok(self);
+	}
+
+
 	/// Parses a Qu script.
 	pub fn parse(&mut self, script:String) -> Result<QuAction, QuMsg> {
 		self.tk_idx = 0;
@@ -1411,32 +1577,13 @@ pub struct QuParser {
 
 	/// Returns the next token to parse.
 	/// 
-	/// Returns [`Err`] if the a parser error, Although the
+	/// Returns [`Err`] if there is a parser error, Although the
 	/// token can still be accessed from the [`Err`] if the indentation rules
 	/// need to be ignored.
 	/// 
 	/// For a [`QuToken`] to follow the indentation rules it must be on
 	/// the same line as its statement, unless the token is indented two times
 	/// more than the statement.
-	/// 
-	/// Example:
-	/// 
-	/// ``` qu
-	/// # Allowed
-	/// vl counter = 1 + 2
-	/// 
-	/// # Allowed
-	/// vl counter = 1
-	/// 		+ 2
-	/// 
-	/// # Not allowed
-	/// vl counter = 1
-	/// 	+ 2
-	/// 
-	/// # Not allowed
-	/// vl counter = 1
-	/// + 2
-	/// ```
 	fn tk_next(&mut self) -> Result<&QuToken, QuMsg> {
 		let (line, indent) = (self.line, self.indent);
 		let tk = &self.tokens[self.tk_idx];
@@ -1523,34 +1670,13 @@ pub struct QuParser {
 }
 
 
-macro_rules! settup_expr_op {
-	($operator:expr, $next:ident, $repeat:ident, $action_type:ident) => {
-		{
-			let (l, r)
-				= self.get_match_operation(
-					$operator,
-					&Self::$next,
-					&Self::$repeat
-				)?;
-			let Some(l) = l else {
-				self.last_op = None;
-				return Ok(self);
-			};
-			let Some(r) = r else {
-				self.last_op = Some(l);
-				return Ok(self);
-			};
-			self.last_op = Some(QuAction::$action_type(Box::new(l), Box::new(r)));
-		}
-	};
-}
-
-
 #[cfg(test)]
 mod test_qu_matcher {
     use crate::parser::QuAction;
     use crate::QuParser;
 	use crate::QuMsg;
+
+	// TODO: Make unit test for parsing expression order
 
 	#[test]
 	fn parse_expression() -> Result<(), QuMsg>{
@@ -1576,6 +1702,151 @@ mod test_qu_matcher {
 
 
 	#[test]
+	fn parse_expression_outputs() -> Result<(), QuMsg>{
+		let mut p = QuParser::new();
+		
+		// Test lesser
+		let res = p.parse("23 < 18".to_owned())?;
+		let expected = QuAction::Block(vec![
+			QuAction::Les(
+				Box::new(QuAction::Number(23)),
+				Box::new(QuAction::Number(18)),
+			),
+		]);
+		assert_eq!(res, expected);
+
+		// Test lesser or equal
+		let res = p.parse("23 <= 18".to_owned())?;
+		let expected = QuAction::Block(vec![
+			QuAction::Lse(
+				Box::new(QuAction::Number(23)),
+				Box::new(QuAction::Number(18)),
+			),
+		]);
+		assert_eq!(res, expected);
+
+		// Test greater
+		let res = p.parse("23 > 18".to_owned())?;
+		let expected = QuAction::Block(vec![
+			QuAction::Grt(
+				Box::new(QuAction::Number(23)),
+				Box::new(QuAction::Number(18)),
+			),
+		]);
+		assert_eq!(res, expected);
+
+		// Test greater or equal
+		let res = p.parse("23 >= 18".to_owned())?;
+		let expected = QuAction::Block(vec![
+			QuAction::Gte(
+				Box::new(QuAction::Number(23)),
+				Box::new(QuAction::Number(18)),
+			),
+		]);
+		assert_eq!(res, expected);
+
+		// Test equals
+		let res = p.parse("23 == 18".to_owned())?;
+		let expected = QuAction::Block(vec![
+			QuAction::Eql(
+				Box::new(QuAction::Number(23)),
+				Box::new(QuAction::Number(18)),
+			),
+		]);
+		assert_eq!(res, expected);
+
+		// Test not equals
+		let res = p.parse("23 != 18".to_owned())?;
+		let expected = QuAction::Block(vec![
+			QuAction::Neq(
+				Box::new(QuAction::Number(23)),
+				Box::new(QuAction::Number(18)),
+			),
+		]);
+		assert_eq!(res, expected);
+
+		// Test not subtract
+		let res = p.parse("23 - 18".to_owned())?;
+		let expected = QuAction::Block(vec![
+			QuAction::Sub(
+				Box::new(QuAction::Number(23)),
+				Box::new(QuAction::Number(18)),
+			),
+		]);
+		assert_eq!(res, expected);
+
+		// Test not add
+		let res = p.parse("23 + 18".to_owned())?;
+		let expected = QuAction::Block(vec![
+			QuAction::Add(
+				Box::new(QuAction::Number(23)),
+				Box::new(QuAction::Number(18)),
+			),
+		]);
+		assert_eq!(res, expected);
+
+		// Test not divide
+		let res = p.parse("23 / 18".to_owned())?;
+		let expected = QuAction::Block(vec![
+			QuAction::Div(
+				Box::new(QuAction::Number(23)),
+				Box::new(QuAction::Number(18)),
+			),
+		]);
+		assert_eq!(res, expected);
+
+		// Test not multiply
+		let res = p.parse("23 * 18".to_owned())?;
+		let expected = QuAction::Block(vec![
+			QuAction::Mul(
+				Box::new(QuAction::Number(23)),
+				Box::new(QuAction::Number(18)),
+			),
+		]);
+		assert_eq!(res, expected);
+
+		return Ok(());
+	}
+
+
+	#[test]
+	fn parse_expression_parenthesies() -> Result<(), QuMsg>{
+		let mut p = QuParser::new();
+		let res = p.parse("2 + 3 * 9".to_owned())?;
+		let res2 = p.parse("(2 + 3) * 9".to_owned())?;
+
+		let expt = QuAction::Block(
+			vec![
+				QuAction::Add(
+					Box::new(QuAction::Number(2)),
+					Box::new(QuAction::Mul(
+						Box::new(QuAction::Number(3)),
+						Box::new(QuAction::Number(9)),
+					)),
+				)
+			]
+		);
+		let expt2 = QuAction::Block(
+			vec![
+				QuAction::Mul(
+					Box::new(QuAction::Add(
+						Box::new(QuAction::Number(2)),
+						Box::new(QuAction::Number(3)),
+					)),
+					Box::new(QuAction::Number(9)),
+				)
+			]
+		);
+
+		assert_ne!(&res, &res2);
+		assert_eq!(&res, &expt);
+		assert_eq!(&res2, &expt2);
+
+		return Ok(());
+	}
+
+
+	#[test]
 	fn parse_flow_if() -> Result<(), QuMsg>{
 		let mut p = QuParser::new();
 		let res = p.parse(r##"
@@ -1586,6 +1857,31 @@ mod test_qu_matcher {
 		let expected = QuAction::Block(
 			vec![
 				QuAction::If(
+					Box::new(QuAction::Number(2)),
+					Box::new(QuAction::Block(vec![
+						QuAction::Number(25),
+					])),
+				)
+			]
+		);
+
+		assert_eq!(res, expected);
+
+		return Ok(());
+	}
+
+
+	#[test]
+	fn parse_flow_while() -> Result<(), QuMsg>{
+		let mut p = QuParser::new();
+		let res = p.parse(r##"
+		while 2:
+			25
+		"##.to_owned())?;
+
+		let expected = QuAction::Block(
+			vec![
+				QuAction::While(
 					Box::new(QuAction::Number(2)),
 					Box::new(QuAction::Block(vec![
 						QuAction::Number(25),
@@ -1645,6 +1941,4 @@ mod test_qu_matcher {
 		return Ok(());
 	}
 
-
-	
 }
