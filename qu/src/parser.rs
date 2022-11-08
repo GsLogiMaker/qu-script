@@ -20,7 +20,7 @@ pub const FLOW_WHILE:u8 = 1;
 pub const KEYWORD_CLASS:&str = "stamp";
 pub const KEYWORD_ELSE:&str = "else";
 pub const KEYWORD_ELIF:&str = "elif";
-pub const KEYWORD_FUNCTION:&str = "fn";
+pub const KEYWORD_FN:&str = "fn";
 pub const KEYWORD_IF:&str = "if";
 pub const KEYWORD_PRINT:&str = "print";
 pub const KEYWORD_RETURN:&str = "return";
@@ -42,20 +42,21 @@ pub const OP_MATH_SUB:&str = "-";
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum QuAction {
-	/// Holds a [Vec] of code.
+	/// Holds a [`Vec`] of code.
 	Block(Vec<QuAction>),
 	BlockEnd,
 	BlockStart,
-	FnDeclare,
+	/// Holds a [`QuAction::VarRef`] and a [`QuAction::Block`].
+	FnDeclare(Box<QuAction>, Box<QuAction>),
 	For,
-	/// Holds an expression and a code block.
+	/// Holds an expression and a [`QuAction::Block`].
 	If(Box<QuAction>, Box<QuAction>),
 	None,
 	/// Holds an expression.
 	Return(Option<Box<QuAction>>),
-	/// Holds the variable ref and the assignment expression.
+	/// Holds the [`QuAction::VarRef`] and the assignment expression.
 	VarAssign(Box<QuAction>, Box<QuAction>),
-	/// Holds the variable ref and the assignment expression.
+	/// Holds the [`QuAction::VarRef`] and the assignment expression.
 	VarDeclare(Box<QuAction>, Option<Box<QuAction>>),
 	/// Holds an expression and a code block.
 	While(Box<QuAction>, Box<QuAction>),
@@ -68,6 +69,8 @@ pub enum QuAction {
 	Eql(Box<QuAction>, Box<QuAction>),
 	/// Holds an expression action.
 	Expression(Box<QuAction>),
+	/// Holds the name of the function and its parameters.
+	FnCall(Box<QuAction>, Vec<QuAction>),
 	/// Greater. Holds two expressions.
 	Grt(Box<QuAction>, Box<QuAction>),
 	/// Greater or equal. Holds two expressions.
@@ -436,7 +439,7 @@ pub struct QuParser {
 		let keyword_tk = self.tk_next()
 				.expect("Improper indentation TODO: Bette message")
 				.clone();
-		if keyword_tk != KEYWORD_FUNCTION {
+		if keyword_tk != KEYWORD_FN {
 			// Check failed. Stop checking silently
 			self.tk_state_pop();
 			return Ok(None);
@@ -1249,6 +1252,11 @@ pub struct QuParser {
 			return Ok(self);
 		}
 
+		self.match_fn_call()?;
+		if let Some(_) = &self.last_op {
+			return Ok(self);
+		}
+
 		self.match_variable()?;
 		if let Some(_) = &self.last_op {
 			return Ok(self);
@@ -1315,6 +1323,78 @@ pub struct QuParser {
 	}
 
 
+	fn match_fn_call(&mut self) -> Result<&mut Self, QuMsg> {
+		self.tk_state_save();
+		if !self.match_var_name()?.required().is_ok() {
+			self.last_op = None;
+			return Ok(self);
+		}
+		self.keep();
+		if !self.match_str("(")?.required().is_ok() {
+			self.last_op = None;
+			self.matched.pop();
+			self.tk_state_pop();
+			return Ok(self);
+		}
+
+		self.match_str(")")?
+				.err(||{QuMsg::general("Function call expected ')' TODO: Better msg")})?
+		;
+		
+		let (Some(block), Some(name)) = (
+			self.matched.pop().unwrap(),
+			self.matched.pop().unwrap(),
+		) else {
+			panic!();
+		};
+
+		self.last_op = Some(QuAction::FnCall(
+			Box::new(name),
+			vec![],
+		));
+
+		return Ok(self);
+	}
+
+
+	fn match_fn_decl(&mut self) -> Result<&mut Self, QuMsg> {
+		if self.utl_statement_start()?.is_none() {
+			return Ok(self);
+		}
+
+		if !self.match_str(KEYWORD_FN)?.required().is_ok() {
+			self.last_op = None;
+			return Ok(self);
+		}
+
+		self.match_var_name()?
+				.err(||{QuMsg::general("Expected function name TODO: Better msg")})?
+				.keep()
+			.match_str("(")?
+				.err(||{QuMsg::general("Expected '(' TODO: Better msg")})?
+			.match_str(")")?
+				.err(||{QuMsg::general("Expected ')' TODO: Better msg")})?
+			.match_code_scope()?
+				.err(||{QuMsg::general("Expected a code scope TODO: Better msg")})?
+				.keep()	
+		;
+		
+		let (Some(block), Some(name)) = (
+			self.matched.pop().unwrap(),
+			self.matched.pop().unwrap(),
+		) else {
+			panic!();
+		};
+
+		self.last_op = Some(QuAction::FnDeclare(
+			Box::new(name),
+			Box::new(block),
+		));
+
+		return Ok(self);
+	}
+
+
 	fn match_number(&mut self) -> Result<&mut Self, QuMsg> {
 		let Some(num_tk)
 		= self.get_match_token_type(TOKEN_TYPE_NUMBER) else {
@@ -1340,6 +1420,11 @@ pub struct QuParser {
 		}
 
 		self.match_var_decl()?;
+		if let Some(_) = &self.last_op {
+			return Ok(self);
+		}
+
+		self.match_fn_decl()?;
 		if let Some(_) = &self.last_op {
 			return Ok(self);
 		}
@@ -1891,6 +1976,61 @@ mod test_qu_matcher {
 		);
 
 		assert_eq!(res, expected);
+
+		return Ok(());
+	}
+
+
+	#[test]
+	fn parse_fn_call() -> Result<(), QuMsg>{
+		let mut p = QuParser::new();
+		let res = p.parse(r##"
+		add()
+		"##.to_owned())?;
+
+		let expected = QuAction::Block(
+			vec![
+				QuAction::FnCall(
+					Box::new(QuAction::VarRef("add".to_owned())),
+					vec![],
+				)
+			]
+		);
+
+		assert_eq!(res, expected);
+
+		return Ok(());
+	}
+
+
+	#[test]
+	fn parse_fn_definition() -> Result<(), QuMsg>{
+		let mut p = QuParser::new();
+		let res = p.parse(r##"
+			fn add():
+				5
+			fn sub():
+				6
+		"##.to_owned())?;
+
+		let expt = QuAction::Block(
+			vec![
+				QuAction::FnDeclare(
+            		Box::new(QuAction::VarRef("add".to_owned())),
+            		Box::new(QuAction::Block(vec![
+                    	QuAction::Number(5),
+					])),
+				),
+				QuAction::FnDeclare(
+            		Box::new(QuAction::VarRef("sub".to_owned())),
+            		Box::new(QuAction::Block(vec![
+                    	QuAction::Number(6),
+					])),
+				)
+			]
+		);
+
+		assert_eq!(res, expt);
 
 		return Ok(());
 	}

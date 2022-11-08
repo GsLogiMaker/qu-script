@@ -3,7 +3,7 @@ use std::fmt::{self, Display, Debug};
 
 use crate::parser::{
 	KEYWORD_VAR,
-	KEYWORD_FUNCTION,
+	KEYWORD_FN,
 	KEYWORD_CLASS,
 	KEYWORD_IF,
 	KEYWORD_ELSE,
@@ -66,7 +66,7 @@ pub fn tokenrule_number(added_so_far:&[char]) -> bool {
 pub fn tokenrule_keyword(added_so_far:&[char]) -> bool {
 	for word in [
 		KEYWORD_VAR,
-		KEYWORD_FUNCTION,
+		KEYWORD_FN,
 		KEYWORD_CLASS,
 		KEYWORD_IF,
 		KEYWORD_ELSE,
