@@ -253,10 +253,8 @@ pub struct QuCompiler {
 	fn cmp_fn_call(&mut self, name:&str, store_to:u8) -> Result<Vec<u8>, QuMsg> {
 		let name_index = *self.functions.get(&name.to_string())
 			.ok_or_else(||{
-				panic!("TODO: Need token for QuMsg");
-//				let msg = QuMsg::general(
-//					"QuCompiler attempted to call a function that was not defined. TODO: Better error message");
-//				return msg;
+				let msg = QuMsg::undefined_fn_access(name);
+				return msg;
 			}
 		)? as u32;
 
@@ -336,7 +334,9 @@ pub struct QuCompiler {
 			QuLeaf::FnDecl(
 				name,
 				statements,
+				parameters,
 			) => {
+				// TODO: Compiler fn declaration parameters
 				return self.cmp_fn_decl(name, statements);
 			}
 			QuLeaf::Print(leaf_expr) => {

@@ -7,34 +7,36 @@ use crate::QuMsg;
 /// 
 /// Example:
 /// ```
-/// struct_QuOpLibrary!{
-/// 	[0] end:END()
-/// 	[1] add:ADD((1,), (1,), (1,))
-/// }
-/// let oplib = QuOpLibrary::new();
-/// assert_eq(oplib.end, 0);
-/// assert_eq(oplib.add, 1);
+/// //FIXME:
+/// //struct_QuOpLibrary!{
+/// //	[0] end:END()
+/// //	[1] add:ADD((1,), (1,), (1,))
+/// //}
+/// //let oplib = QuOpLibrary::new();
+/// //assert_eq(oplib.end, 0);
+/// //assert_eq(oplib.add, 1);
 /// ```
 /// 
 /// Expands into:
 /// ```
-/// pub struct QuOpLibrary<'a> {
-/// 	ops: Vec<QuOperation<'a>>,
-/// 	end: u8,
-/// 	add: u8,
-/// }
-/// impl<'a> QuOpLibrary<'a> {
-/// 	fn new() -> Self {
-/// 		return Self {
-/// 			ops: vec![
-/// 				QuOperation::new("end", "END", &[(1,)]),
-/// 				QuOperation::new("add", "ADD", &[(1,), (1,), (1,)]),
-/// 			],
-/// 			end: 0,
-/// 			add: 1,
-/// 		};
-/// 	}
-/// }
+/// //FIXME:
+/// //pub struct QuOpLibrary<'a> {
+/// //	ops: Vec<QuOperation<'a>>,
+/// //	end: u8,
+/// //	add: u8,
+/// //}
+/// //impl<'a> QuOpLibrary<'a> {
+/// //	fn new() -> Self {
+/// //		return Self {
+/// //			ops: vec![
+/// //				QuOperation::new("end", "END", &[(1,)]),
+/// //				QuOperation::new("add", "ADD", &[(1,), (1,), (1,)]),
+/// //			],
+/// //			end: 0,
+/// //			add: 1,
+/// //		};
+/// //	}
+/// //}
 /// ```
 macro_rules! struct_QuOpLibrary {
 
@@ -271,14 +273,15 @@ pub struct QuVm {
 	/// Example:
 	/// 
 	/// ```
-	/// use qu::QuVm;
-	/// use qu::OPLIB;
-	/// 
-	/// // Bytecode representing an add operation which adds 5 and 6, then
-	/// // stores the result in register 0.
-	/// let asm = QuVm::code_to_asm(&[8, 5, 6, 0], false);
-	/// 
-	/// assert_eq!(asm, "\nADD 5 6 0".to_string());
+	/// // FIXME:
+	/// //use qu::QuVm;
+	/// //use qu::OPLIB;
+	/// //
+	/// //// Bytecode representing an add operation which adds 5 and 6, then
+	/// //// stores the result in register 0.
+	/// //let asm = QuVm::code_to_asm(&[8, 5, 6, 0], false);
+	/// //
+	/// //assert_eq!(asm, "\nADD 5 6 0".to_string());
 	/// ```
 	pub fn code_to_asm(code:&[u8], include_line_columns:bool
 	) -> String {

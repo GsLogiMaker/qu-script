@@ -14,6 +14,7 @@ pub const ERR_TITLE_INVALID_VARIABLE_DEFINITION:&str = "INVALID VARIABLE DEFINIT
 pub const ERR_TITLE_MISSING_CODE_BLOCK:&str = "MISSING CODE BLOCK";
 pub const ERR_TITLE_MISSING_TOKEN:&str = "MISSING TOKEN";
 pub const ERR_TITLE_UNDEFINED_TYPE:&str = "UNDEFINED TYPE";
+pub const ERR_TITLE_UNDEFINED_FN:&str = "UNDEFINED FUNCTION";
 
 
 #[derive(Debug)]
@@ -73,7 +74,7 @@ pub struct QuMsg {
 
 		// Build code view
 		let code_view = format!(
-"    {:0>4}:{}\n    {:0>4}:{}\n >> {:0>4}:{}\n    {:0>4}:{}\n    {:0>4}:{}\n\n",
+			"    {:0>4}:{}\n    {:0>4}:{}\n >> {:0>4}:{}\n    {:0>4}:{}\n    {:0>4}:{}\n\n",
 			line_nm_pre_pre,
 			line_pre_pre,
 			line_nm_pre,
@@ -191,6 +192,14 @@ pub struct QuMsg {
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_INVALID_SYNTAX.to_string();
 		msg.description = format!("Parenthesy expression remained unclosed.");
+		return msg;
+	}
+
+
+	pub fn undefined_fn_access(the_fn:&str) -> Self{
+		let mut msg = Self::new();
+		msg.title = ERR_TITLE_UNDEFINED_FN.to_string();
+		msg.description = format!("Can't use '{the_fn}' because it was not previously defined.");
 		return msg;
 	}
 

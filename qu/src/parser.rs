@@ -28,10 +28,11 @@ pub const KEYWORD_IF:&str = "if";
 pub const KEYWORD_PRINT:&str = "print";
 pub const KEYWORD_RETURN:&str = "return";
 pub const KEYWORD_VAR:&str = "var";
+pub const KEYWORD_WHILE:&str = "while";
 
 pub const OP_ADD_SYMBOL:&str = "+";
 pub const OP_ASSIGN_SYMBOL:&str = "=";
-pub const OP_BLOCK_START_WORD:&str = ":";
+pub const OP_BLOCK_START:&str = ":";
 
 
 #[derive(Debug, Clone, PartialEq)]
@@ -42,14 +43,17 @@ pub enum QuAction {
 	BlockStart,
 	FnDeclare,
 	For,
-	If,
+	/// Holds an expression and a code block.
+	If(Box<QuAction>, Box<QuAction>),
 	None,
 	/// Holds an expression.
 	Return(Option<Box<QuAction>>),
-	VarAssign,
+	/// Holds the variable ref and the assignment expression.
+	VarAssign(Box<QuAction>, Box<QuAction>),
 	/// Holds the variable ref and the assignment expression.
 	VarDeclare(Box<QuAction>, Option<Box<QuAction>>),
-	While,
+	/// Holds an expression and a code block.
+	While(Box<QuAction>, Box<QuAction>),
 
 	/// Holds two expressions.
 	Add(Box<QuAction>, Box<QuAction>),
@@ -226,7 +230,6 @@ pub struct QuParser {
 
 } impl QuParser {
 
-	// instantiated. Instead, it should be passed to the parse function.
 	/// Creates and returns a new [QuParser].
 	pub fn new() -> Self {
 		return QuParser {
@@ -303,7 +306,7 @@ pub struct QuParser {
 
 		// Check operator
 		let start_tk = self.tk_next()?;
-		if start_tk != OP_BLOCK_START_WORD {
+		if start_tk != OP_BLOCK_START {
 			self.tk_state_pop();
 			return Ok(None);
 		}
@@ -1006,6 +1009,22 @@ pub struct QuParser {
 	}
 
 
+	fn match_code_scope(&mut self) -> Result<&mut Self, QuMsg> {
+		// Check operator
+		self.match_str(OP_BLOCK_START)?;
+		if !self.required().is_ok() {
+			self.last_op = None;
+			return Ok(self);
+		}
+
+		self.indent += 1;
+		self.match_code_block()?;
+		self.indent -= 1;
+
+		return Ok(self);
+	}
+
+
 	fn match_expr_sub(&mut self) -> Result<&mut Self, QuMsg> {
 		let (l, r)
 			= self.get_match_operation(
@@ -1092,6 +1111,56 @@ pub struct QuParser {
 	}
 
 
+	fn match_flow(&mut self, flow_type:u8) -> Result<&mut Self, QuMsg> {
+		if self.utl_statement_start()?.is_none() {
+			return Ok(self);
+		}
+
+		let flow_keyword = match flow_type {
+			FLOW_IF => KEYWORD_IF,
+			FLOW_WHILE => KEYWORD_WHILE,
+			_ => panic!("Can't handle flow type of vlaue {flow_type}"),
+		};
+
+		self
+			.match_str(flow_keyword)?;
+		if !self.required().is_ok() {
+			return Ok(self);
+		}
+
+		self
+			.match_expression()?
+				.err(||{QuMsg::general("If statement expected an expression. TODO:Better msg")})?
+				.keep()
+			.match_code_scope()?
+				.err(||{QuMsg::general("If statement expected a code block. TODO:Better msg")})?
+				.keep()
+			;
+		
+		let (Some(codeblock), Some(expression)) = (
+			self.matched.pop().unwrap(),
+			self.matched.pop().unwrap(),
+		) else {
+			panic!("Flow statement's expression or codeblock is None.");
+		};
+
+		self.last_op = match flow_type {
+			FLOW_IF => Some(QuAction::If(
+				Box::new(expression),
+				Box::new(codeblock),
+			)),
+			FLOW_WHILE => Some(QuAction::While(
+				Box::new(expression),
+				Box::new(codeblock),
+			)),
+			_ => panic!("Can't handle flow type of vlaue {flow_type}"),
+		};
+		
+
+		return Ok(self);
+	}
+
+
 	fn match_number(&mut self) -> Result<&mut Self, QuMsg> {
 		let num_tk
 			= self.get_match_token_type(TOKEN_TYPE_NUMBER)
@@ -1112,7 +1181,17 @@ pub struct QuParser {
 
 
 	fn match_statement(&mut self) -> Result<&mut Self, QuMsg> {
+		self.match_var_assign()?;
+		if let Some(_) = &self.last_op {
+			return Ok(self);
+		}
+
 		self.match_var_decl()?;
+		if let Some(_) = &self.last_op {
+			return Ok(self);
+		}
+
+		self.match_flow(FLOW_IF)?;
 		if let Some(_) = &self.last_op {
 			return Ok(self);
 		}
@@ -1149,6 +1228,54 @@ pub struct QuParser {
 	}
 
 
+	fn match_var_assign(&mut self) -> Result<&mut Self, QuMsg> {
+		if self.utl_statement_start()?.is_none() {
+			self.last_op = None;
+			return Ok(self);
+		}
+
+		// Check if this is variable assignment
+		// HACK: I don't know if saving the token state is needed here. Might
+		// be removable.
+		self.tk_state_save();
+		self.match_var_name()?;
+		if !self.required().is_ok() {
+			return Ok(self);
+		}
+		self.keep();
+
+		self.match_str(OP_ASSIGN_SYMBOL)?;
+		if !self.required().is_ok() {
+			self.tk_state_pop();
+			return Ok(self);
+		}
+
+		// Match rest of variable assignment
+		self
+			.match_expression()?
+				.err(||{QuMsg::general("Variable assignment lacks expression. TODO:Better msg")})?
+				.keep()
+			;
+		
+		let (Some(variable), Some(expression)) = (
+			take(&mut self.matched[0]),
+			take(&mut self.matched[1]),
+		) else {
+			return Err(QuMsg::general(
+				"Encountered error in variable assignment."
+			));
+		};
+		self.matched = vec![];
+
+		self.last_op = Some(QuAction::VarAssign(
+			Box::new(variable),
+			Box::new(expression),
+		));
+
+		return Ok(self);
+	}
+
+
 	fn match_var_decl(&mut self) -> Result<&mut Self, QuMsg> {
 		if self.utl_statement_start()?.is_none() {
 			self.last_op = None;
@@ -1172,14 +1299,17 @@ pub struct QuParser {
 				.keep()
 			;
 		
-		let (Some(a), Some(b))
-			= (self.matched.remove(0), self.matched.remove(0))
-		else {
+		let (Some(expression), Some(var_name))= (
+			self.matched.pop().unwrap(),
+			self.matched.pop().unwrap(),
+		) else {
 			panic!();
 		};
 
-		self.last_op = 
-			Some(QuAction::VarDeclare(Box::new(a), Some(Box::new(b))));
+		self.last_op = Some(QuAction::VarDeclare(
+			Box::new(var_name),
+			Some(Box::new(expression)))
+		);
 		return Ok(self);
 	}
 
@@ -1222,7 +1352,7 @@ pub struct QuParser {
 			Ok(_) => {
 				if self.tk_idx != self.tokens.len()-1 {
 					// Parsing ended early, must be an unexpected token
-					panic!();
+					panic!("Parsing ended without all tokens being searched");
 				}
 				let leafs = take(&mut self.last_op).ok_or(
 					QuMsg::general(
@@ -1419,10 +1549,79 @@ macro_rules! settup_expr_op {
 #[cfg(test)]
 mod test_qu_matcher {
     use crate::parser::QuAction;
-    use crate::{QuParser, tokens::tokenize, tokens::RULES};
+    use crate::QuParser;
 	use crate::QuMsg;
 
-    use super::{KEYWORD_VAR, OP_ASSIGN_SYMBOL};
+	#[test]
+	fn parse_expression() -> Result<(), QuMsg>{
+		let mut p = QuParser::new();
+		let res = p.parse("2 + 3 - 3".to_owned())?;
+
+		let expected = QuAction::Block(
+			vec![
+				QuAction::Sub(
+					Box::new(QuAction::Add(
+						Box::new(QuAction::Number(2)),
+						Box::new(QuAction::Number(3)),
+					)),
+					Box::new(QuAction::Number(3)),
+				),
+			]
+		);
+
+		assert_eq!(res, expected);
+
+		return Ok(());
+	}
+
+
+	#[test]
+	fn parse_flow_if() -> Result<(), QuMsg>{
+		let mut p = QuParser::new();
+		let res = p.parse(r##"
+		if 2:
+			25
+		"##.to_owned())?;
+
+		let expected = QuAction::Block(
+			vec![
+				QuAction::If(
+					Box::new(QuAction::Number(2)),
+					Box::new(QuAction::Block(vec![
+						QuAction::Number(25),
+					])),
+				)
+			]
+		);
+
+		assert_eq!(res, expected);
+
+		return Ok(());
+	}
+
+
+	#[test]
+	fn parse_variable_assignment() -> Result<(), QuMsg>{
+		let mut p = QuParser::new();
+		let res = p.parse("count = 3/2".to_owned())?;
+
+		let expected = QuAction::Block(
+			vec![
+				QuAction::VarAssign(
+					Box::new(QuAction::VarRef("count".to_owned())),
+					Box::new(QuAction::Div(
+						Box::new(QuAction::Number(3)),
+						Box::new(QuAction::Number(2)),
+					)),
+				)
+			]
+		);
+
+		assert_eq!(res, expected);
+
+		return Ok(());
+	}
+
 
 	#[test]
 	fn parse_variable_declaration() -> Result<(), QuMsg>{
@@ -1447,26 +1646,5 @@ mod test_qu_matcher {
 	}
 
 
-	#[test]
-	fn parse_expression() -> Result<(), QuMsg>{
-		let mut p = QuParser::new();
-		let res = p.parse("2 + 3 - 3".to_owned())?;
-
-		let expected = QuAction::Block(
-			vec![
-				QuAction::Sub(
-					Box::new(QuAction::Add(
-						Box::new(QuAction::Number(2)),
-						Box::new(QuAction::Number(3)),
-					)),
-					Box::new(QuAction::Number(3)),
-				),
-			]
-		);
-
-		assert_eq!(res, expected);
-
-		return Ok(());
-	}
-
+	
 }

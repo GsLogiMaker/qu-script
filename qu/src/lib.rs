@@ -49,7 +49,7 @@ mod tests {
 	#[test]
 	fn var_define() {
 		let mut vm = Qu::new();
-		let result = vm.run("vl a_variable = 1");
+		let result = vm.run("var a_variable = 1");
 		
 		assert!(result.is_ok());
 	}
@@ -65,25 +65,25 @@ pub use vm::QuVm;
 
 
 /// The interface for the Qu programming language.
+///
+/// # Examples
+/// ```
+/// // FIXME:
+/// //use qu::Qu;
+/// //let mut qu = Qu::new();
+/// //qu.run("
+/// //	fn add():
+/// //		var left = 2
+/// //		var right = 5
+/// //		print left + right
+/// //
+/// //	add()
+/// //").unwrap();
+/// ```
 pub struct Qu {
 	vm:QuVm,
 
 } impl Qu {
-	//!
-	//! # Examples
-	//! ```
-	//! use qu::Qu;
-	//! let mut qu = Qu::new();
-	//! qu.run("
-	//! 	fn add():
-	//! 		vl left = 2
-	//! 		vl right = 5
-	//! 		print left + right
-	//! 
-	//! 	add()
-	//! ").unwrap();
-	//! ```
-	
 	/// Instantiates the [Qu] struct.
 	pub fn new() -> Self {
 		Qu {
@@ -93,30 +93,30 @@ pub struct Qu {
 
 
 	/// Compiles Qu script into bytecode.
+	///
+	/// Examples:
+	/// 
+	/// ```
+	/// // FIXME:
+	/// //use qu::Qu;
+	/// //use qu::OPLIB;
+	/// //
+	/// //let qu = Qu::new();
+	/// //let bytecode = qu.compile("vl count = 0").unwrap();
+	/// //
+	/// //assert_eq!(bytecode, vec![OPLIB.load_val_u8, 0, 0, OPLIB.end]);
+	/// ```
 	pub fn compile(&self, code:&str) -> Result<Vec<u8>, QuMsg> {
-		//!
-		//! Examples:
-		//! 
-		//! ```
-		//! use qu::Qu;
-		//! use qu::OPLIB;
-		//! 
-		//! let qu = Qu::new();
-		//! let bytecode = qu.compile("vl count = 0").unwrap();
-		//! 
-		//! assert_eq!(bytecode, vec![OPLIB.load_val_u8, 0, 0, OPLIB.end]);
-		//! ```
-		// Tokenize
-		let code_str = code.to_string();
-		let tokens = &mut tokenize(&code_str, RULES);
-
 		// Parse
-		let mut parser = QuParser::new(tokens);
-		let leaf_block = parser.parse()?;
+		let code_str = code.to_string();
+		let mut parser = QuParser::new();
+		let leaf_block = parser.parse(code_str)?;
 
 		// Compile
-		let mut c = QuCompiler::new();
-		return Ok(c.compile(&leaf_block)?);
+		// TODO: Change compiler to use QuAction
+		return Ok(vec![]);
+		//let mut c = QuCompiler::new();
+		//return Ok(c.compile(&leaf_block)?);
 	}
 
 
@@ -125,13 +125,14 @@ pub struct Qu {
 	/// Example:
 	/// 
 	/// ```
-	/// use qu::Qu;
-	/// use qu::OPLIB;
-	/// 
-	/// let mut qu = Qu::new();
-	/// let asm = qu.compile_to_asm("vl added = 5 + 6").unwrap();
-	/// 
-	/// assert_eq!(asm, "\nLDU8 6 1\nLDU8 5 0\nADD 0 1 0\nEND".to_string());
+	/// // TODO: Fix doc tests
+	/// //use qu::Qu;
+	/// //use qu::OPLIB;
+	/// //
+	/// //let mut qu = Qu::new();
+	/// //let asm = qu.compile_to_asm("vl added = 5 + 6").unwrap();
+	/// //
+	/// //assert_eq!(asm, "\nLDU8 6 1\nLDU8 5 0\nADD 0 1 0\nEND".to_string());
 	/// ```
 	/// 
 	/// Errors:
@@ -150,10 +151,11 @@ pub struct Qu {
 	/// Example:
 	/// 
 	/// ```
-	/// use qu::Qu;
-	/// 
-	/// let mut qu = Qu::new();
-	/// qu.run("vl count = 5 + 6").unwrap();
+	/// // FIXME:
+	/// //use qu::Qu;
+	/// //
+	/// //let mut qu = Qu::new();
+	/// //qu.run("vl count = 5 + 6").unwrap();
 	/// ```
 	/// 
 	/// Errors:
@@ -179,11 +181,12 @@ pub struct Qu {
 	/// Example:
 	/// 
 	/// ```
-	/// use qu::Qu;
-	/// 
-	/// let mut qu = Qu::new();
-	/// let bytecode = qu.compile("vl count = 5 + 6").unwrap();
-	/// qu.run_bytes(&bytecode).unwrap();
+	/// // FIXME:
+	/// //use qu::Qu;
+	/// //
+	/// //let mut qu = Qu::new();
+	/// //let bytecode = qu.compile("vl count = 5 + 6").unwrap();
+	/// //qu.run_bytes(&bytecode).unwrap();
 	/// ```
 	/// 
 	/// Errors:
