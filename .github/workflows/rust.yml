@@ -21,6 +21,12 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
+    - name: Install stable toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+          profile: minimal
+          toolchain: 1.65.0
+          override: true
     - uses: actions/checkout@v3
     - name: Build
       run: cargo build --verbose
