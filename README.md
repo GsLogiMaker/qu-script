@@ -1,6 +1,8 @@
 
 # Qu Script
 ![alt text](https://github.com/GsLogiMaker/qu-script/blob/e4c8fddc010feb76daadbda53f2bdfd27078d6ee/Logo.png)
+
+![example workflow](https://github.com/GsLogiMaker/qu-script/actions/workflows/rust.yml/badge.svg)
 ```
 fn main():
   print("Hello world!")
