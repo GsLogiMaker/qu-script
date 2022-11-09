@@ -42,24 +42,31 @@ pub const OP_MATH_SUB:&str = "-";
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum QuAction {
+	/// Holds a left side expression and a right side expression.
+	Assign(Box<QuAction>, Box<QuAction>),
 	/// Holds a [`Vec`] of code.
 	Block(Vec<QuAction>),
 	BlockEnd,
 	BlockStart,
-	/// Holds a [`QuAction::VarRef`] and a [`QuAction::Block`].
+	/// Holds a [`QuAction::Name`] and a [`QuAction::Block`].
 	FnDeclare(Box<QuAction>, Box<QuAction>),
 	For,
 	/// Holds an expression and a [`QuAction::Block`].
 	If(Box<QuAction>, Box<QuAction>),
 	None,
+	/// Holds QuToken of a name.
+	Name(Box<QuToken>),
+	/// Holds a parameter name [`QuAction::Name`] and optionally its type as
+	/// a [`QuAction::Name`].
+	Parameter(Box<QuAction>, Option<Box<QuAction>>),
 	/// Holds an expression.
 	Return(Option<Box<QuAction>>),
-	/// Holds the [`QuAction::VarRef`] and the assignment expression.
-	VarAssign(Box<QuAction>, Box<QuAction>),
-	/// Holds the [`QuAction::VarRef`] and the assignment expression.
+	/// Holds the [`QuAction::Name`] and the assignment expression.
 	VarDeclare(Box<QuAction>, Option<Box<QuAction>>),
 	/// Holds an expression and a code block.
 	While(Box<QuAction>, Box<QuAction>),
+
+	// --- Expressions ---
 
 	/// Holds two expressions.
 	Add(Box<QuAction>, Box<QuAction>),
@@ -67,8 +74,6 @@ pub enum QuAction {
 	Div(Box<QuAction>, Box<QuAction>),
 	/// Holds two expressions.
 	Eql(Box<QuAction>, Box<QuAction>),
-	/// Holds an expression action.
-	Expression(Box<QuAction>),
 	/// Holds the name of the function and its parameters.
 	FnCall(Box<QuAction>, Vec<QuAction>),
 	/// Greater. Holds two expressions.
@@ -83,12 +88,12 @@ pub enum QuAction {
 	Mul(Box<QuAction>, Box<QuAction>),
 	/// Holds two expressions.
 	Neq(Box<QuAction>, Box<QuAction>),
-	/// Holds it's numeric value.
-	Number(usize),
+	/// Holds a numeric value as a [`QuToken`].
+	Number(Box<QuToken>),
 	/// Holds two expressions.
 	Sub(Box<QuAction>, Box<QuAction>),
-	/// Holds the name of the variable.
-	VarRef(String),
+	/// Holds the [`QuAction::Name`] of the variable.
+	Var(Box<QuAction>),
 }
 
 
@@ -1367,7 +1372,7 @@ pub struct QuParser {
 			return Ok(self);
 		}
 
-		self.match_var_name()?
+		self.match_name()?
 				.err(||{QuMsg::general("Expected function name TODO: Better msg")})?
 				.keep()
 			.match_str("(")?
@@ -1395,6 +1400,73 @@ pub struct QuParser {
 	}
 
 
+	fn match_fn_parameters(&mut self) -> Result<&mut Self, QuMsg> {
+		if self.utl_statement_start()?.is_none() {
+			return Ok(self);
+		}
+
+		if !self.match_str("(")?.required().is_ok() {
+			self.last_op = None;
+			return Ok(self);
+		}
+
+		loop {
+			self.match_name()?;
+			if self.last_op.is_some() {
+				self.keep();
+				// TODO: Match a type instead
+				self.match_var_name()?.keep();
+
+				let (p_type, Some(p_name)) = (
+					self.matched.pop().unwrap(),
+					self.matched.pop().unwrap(),
+				) else {
+					panic!();
+				};
+			}
+		}
+		
+		let (Some(block), Some(name)) = (
+			self.matched.pop().unwrap(),
+			self.matched.pop().unwrap(),
+		) else {
+			panic!();
+		};
+
+		self.last_op = Some(QuAction::FnDeclare(
+			Box::new(name),
+			Box::new(block),
+		));
+
+		return Ok(self);
+	}
+
+
+	/// Matches to [`QuAction::Name`] if the token_type of the [`QuToken`] at
+	/// `self.tk_idx` matches a name.
+	fn match_name(&mut self) -> Result<&mut Self, QuMsg> {
+		let tk_op = self.tk_spy_option(0);
+
+		match tk_op {
+			Some(tk) => {
+				if tk.tk_type == TOKEN_TYPE_NAME {
+					self.last_op = Some(QuAction::Name(Box::new(tk.clone())));
+					self.tk_next_option();
+				} else {
+					self.last_op = None;
+				}
+			},
+			None => {
+				self.last_op = None;
+			},
+		}
+
+		return Ok(self);
+	}
+
+
+	/// Matches to [`QuAction::Number`] if the `token_type` of the [`QuToken`]
+	/// at `self.tk_idx` matches a number.
 	fn match_number(&mut self) -> Result<&mut Self, QuMsg> {
 		let Some(num_tk)
 		= self.get_match_token_type(TOKEN_TYPE_NUMBER) else {
@@ -1402,13 +1474,37 @@ pub struct QuParser {
 			return Ok(self);
 		};
 
-		let num = num_tk.text
-			.parse::<usize>()
-			.or_else(
-				|x|{Err(QuMsg::failed_parser_match())}
-			)?;
+		self.last_op = Some(
+			QuAction::Number(Box::new(num_tk.clone()))
+		);
+		return Ok(self);
+	}
 
-		self.last_op = Some(QuAction::Number(num));
+
+	fn match_parameter(&mut self) -> Result<&mut Self, QuMsg> {
+		if self.match_name()?.required().is_err() {
+			self.last_op = None;
+			return Ok(self);
+		}
+		self.keep();
+		self.match_name()?
+				.keep()
+			;
+		
+		let (p_type, Some(p_name)) = (
+			self.matched.pop().unwrap(),
+			self.matched.pop().unwrap(),
+		) else {panic!()};
+		let p_type = match p_type {
+			Some(t) => Some(Box::new(t)),
+			None => None,
+		};
+
+		self.last_op = Some(QuAction::Parameter(
+			Box::new(p_name),
+			p_type,
+		));
+		
 		return Ok(self);
 	}
 
@@ -1510,7 +1606,7 @@ pub struct QuParser {
 		};
 		self.matched = vec![];
 
-		self.last_op = Some(QuAction::VarAssign(
+		self.last_op = Some(QuAction::Assign(
 			Box::new(variable),
 			Box::new(expression),
 		));
@@ -1532,7 +1628,7 @@ pub struct QuParser {
 		}
 		// Match rest of declaration
 		self
-			.match_var_name()?
+			.match_parameter()?
 				.err(||{QuMsg::general("Variable declaration lacks a name. TODO:Better msg")})?
 				.keep()
 			.match_str(OP_ASSIGN_SYMBOL)?
@@ -1557,22 +1653,15 @@ pub struct QuParser {
 	}
 
 
+	/// Matches to [`QuAction::Var`].
 	fn match_var_name(&mut self) -> Result<&mut Self, QuMsg> {
-		let tk_op = self.tk_spy_option(0);
-
-		match tk_op {
-			Some(tk) => {
-				if tk.tk_type == TOKEN_TYPE_NAME {
-					self.last_op = Some(QuAction::VarRef(tk.text.clone()));
-					self.tk_next_option();
-				} else {
-					self.last_op = None;
-				}
-			},
-			None => {
-				self.last_op = None;
-			},
+		if self.match_name()?.required().is_err() {
+			return Ok(self);
 		}
+		let Some(name) = take(&mut self.last_op) else {
+			panic!();
+		};
+		self.last_op = Some(QuAction::Var(Box::new(name)));
 
 		return Ok(self);
 	}
@@ -1760,6 +1849,7 @@ mod test_qu_matcher {
     use crate::parser::QuAction;
     use crate::QuParser;
 	use crate::QuMsg;
+use crate::tokens::QuToken;
 
 	// TODO: Make unit test for parsing expression order
 
@@ -1767,15 +1857,21 @@ mod test_qu_matcher {
 	fn parse_expression() -> Result<(), QuMsg>{
 		let mut p = QuParser::new();
 		let res = p.parse("2 + 3 - 3".to_owned())?;
-
+		
 		let expected = QuAction::Block(
 			vec![
 				QuAction::Sub(
 					Box::new(QuAction::Add(
-						Box::new(QuAction::Number(2)),
-						Box::new(QuAction::Number(3)),
+						Box::new(QuAction::Number(Box::new(
+							QuToken::from_str("2")
+						))),
+						Box::new(QuAction::Number(Box::new(
+							QuToken::from_str("3")
+						))),
 					)),
-					Box::new(QuAction::Number(3)),
+					Box::new(QuAction::Number(
+						Box::new(QuToken::from_str("3"))
+					)),
 				),
 			]
 		);
@@ -1794,8 +1890,12 @@ mod test_qu_matcher {
 		let res = p.parse("23 < 18".to_owned())?;
 		let expected = QuAction::Block(vec![
 			QuAction::Les(
-				Box::new(QuAction::Number(23)),
-				Box::new(QuAction::Number(18)),
+				Box::new(QuAction::Number(Box::new(
+					QuToken::from_str("23")
+				))),
+				Box::new(QuAction::Number(Box::new(
+					QuToken::from_str("18")
+				))),
 			),
 		]);
 		assert_eq!(res, expected);
@@ -1804,8 +1904,12 @@ mod test_qu_matcher {
 		let res = p.parse("23 <= 18".to_owned())?;
 		let expected = QuAction::Block(vec![
 			QuAction::Lse(
-				Box::new(QuAction::Number(23)),
-				Box::new(QuAction::Number(18)),
+				Box::new(QuAction::Number(Box::new(
+					QuToken::from_str("23")
+				))),
+				Box::new(QuAction::Number(Box::new(
+					QuToken::from_str("18")
+				))),
 			),
 		]);
 		assert_eq!(res, expected);
@@ -1814,8 +1918,12 @@ mod test_qu_matcher {
 		let res = p.parse("23 > 18".to_owned())?;
 		let expected = QuAction::Block(vec![
 			QuAction::Grt(
-				Box::new(QuAction::Number(23)),
-				Box::new(QuAction::Number(18)),
+				Box::new(QuAction::Number(Box::new(
+					QuToken::from_str("23")
+				))),
+				Box::new(QuAction::Number(Box::new(
+					QuToken::from_str("18")
+				))),
 			),
 		]);
 		assert_eq!(res, expected);
@@ -1824,8 +1932,12 @@ mod test_qu_matcher {
 		let res = p.parse("23 >= 18".to_owned())?;
 		let expected = QuAction::Block(vec![
 			QuAction::Gte(
-				Box::new(QuAction::Number(23)),
-				Box::new(QuAction::Number(18)),
+				Box::new(QuAction::Number(Box::new(
+					QuToken::from_str("23")
+				))),
+				Box::new(QuAction::Number(Box::new(
+					QuToken::from_str("18")
+				))),
 			),
 		]);
 		assert_eq!(res, expected);
@@ -1834,8 +1946,12 @@ mod test_qu_matcher {
 		let res = p.parse("23 == 18".to_owned())?;
 		let expected = QuAction::Block(vec![
 			QuAction::Eql(
-				Box::new(QuAction::Number(23)),
-				Box::new(QuAction::Number(18)),
+				Box::new(QuAction::Number(Box::new(
+					QuToken::from_str("23")
+				))),
+				Box::new(QuAction::Number(Box::new(
+					QuToken::from_str("18")
+				))),
 			),
 		]);
 		assert_eq!(res, expected);
@@ -1844,8 +1960,12 @@ mod test_qu_matcher {
 		let res = p.parse("23 != 18".to_owned())?;
 		let expected = QuAction::Block(vec![
 			QuAction::Neq(
-				Box::new(QuAction::Number(23)),
-				Box::new(QuAction::Number(18)),
+				Box::new(QuAction::Number(Box::new(
+					QuToken::from_str("23")
+				))),
+				Box::new(QuAction::Number(Box::new(
+					QuToken::from_str("18")
+				))),
 			),
 		]);
 		assert_eq!(res, expected);
@@ -1854,8 +1974,12 @@ mod test_qu_matcher {
 		let res = p.parse("23 - 18".to_owned())?;
 		let expected = QuAction::Block(vec![
 			QuAction::Sub(
-				Box::new(QuAction::Number(23)),
-				Box::new(QuAction::Number(18)),
+				Box::new(QuAction::Number(Box::new(
+					QuToken::from_str("23")
+				))),
+				Box::new(QuAction::Number(Box::new(
+					QuToken::from_str("18")
+				))),
 			),
 		]);
 		assert_eq!(res, expected);
@@ -1864,8 +1988,12 @@ mod test_qu_matcher {
 		let res = p.parse("23 + 18".to_owned())?;
 		let expected = QuAction::Block(vec![
 			QuAction::Add(
-				Box::new(QuAction::Number(23)),
-				Box::new(QuAction::Number(18)),
+				Box::new(QuAction::Number(Box::new(
+					QuToken::from_str("23")
+				))),
+				Box::new(QuAction::Number(Box::new(
+					QuToken::from_str("18")
+				))),
 			),
 		]);
 		assert_eq!(res, expected);
@@ -1874,8 +2002,12 @@ mod test_qu_matcher {
 		let res = p.parse("23 / 18".to_owned())?;
 		let expected = QuAction::Block(vec![
 			QuAction::Div(
-				Box::new(QuAction::Number(23)),
-				Box::new(QuAction::Number(18)),
+				Box::new(QuAction::Number(Box::new(
+					QuToken::from_str("23")
+				))),
+				Box::new(QuAction::Number(Box::new(
+					QuToken::from_str("18")
+				))),
 			),
 		]);
 		assert_eq!(res, expected);
@@ -1884,8 +2016,12 @@ mod test_qu_matcher {
 		let res = p.parse("23 * 18".to_owned())?;
 		let expected = QuAction::Block(vec![
 			QuAction::Mul(
-				Box::new(QuAction::Number(23)),
-				Box::new(QuAction::Number(18)),
+				Box::new(QuAction::Number(Box::new(
+					QuToken::from_str("23")
+				))),
+				Box::new(QuAction::Number(Box::new(
+					QuToken::from_str("18")
+				))),
 			),
 		]);
 		assert_eq!(res, expected);
@@ -1903,10 +2039,16 @@ mod test_qu_matcher {
 		let expt = QuAction::Block(
 			vec![
 				QuAction::Add(
-					Box::new(QuAction::Number(2)),
+					Box::new(QuAction::Number(Box::new(
+						QuToken::from_str("2")
+					))),
 					Box::new(QuAction::Mul(
-						Box::new(QuAction::Number(3)),
-						Box::new(QuAction::Number(9)),
+						Box::new(QuAction::Number(Box::new(
+							QuToken::from_str("3")
+						))),
+						Box::new(QuAction::Number(Box::new(
+							QuToken::from_str("9")
+						))),
 					)),
 				)
 			]
@@ -1915,10 +2057,16 @@ mod test_qu_matcher {
 			vec![
 				QuAction::Mul(
 					Box::new(QuAction::Add(
-						Box::new(QuAction::Number(2)),
-						Box::new(QuAction::Number(3)),
+						Box::new(QuAction::Number(Box::new(
+							QuToken::from_str("2")
+						))),
+						Box::new(QuAction::Number(Box::new(
+							QuToken::from_str("3")
+						))),
 					)),
-					Box::new(QuAction::Number(9)),
+					Box::new(QuAction::Number(Box::new(
+						QuToken::from_str("9")
+					))),
 				)
 			]
 		);
@@ -1942,9 +2090,13 @@ mod test_qu_matcher {
 		let expected = QuAction::Block(
 			vec![
 				QuAction::If(
-					Box::new(QuAction::Number(2)),
+					Box::new(QuAction::Number(Box::new(
+						QuToken::from_str("2")
+					))),
 					Box::new(QuAction::Block(vec![
-						QuAction::Number(25),
+						QuAction::Number(Box::new(
+							QuToken::from_str("25")
+						))
 					])),
 				)
 			]
@@ -1967,9 +2119,13 @@ mod test_qu_matcher {
 		let expected = QuAction::Block(
 			vec![
 				QuAction::While(
-					Box::new(QuAction::Number(2)),
+					Box::new(QuAction::Number(Box::new(
+						QuToken::from_str("2")
+					))),
 					Box::new(QuAction::Block(vec![
-						QuAction::Number(25),
+						QuAction::Number(Box::new(
+							QuToken::from_str("25")
+						))
 					])),
 				)
 			]
@@ -1991,7 +2147,9 @@ mod test_qu_matcher {
 		let expected = QuAction::Block(
 			vec![
 				QuAction::FnCall(
-					Box::new(QuAction::VarRef("add".to_owned())),
+					Box::new(QuAction::Var(Box::new(
+						QuAction::Name(Box::new(QuToken::from_str("add")))
+					))),
 					vec![],
 				)
 			]
@@ -2016,15 +2174,19 @@ mod test_qu_matcher {
 		let expt = QuAction::Block(
 			vec![
 				QuAction::FnDeclare(
-            		Box::new(QuAction::VarRef("add".to_owned())),
+            		Box::new(QuAction::Name(Box::new(QuToken::from_str("add")))),
             		Box::new(QuAction::Block(vec![
-                    	QuAction::Number(5),
+                    	QuAction::Number(Box::new(
+							QuToken::from_str("5")
+						)),
 					])),
 				),
 				QuAction::FnDeclare(
-            		Box::new(QuAction::VarRef("sub".to_owned())),
+            		Box::new(QuAction::Name(Box::new(QuToken::from_str("sub")))),
             		Box::new(QuAction::Block(vec![
-                    	QuAction::Number(6),
+                    	QuAction::Number(Box::new(
+							QuToken::from_str("6")
+						)),
 					])),
 				)
 			]
@@ -2043,11 +2205,17 @@ mod test_qu_matcher {
 
 		let expected = QuAction::Block(
 			vec![
-				QuAction::VarAssign(
-					Box::new(QuAction::VarRef("count".to_owned())),
+				QuAction::Assign(
+					Box::new(QuAction::Var(Box::new(
+						QuAction::Name(Box::new(QuToken::from_str("count")))
+					))),
 					Box::new(QuAction::Div(
-						Box::new(QuAction::Number(3)),
-						Box::new(QuAction::Number(2)),
+						Box::new(QuAction::Number(Box::new(
+							QuToken::from_str("3")
+						))),
+						Box::new(QuAction::Number(Box::new(
+							QuToken::from_str("2")
+						))),
 					)),
 				)
 			]
@@ -2067,10 +2235,19 @@ mod test_qu_matcher {
 		let expected = QuAction::Block(
 			vec![
 				QuAction::VarDeclare(
-					Box::new(QuAction::VarRef("count".to_owned())),
+					Box::new(QuAction::Parameter(
+						Box::new(QuAction::Name(
+							Box::new(QuToken::from_str("count")))
+						),
+						None,
+					)),
 					Some(Box::new(QuAction::Mul(
-						Box::new(QuAction::Number(20)),
-						Box::new(QuAction::Number(8)),
+						Box::new(QuAction::Number(Box::new(
+							QuToken::from_str("20")
+						))),
+						Box::new(QuAction::Number(Box::new(
+							QuToken::from_str("8")
+						))),
 					))),
 				)
 			]

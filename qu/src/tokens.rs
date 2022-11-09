@@ -275,15 +275,30 @@ pub struct QuToken {
 	/// Makes a new empty [`QuToken`].
 	pub fn default() -> QuToken {
 	return QuToken{
-		begin:0,
-		end:0,
-		row:0,
-		_col:0,
-		indent:0,
-		text:"".to_string(),
-		tk_type:0
-	};
-}
+			begin:0,
+			end:0,
+			row:0,
+			_col:0,
+			indent:0,
+			text:"".to_string(),
+			tk_type:0
+		};
+	}
+
+
+	/// Makes a new empty [`QuToken`].
+	pub fn from_str(text:&str) -> QuToken {
+		return QuToken{
+				begin:0,
+				end:0,
+				row:0,
+				_col:0,
+				indent:0,
+				text:text.to_owned(),
+				tk_type:0
+			};
+		}
+
 
 	// TODO: Replace this function with the text parameter of the struct.
 	/// Returns the text of this token.
@@ -319,17 +334,7 @@ pub struct QuToken {
 
 } impl Debug for QuToken {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		//return write!(f, "Tokwn: {txt}", 0);
-		f.debug_struct("QuToken")
-		//	.field("begin", &self.begin)
-		//	.field("end", &self.end)
-		//	.field("row", &self.row)
-		//	.field("_col", &self._col)
-		//	.field("indent", &self.indent)
-		//	.field("source", &self.source)
-			.field("text", &self.text)
-		//	.field("tk_type", &self.tk_type).finish()
-			.finish()
+		return write!(f, "QuToken{{\"{}\"}}", self.text);
 	}
 } impl PartialEq for QuToken {
 	fn eq(&self, other:&Self) -> bool {
