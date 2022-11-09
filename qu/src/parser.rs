@@ -48,8 +48,9 @@ pub enum QuAction {
 	Block(Vec<QuAction>),
 	BlockEnd,
 	BlockStart,
-	/// Holds a [`QuAction::Name`] and a [`QuAction::Block`].
-	FnDeclare(Box<QuAction>, Box<QuAction>),
+	/// Holds a [`QuAction::Name`], [`QuAction::Parameters`], and a
+	/// [`QuAction::Block`].
+	FnDeclare(Box<QuAction>, Box<QuAction>, Box<QuAction>),
 	For,
 	/// Holds an expression and a [`QuAction::Block`].
 	If(Box<QuAction>, Box<QuAction>),
@@ -59,6 +60,8 @@ pub enum QuAction {
 	/// Holds a parameter name [`QuAction::Name`] and optionally its type as
 	/// a [`QuAction::Name`].
 	Parameter(Box<QuAction>, Option<Box<QuAction>>),
+	/// Holds a [`Vec`] of [`QuAction::Parameter`]
+	Parameters(Vec<QuAction>),
 	/// Holds an expression.
 	Return(Option<Box<QuAction>>),
 	/// Holds the [`QuAction::Name`] and the assignment expression.
@@ -1375,16 +1378,20 @@ pub struct QuParser {
 		self.match_name()?
 				.err(||{QuMsg::general("Expected function name TODO: Better msg")})?
 				.keep()
-			.match_str("(")?
-				.err(||{QuMsg::general("Expected '(' TODO: Better msg")})?
-			.match_str(")")?
-				.err(||{QuMsg::general("Expected ')' TODO: Better msg")})?
+			.match_fn_parameters()?
+				.err(||{QuMsg::general("Expected function parameters TODO: Better msg")})?
+				.keep()
 			.match_code_scope()?
 				.err(||{QuMsg::general("Expected a code scope TODO: Better msg")})?
 				.keep()	
 		;
 		
-		let (Some(block), Some(name)) = (
+		let (
+			Some(block),
+			Some(params),
+			Some(name),
+		) = (
+			self.matched.pop().unwrap(),
 			self.matched.pop().unwrap(),
 			self.matched.pop().unwrap(),
 		) else {
@@ -1393,6 +1400,7 @@ pub struct QuParser {
 
 		self.last_op = Some(QuAction::FnDeclare(
 			Box::new(name),
+			Box::new(params),
 			Box::new(block),
 		));
 
@@ -1410,32 +1418,33 @@ pub struct QuParser {
 			return Ok(self);
 		}
 
+		self.match_parameter()?;
+		let mut p_count = 0;
 		loop {
-			self.match_name()?;
-			if self.last_op.is_some() {
-				self.keep();
-				// TODO: Match a type instead
-				self.match_var_name()?.keep();
-
-				let (p_type, Some(p_name)) = (
-					self.matched.pop().unwrap(),
-					self.matched.pop().unwrap(),
-				) else {
-					panic!();
-				};
+			if self.last_op.is_none() {
+				break;
 			}
+			p_count += 1;
+			self.keep();
+			self.match_str(",")?;
+			if self.last_op.is_none() {
+				break;
+			}
+			self.match_parameter()?;
 		}
-		
-		let (Some(block), Some(name)) = (
-			self.matched.pop().unwrap(),
-			self.matched.pop().unwrap(),
-		) else {
-			panic!();
-		};
 
-		self.last_op = Some(QuAction::FnDeclare(
-			Box::new(name),
-			Box::new(block),
+		self.match_str(")")?
+				.err(||{QuMsg::general("Parameters expected a ')'")})?
+		;
+
+		let mut props = Vec::with_capacity(p_count);
+		for _ in 0..p_count {
+			props.push(self.matched.pop().unwrap());
+		}
+		props.reverse();
+
+		self.last_op = Some(QuAction::Parameters(
+			props.into_iter().collect::<Option<Vec<_>>>().unwrap()
 		));
 
 		return Ok(self);
@@ -2165,9 +2174,9 @@ use crate::tokens::QuToken;
 	fn parse_fn_definition() -> Result<(), QuMsg>{
 		let mut p = QuParser::new();
 		let res = p.parse(r##"
-			fn add():
+			fn add(a, b):
 				5
-			fn sub():
+			fn sub(a int, b int):
 				6
 		"##.to_owned())?;
 
@@ -2175,6 +2184,20 @@ use crate::tokens::QuToken;
 			vec![
 				QuAction::FnDeclare(
             		Box::new(QuAction::Name(Box::new(QuToken::from_str("add")))),
+            		Box::new(QuAction::Parameters(vec![
+						QuAction::Parameter(
+							Box::new(QuAction::Name(Box::new(
+								QuToken::from_str("a")
+							))),
+							None,
+						),
+						QuAction::Parameter(
+							Box::new(QuAction::Name(Box::new(
+								QuToken::from_str("b")
+							))),
+							None,
+						),
+					])),
             		Box::new(QuAction::Block(vec![
                     	QuAction::Number(Box::new(
 							QuToken::from_str("5")
@@ -2183,6 +2206,24 @@ use crate::tokens::QuToken;
 				),
 				QuAction::FnDeclare(
             		Box::new(QuAction::Name(Box::new(QuToken::from_str("sub")))),
+            		Box::new(QuAction::Parameters(vec![
+						QuAction::Parameter(
+							Box::new(QuAction::Name(Box::new(
+								QuToken::from_str("a")
+							))),
+							Some(Box::new(QuAction::Name(Box::new(
+								QuToken::from_str("int")
+							)))),
+						),
+						QuAction::Parameter(
+							Box::new(QuAction::Name(Box::new(
+								QuToken::from_str("b")
+							))),
+							Some(Box::new(QuAction::Name(Box::new(
+								QuToken::from_str("int")
+							)))),
+						),
+					])),
             		Box::new(QuAction::Block(vec![
                     	QuAction::Number(Box::new(
 							QuToken::from_str("6")
