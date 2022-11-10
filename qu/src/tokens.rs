@@ -334,7 +334,7 @@ pub struct QuToken {
 
 } impl Debug for QuToken {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		return write!(f, "QuToken{{\"{}\"}}", self.text);
+		return write!(f, "QuToken(\"{}\")", self.text);
 	}
 } impl PartialEq for QuToken {
 	fn eq(&self, other:&Self) -> bool {

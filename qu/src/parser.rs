@@ -14,8 +14,8 @@ use crate::QuToken;
 use crate::QuMsg;
 
 
-pub const FLOW_IF:u8 = 0;
-pub const FLOW_WHILE:u8 = 1;
+pub const FLOW_TYPE_IF:u8 = 0;
+pub const FLOW_TYPE_WHILE:u8 = 1;
 
 pub const KEYWORD_CLASS:&str = "stamp";
 pub const KEYWORD_ELSE:&str = "else";
@@ -39,6 +39,8 @@ pub const OP_MATH_LSE:&str = "<=";
 pub const OP_MATH_MUL:&str = "*";
 pub const OP_MATH_NEQ:&str = "!=";
 pub const OP_MATH_SUB:&str = "-";
+
+type QuNodeParam = (QuToken, Option<QuToken>);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum QuAction {
@@ -100,126 +102,45 @@ pub enum QuAction {
 }
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 /// A Qu instruction.
 pub enum QuLeaf {
 	/// A Block of leafs.
 	Block(Vec<QuLeaf>),
 	/// A floating expression
-	Expression(QuLeafExpr),
+	Expression(Box<QuLeafExpr>),
 	/// An if statement. Contains an assertion statement and a [`Vec`] of
 	/// instructions.
-	FlowStatement(u8, QuLeafExpr, Box<QuLeaf>),
-	/// A function declaration branch. Contains the function name, the
-	/// instructions, and the parameters.
-	FnDecl(String, Box<QuLeaf>, Vec<String>),
+	FlowStatement(u8, Box<QuLeafExpr>, Box<QuLeaf>),
+	/// A function declaration branch. Contains the function name,
+	/// parameters, and instructions.
+	FnDecl(Box<QuToken>, Vec<QuNodeParam>, Box<QuLeaf>),
 	/// Prints a register to the console.
-	Print(QuLeafExpr),
+	Print(Box<QuLeafExpr>),
 	/// A return statement for a function
-	Return(QuLeafExpr),
+	Return(Box<QuLeafExpr>),
 	/// A variable assignment. Contains a var name and a [`QuLeafExpr`].
-	VarAssign(QuToken, QuLeafExpr),
+	VarAssign(Box<QuToken>, Box<QuLeafExpr>),
 	/// A variable declaration. Contains a var name, type(TODO), and
 	/// [`QuLeafExpr`].
-	VarDecl(QuToken, Option<QuToken>, Option<QuLeafExpr>),
-
-} impl QuLeaf {
-
-	/// Returns the [`QuLeaf`] as a [`String`] formatted into a tree.
-	pub fn tree_fmt(&self, indent:u8) -> String {
-		let mut indentstr = "\n".to_string();
-		for _ in 0..indent {
-			indentstr += "  ";
-		}
-		
-		match self {
-			QuLeaf::Block(
-				body) => {
-				let mut bodystr = "".to_string();
-				for leaf in body {
-					bodystr += &leaf.tree_fmt(indent + 1);
-				}
-				return format!("BLOCK:{}", bodystr);
-			}
-			QuLeaf::Expression(expr_leaf) => {
-				return format!("{}EXPR {}", indentstr, expr_leaf);
-			}
-			QuLeaf::FlowStatement(op, cond, body
-					) => {
-				let bodystr = body.tree_fmt(indent + 1);
-				return format!("{}FLOW {} {} {}", indentstr, op, cond, bodystr);
-			}
-			QuLeaf::FnDecl(name, body, _parameters) => {
-				let bodystr = body.tree_fmt(indent + 1);
-				return format!("{}DECL FN {} {}", indentstr, name, bodystr);
-			}
-			QuLeaf::Print(register) => {
-				return format!("{}PRINT {}", indentstr, register);
-			}
-			QuLeaf::Return(val) => {
-				return format!("{}RETURN {}", indentstr, val);
-			}
-			QuLeaf::VarAssign(name, val) => {
-				return format!("{}ASSIGN {} = {}", indentstr, name.text, val);
-			}
-			QuLeaf::VarDecl(name, _var_type,
-					_val) => {
-				let val_str = match _val {
-					Some(val) => format!("{}", val),
-					None => "".to_string(),
-				};
-				// TODO: Add variable declaration type
-				return format!("{}VAR {} {} = {}", indentstr, name.text, "", val_str);
-			}
-		}
-	}
-
-} impl Display for QuLeaf {
-
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		return write!(f, "{}", self.tree_fmt(0));
-	}
+	VarDecl(Box<QuToken>, Option<Box<QuToken>>, Option<Box<QuLeafExpr>>),
 
 }
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 /// Defines an expression in a Qu program tree.
 pub enum QuLeafExpr {
 	/// Call function branch.
-	FnCall(String), // TODO: Implement arguments
+	FnCall(Box<QuToken>), // TODO: Implement arguments
 	/// A calculable expression. Contains an operator and two [`QuLeafExpr`]s.
 	Equation(u8, Box<QuLeafExpr>, Box<QuLeafExpr>),
 	/// A literal int value.
-	Int(u64),
+	Number(Box<QuToken>),
 	/// A tuple.
 	Tuple(Vec<QuLeafExpr>),
 	/// A variable name.
-	Var(QuToken),
-} impl Display for QuLeafExpr {
-
-	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		match self {
-			QuLeafExpr::FnCall(name) => {
-				return write!(f, "FnCall({name})");
-			}
-			QuLeafExpr::Equation(op, lft, rht) => {
-				let string = format!("{}", op);
-				let opstr:&str = string.as_str();
-				return write!(f, "Equate({lft} {opstr} {rht})");
-			}
-			QuLeafExpr::Int(val) => {
-				return write!(f, "{val}:Int");
-			}
-			QuLeafExpr::Tuple(items) => {
-				return write!(f, "({items:?})");
-			}
-			QuLeafExpr::Var(name) => {
-				return write!(f, "{}:Var", name.text);
-			}
-		}
-	}
-
+	Var(Box<QuToken>),
 }
 
 
@@ -294,7 +215,7 @@ pub struct QuParser {
 			// Expressions
 			if !self.utl_statement_start()?.is_none() {
 				if let Some(expr_leaf) = self.ck_expr()? {
-					leafs.push(QuLeaf::Expression(expr_leaf));
+					leafs.push(QuLeaf::Expression(Box::new(expr_leaf)));
 					continue;
 				}
 			}
@@ -346,8 +267,8 @@ pub struct QuParser {
 
 		// Check keyword
 		let keyword = match token_type {
-			FLOW_IF => "if",
-			FLOW_WHILE => "while",
+			FLOW_TYPE_IF => "if",
+			FLOW_TYPE_WHILE => "while",
 			_ => unimplemented!(),
 		};
 		let keyword_tk = self.tk_next()
@@ -382,7 +303,7 @@ pub struct QuParser {
 		return Ok(Some(
 			QuLeaf::FlowStatement(
 				token_type,
-				expr,
+				Box::new(expr),
 				Box::new(QuLeaf::Block(scope_data)))
 		));
 	}
@@ -390,13 +311,13 @@ pub struct QuParser {
 
 	/// Attempts to parse an if statement.
 	fn ck_flow_if(&mut self) -> Result<Option<QuLeaf>, QuMsg> {
-		return self.ck_flow(FLOW_IF);
+		return self.ck_flow(FLOW_TYPE_IF);
 	}
 
 
 	/// Attempts to parse a while statement.
 	fn ck_flow_while(&mut self) -> Result<Option<QuLeaf>, QuMsg> {
-		return self.ck_flow(FLOW_WHILE);
+		return self.ck_flow(FLOW_TYPE_WHILE);
 	}
 
 
@@ -431,7 +352,7 @@ pub struct QuParser {
 			return Err(QuMsg::missing_token(")"));
 		}
 
-		return Ok(Some(QuLeafExpr::FnCall(fn_name_tk.text)));
+		return Ok(Some(QuLeafExpr::FnCall(Box::new(fn_name_tk.clone()))));
 	}
 
 
@@ -440,51 +361,24 @@ pub struct QuParser {
 		if self.utl_statement_start()?.is_none() {
 			return Ok(None);
 		}
-		
-		self.tk_state_save();
 
-		// Check keyword
-		let keyword_tk = self.tk_next()
-				.expect("Improper indentation TODO: Bette message")
-				.clone();
-		if keyword_tk != KEYWORD_FN {
-			// Check failed. Stop checking silently
-			self.tk_state_pop();
-			return Ok(None);
-		}
-
-		// Check function name
-		let fn_name_tk = self.ck_fn_name()?.ok_or_else(
-			|| {
-				// TODO: Change to more appropriate message
-				QuMsg::missing_code_block()
-			}
-		)?;
-
-		// Match an open '('
-		if self.tk_next()? != "(" {
-			return Err(QuMsg::missing_token("("));
-		}
-
-		// Match parameters
-		// TODO: match parameters
-
-		// Match a close ')'
-		let closing_paren = self.tk_next()?.clone();
-		if closing_paren != ")" {
-			return Err(QuMsg::missing_token(")"));
-		}
-
-		// Check for code block
-		let scope_leafs = self.ck_code_scope()?.ok_or(
-			QuMsg::missing_code_block()
-		)?;
+		let Some(_) = self.ck_str(KEYWORD_FN)?
+			else {return Ok(None)};
+		let Some(fn_name_tk) = self.ck_fn_name()?
+			// TODO: Change to more appropriate message
+			else {return Err(QuMsg::missing_code_block())};
+		let Some(params) = self.ck_fn_parameters()?
+			else {return Err(QuMsg::general(
+				"Function definition expected parameters. TODO: better msg"
+			))};
+		let Some(scope_leafs) = self.ck_code_scope()?
+			else {return Err(QuMsg::missing_code_block())};
 
 		return Ok(Some(
 			QuLeaf::FnDecl(
-				fn_name_tk.text.clone(),
+				Box::new(fn_name_tk.clone()),
+				params,
 				Box::new(QuLeaf::Block(scope_leafs)),
-				vec![],
 			)
 		));
 	}
@@ -498,44 +392,30 @@ pub struct QuParser {
 
 
 	/// Attempts to parse function parameters, not including parenthesis.
-//	fn ck_fn_parameters(&mut self) -> Result<Option<QuLeafExpr>, QuMsg>{
-//		match self.ck_var_name()? {
-//			// Matched an expression
-//			Some(expr) => {
-//				if self.tk_spy(0) == "," {
-//					// Matched tuple, get more tuple elements
-//					let mut elements = vec![expr];
-//					self.tk_next()?;
-//					loop {
-//						match self.ck_op_les()? {
-//							Some(next_expr) => {
-//								// Found another expression, add to tuple
-//								elements.push(next_expr);
-//								if self.tk_spy(0) != "," {
-//									// No comma found, tuple must have ended.
-//									// Return tuple.
-//									return Ok(Some(QuLeafExpr::Tuple(elements)));
-//								} else {
-//									// Comma found, continue adding to tuple
-//									self.tk_next()?;
-//								}
-//							},
-//							None => {
-//								// No more expressions found, return tuple
-//								return Ok(Some(QuLeafExpr::Tuple(elements)))
-//							},
-//						};
-//					}
-//
-//				} else {
-//					// Did not match tuple, return expression
-//					return Ok(Some(expr));
-//				}
-//			},
-//			// Did not match an expression, return quietly
-//			None => {return Ok(None)},
-//		};
-//	}
+	fn ck_fn_parameters(&mut self) -> Result<Option<Vec<QuNodeParam>>, QuMsg> {
+		if self.utl_statement_start()?.is_none() {
+			return Ok(None);
+		}
+
+		let Some(_) = self.ck_str("(")?
+			else {return Ok(None)};
+
+		let mut params = vec![];
+		loop {
+			let Some(param)
+				= self.ck_var_name_type()? else {break};
+			params.push(param);
+			let Some(_) = self.ck_str(",")?
+				else {break};
+		}
+
+		let Some(_) = self.ck_str(")")?
+			else {return Err(
+				QuMsg::general("Parameters expected a ')'")
+			)};
+
+		return Ok(Some(params));
+	}
 
 
 	/// Attempts to parse a lesser than expression.
@@ -544,10 +424,22 @@ pub struct QuParser {
 	}
 
 
+	/// Attempts to parse a lesser or equal than expression.
+	//fn ck_op_lse(&mut self) -> Result<Option<QuLeafExpr>, QuMsg>{
+	//	return self.ck_operation(OP_MATH_LSE, &Self::ck_op_grt);
+	//}
+
+
 	/// Attempts to parse a greater than expression.
 	fn ck_op_grt(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
 		return self.ck_operation(OP_MATH_GRT, &Self::ck_op_eql);
 	}
+
+
+	/// Attempts to parse a greater or equal than expression.
+	//fn ck_op_gte(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
+	//	return self.ck_operation(OP_MATH_GTE, &Self::ck_op_eql);
+	//}
 
 
 	/// Attempts to parse an equal to expression.
@@ -727,7 +619,7 @@ pub struct QuParser {
 			.unwrap() 
 			.expect("Print needs number TODO: Better msg");
 
-		return Ok(Some(QuLeaf::Print(reg_tk)));
+		return Ok(Some(QuLeaf::Print(Box::new(reg_tk))));
 	}
 
 
@@ -752,7 +644,17 @@ pub struct QuParser {
 			}
 		)?;
 
-		return Ok(Some(QuLeaf::Return(reg_tk)));
+		return Ok(Some(QuLeaf::Return(Box::new(reg_tk))));
+	}
+
+
+	/// Attempts to parse `text`.
+	fn ck_str(&mut self, text:&str) -> Result<Option<()>, QuMsg> {
+		if self.tk_spy(0) == text {
+			self.tk_next()?;
+			return Ok(Some(()));
+		}
+		return Ok(None);
 	}
 
 
@@ -775,20 +677,7 @@ pub struct QuParser {
 		self.tk_state_save();
 		let tk = self.tk_next()?;
 
-		return match tk.text.parse::<u64>() {
-			Ok(x) => Ok(Some(QuLeafExpr::Int(x))),
-			Err(_) => {
-				self.tk_state_pop();
-				let var_name_opt = self.ck_var_name()?;
-				match var_name_opt {
-					// Matched a value
-					Some(data) =>
-						Ok(Some(QuLeafExpr::Var(data))),
-					// Didn't match a value, return None
-					None => Ok(None),
-				}
-			},
-		};
+		return Ok(Some(QuLeafExpr::Number(Box::new(tk.clone()))));
 	}
 
 
@@ -828,7 +717,7 @@ pub struct QuParser {
 		};
 
 		return Ok(Some(
-			QuLeaf::VarAssign(name_tk, expr_leaf)
+			QuLeaf::VarAssign(Box::new(name_tk), Box::new(expr_leaf))
 		));
 	}
 
@@ -839,55 +728,51 @@ pub struct QuParser {
 			return Ok(None);
 		}
 
-		self.tk_state_save();
-		
-		// Match keyword
-		let keyword_tk = self.tk_next()?;
-		if keyword_tk != KEYWORD_VAR {
-			self.tk_state_pop();
-			return Ok(None);
-		}
+		let Some(_) = self.ck_str(KEYWORD_VAR)?
+			else {return Ok(None);};
 		
 
 		// Match variable name
-		let name_tk = self.ck_var_name()?.ok_or_else(
-			|| {
-				QuMsg::general(
-					"QuToken after 'var' does not match a name. 'TODO:Better msg'"
-				)
-			}
-		)?;
+		let Some(name_tk) = self.ck_var_name()?
+			else {return Err(QuMsg::general(
+			"QuToken after 'var' does not match a name. 'TODO:Better msg'"
+			))};
 
 		// Match variable type
-		let type_tk_opt = self.ck_type_name()?;
+		let type_tk_opt = match self.ck_type_name()? {
+			Some(tk) => Some(Box::new(tk)),
+			None => None,
+		};
 
-		// Match assign operator
-		let operation_tk = self.tk_spy(0);
-		let mut assign_leaf_opt = None;
-		if operation_tk == OP_ASSIGN_SYMBOL {
-			self.tk_next()?;
-			assign_leaf_opt = match self.ck_expr() {
-				Ok(leaf) => leaf,
-				Err(msg) => {
-					// If the error is related to indentation, replace the error
-					// with a missing value error
-					if msg.title == errors::ERR_TITLE_INVALID_INDENTATION {
-						self.tk_idx -= 1;
-						return Err(QuMsg::var_assign_lacks_value(
-							&name_tk.text))
-					}
-					// Return normal error
-					return Err(msg);
+		// Match optional assignment
+		let mut assign_leaf_opt
+			= if self.ck_str(OP_ASSIGN_SYMBOL)?.is_some() {
+
+			// Custom error handling
+			let expr_op = self.ck_expr()
+			.or_else(|msg|{
+				// If the error is related to indentation, replace the error
+				// with a missing value error
+				if msg.title == errors::ERR_TITLE_INVALID_INDENTATION {
+					self.tk_idx -= 1;
+					return Err(QuMsg::var_assign_lacks_value(
+						&name_tk.text))
 				}
+				// Return normal error
+				return Err(msg);
+			})?;
+
+			// Convert expression from Option to Option<Box>
+			let expr = match expr_op {
+				Some(expr) => Some(Box::new(expr)),
+				None => None,
 			};
-			if let None = assign_leaf_opt {
-				return Err(QuMsg::general(
-					"Expected expression after '='. TODO:Better msg"));
-			}
-		}
+			expr
+
+		} else {None};
 		
 		return Ok(Some(QuLeaf::VarDecl(
-			name_tk,
+			Box::new(name_tk),
 			type_tk_opt,
 			assign_leaf_opt,
 		)));
@@ -912,13 +797,17 @@ pub struct QuParser {
 	/// Attempts to parse a variable name and optionally a type.
 	fn ck_var_name_type(
 		&mut self
-	) -> Result<(Option<QuToken>, Option<QuToken>), QuMsg> {
-
+	) -> Result<Option<QuNodeParam>, QuMsg> {
 		let name_tk = match self.ck_var_name()? {
 			Some(name_tk) => name_tk,
-			None => {return Ok((None, None))},
+			None => {
+				return Ok(None);
+			},
 		};
-		return Ok((Some(name_tk), self.ck_type_name()?));
+		return Ok(Some((
+			name_tk,
+			self.ck_type_name()?
+		)));
 	}
 
 
@@ -1001,691 +890,9 @@ pub struct QuParser {
 		return self;
 	}
 
-
-	fn match_code_block(&mut self) -> Result<&mut Self, QuMsg> {
-		self.match_statement()?;
-
-		let mut acts = vec![];
-		loop {
-			if let Some(act) = take(&mut self.last_op) {
-				acts.push(act);
-				self.match_statement()?;
-			} else {
-				break;
-			}
-		}
-
-		self.last_op = Some(QuAction::Block(acts));
-
-		return Ok(self);
-	}
-
-
-	fn match_code_scope(&mut self) -> Result<&mut Self, QuMsg> {
-		// Check operator
-		self.match_str(OP_BLOCK_START)?;
-		if !self.required().is_ok() {
-			self.last_op = None;
-			return Ok(self);
-		}
-
-		self.indent += 1;
-		self.match_code_block()?;
-		self.indent -= 1;
-
-		return Ok(self);
-	}
-
-
-	fn match_expr_les(&mut self) -> Result<&mut Self, QuMsg> {
-		let (l, r)
-			= self.get_match_operation(
-				OP_MATH_LES,
-				&Self::match_expr_lse,
-				&Self::match_expr_les
-			)?;
-		let Some(l) = l else {
-			self.last_op = None;
-			return Ok(self);
-		};
-		let Some(r) = r else {
-			self.last_op = Some(l);
-			return Ok(self);
-		};
-		self.last_op = Some(QuAction::Les(Box::new(l), Box::new(r)));
-		return Ok(self);
-	}
-
-
-	fn match_expr_lse(&mut self) -> Result<&mut Self, QuMsg> {
-		let (l, r)
-			= self.get_match_operation(
-				OP_MATH_LSE,
-				&Self::match_expr_grt,
-				&Self::match_expr_lse
-			)?;
-		let Some(l) = l else {
-			self.last_op = None;
-			return Ok(self);
-		};
-		let Some(r) = r else {
-			self.last_op = Some(l);
-			return Ok(self);
-		};
-		self.last_op = Some(QuAction::Lse(Box::new(l), Box::new(r)));
-		return Ok(self);
-	}
-
-
-	fn match_expr_grt(&mut self) -> Result<&mut Self, QuMsg> {
-		let (l, r)
-			= self.get_match_operation(
-				OP_MATH_GRT,
-				&Self::match_expr_gte,
-				&Self::match_expr_grt
-			)?;
-		let Some(l) = l else {
-			self.last_op = None;
-			return Ok(self);
-		};
-		let Some(r) = r else {
-			self.last_op = Some(l);
-			return Ok(self);
-		};
-		self.last_op = Some(QuAction::Grt(Box::new(l), Box::new(r)));
-		return Ok(self);
-	}
-
-
-	fn match_expr_gte(&mut self) -> Result<&mut Self, QuMsg> {
-		let (l, r)
-			= self.get_match_operation(
-				OP_MATH_GTE,
-				&Self::match_expr_eql,
-				&Self::match_expr_gte
-			)?;
-		let Some(l) = l else {
-			self.last_op = None;
-			return Ok(self);
-		};
-		let Some(r) = r else {
-			self.last_op = Some(l);
-			return Ok(self);
-		};
-		self.last_op = Some(QuAction::Gte(Box::new(l), Box::new(r)));
-		return Ok(self);
-	}
-
-
-	fn match_expr_eql(&mut self) -> Result<&mut Self, QuMsg> {
-		let (l, r)
-			= self.get_match_operation(
-				OP_MATH_EQL,
-				&Self::match_expr_neq,
-				&Self::match_expr_eql
-			)?;
-		let Some(l) = l else {
-			self.last_op = None;
-			return Ok(self);
-		};
-		let Some(r) = r else {
-			self.last_op = Some(l);
-			return Ok(self);
-		};
-		self.last_op = Some(QuAction::Eql(Box::new(l), Box::new(r)));
-		return Ok(self);
-	}
-
-
-	fn match_expr_neq(&mut self) -> Result<&mut Self, QuMsg> {
-		let (l, r)
-			= self.get_match_operation(
-				OP_MATH_NEQ,
-				&Self::match_expr_sub,
-				&Self::match_expr_neq
-			)?;
-		let Some(l) = l else {
-			self.last_op = None;
-			return Ok(self);
-		};
-		let Some(r) = r else {
-			self.last_op = Some(l);
-			return Ok(self);
-		};
-		self.last_op = Some(QuAction::Neq(Box::new(l), Box::new(r)));
-		return Ok(self);
-	}
-
-
-	fn match_expr_sub(&mut self) -> Result<&mut Self, QuMsg> {
-		let (l, r)
-			= self.get_match_operation(
-				OP_MATH_SUB,
-				&Self::match_expr_add,
-				&Self::match_expr_sub
-			)?;
-		let Some(l) = l else {
-			self.last_op = None;
-			return Ok(self);
-		};
-		let Some(r) = r else {
-			self.last_op = Some(l);
-			return Ok(self);
-		};
-		self.last_op = Some(QuAction::Sub(Box::new(l), Box::new(r)));
-		return Ok(self);
-	}
-
-
-	fn match_expr_add(&mut self) -> Result<&mut Self, QuMsg> {
-		let (l, r)
-			= self.get_match_operation(
-				OP_MATH_ADD,
-				&Self::match_expr_div,
-				&Self::match_expr_add
-			)?;
-		let Some(l) = l else {
-			self.last_op = None;
-			return Ok(self);
-		};
-		let Some(r) = r else {
-			self.last_op = Some(l);
-			return Ok(self);
-		};
-		self.last_op = Some(QuAction::Add(Box::new(l), Box::new(r)));
-		return Ok(self);
-	}
-
-
-	fn match_expr_div(&mut self) -> Result<&mut Self, QuMsg> {
-		let (l, r)
-			= self.get_match_operation(
-				OP_MATH_DIV,
-				&Self::match_expr_mul,
-				&Self::match_expr_div
-			)?;
-		let Some(l) = l else {
-			self.last_op = None;
-			return Ok(self);
-		};
-		let Some(r) = r else {
-			self.last_op = Some(l);
-			return Ok(self);
-		};
-		self.last_op = Some(QuAction::Div(Box::new(l), Box::new(r)));
-		return Ok(self);
-	}
-
-
-	fn match_expr_mul(&mut self) -> Result<&mut Self, QuMsg> {
-		let (l, r)
-			= self.get_match_operation(
-				OP_MATH_MUL,
-				&Self::match_expr_parenth,
-				&Self::match_expr_mul
-			)?;
-		let Some(l) = l else {
-			self.last_op = None;
-			return Ok(self);
-		};
-		let Some(r) = r else {
-			self.last_op = Some(l);
-			return Ok(self);
-		};
-		self.last_op = Some(QuAction::Mul(Box::new(l), Box::new(r)));
-		return Ok(self);
-	}
-
-
-	fn match_expr_parenth(&mut self) -> Result<&mut Self, QuMsg> {
-		if !self.match_str("(")?.required().is_ok() {
-			self.match_expr_factor()?;
-			return Ok(self);
-		}
-		self.match_expression()?
-				.keep()
-			.match_str(")")?
-				.err(||{QuMsg::general("Expected a ')'")})?
-			;
-
-		self.last_op = self.matched.pop().unwrap();
-
-		return Ok(self);
-	}
-
-
-	fn match_expr_factor(&mut self) -> Result<&mut Self, QuMsg> {
-		self.match_number()?;
-		if let Some(_) = &self.last_op {
-			return Ok(self);
-		}
-
-		self.match_fn_call()?;
-		if let Some(_) = &self.last_op {
-			return Ok(self);
-		}
-
-		self.match_variable()?;
-		if let Some(_) = &self.last_op {
-			return Ok(self);
-		}
-
-		self.last_op = None;
-		return Ok(self);
-	}
-
-
-	fn match_expression(&mut self) -> Result<&mut Self, QuMsg> {
-		self.match_expr_les()?;
-		return Ok(self);
-	}
-
-
-	fn match_flow(&mut self, flow_type:u8) -> Result<&mut Self, QuMsg> {
-		if self.utl_statement_start()?.is_none() {
-			return Ok(self);
-		}
-
-		let flow_keyword = match flow_type {
-			FLOW_IF => KEYWORD_IF,
-			FLOW_WHILE => KEYWORD_WHILE,
-			_ => panic!("Can't handle flow type of vlaue {flow_type}"),
-		};
-
-		self
-			.match_str(flow_keyword)?;
-		if !self.required().is_ok() {
-			return Ok(self);
-		}
-
-		self
-			.match_expression()?
-				.err(||{QuMsg::general("If statement expected an expression. TODO:Better msg")})?
-				.keep()
-			.match_code_scope()?
-				.err(||{QuMsg::general("If statement expected a code block. TODO:Better msg")})?
-				.keep()
-			;
-		
-		let (Some(codeblock), Some(expression)) = (
-			self.matched.pop().unwrap(),
-			self.matched.pop().unwrap(),
-		) else {
-			panic!("Flow statement's expression or codeblock is None.");
-		};
-
-		self.last_op = match flow_type {
-			FLOW_IF => Some(QuAction::If(
-				Box::new(expression),
-				Box::new(codeblock),
-			)),
-			FLOW_WHILE => Some(QuAction::While(
-				Box::new(expression),
-				Box::new(codeblock),
-			)),
-			_ => panic!("Can't handle flow type of vlaue {flow_type}"),
-		};
-		
-
-		return Ok(self);
-	}
-
-
-	fn match_fn_call(&mut self) -> Result<&mut Self, QuMsg> {
-		self.tk_state_save();
-		if !self.match_var_name()?.required().is_ok() {
-			self.last_op = None;
-			return Ok(self);
-		}
-		self.keep();
-		if !self.match_str("(")?.required().is_ok() {
-			self.last_op = None;
-			self.matched.pop();
-			self.tk_state_pop();
-			return Ok(self);
-		}
-
-		self.match_str(")")?
-				.err(||{QuMsg::general("Function call expected ')' TODO: Better msg")})?
-		;
-		
-		let (Some(block), Some(name)) = (
-			self.matched.pop().unwrap(),
-			self.matched.pop().unwrap(),
-		) else {
-			panic!();
-		};
-
-		self.last_op = Some(QuAction::FnCall(
-			Box::new(name),
-			vec![],
-		));
-
-		return Ok(self);
-	}
-
-
-	fn match_fn_decl(&mut self) -> Result<&mut Self, QuMsg> {
-		if self.utl_statement_start()?.is_none() {
-			return Ok(self);
-		}
-
-		if !self.match_str(KEYWORD_FN)?.required().is_ok() {
-			self.last_op = None;
-			return Ok(self);
-		}
-
-		self.match_name()?
-				.err(||{QuMsg::general("Expected function name TODO: Better msg")})?
-				.keep()
-			.match_fn_parameters()?
-				.err(||{QuMsg::general("Expected function parameters TODO: Better msg")})?
-				.keep()
-			.match_code_scope()?
-				.err(||{QuMsg::general("Expected a code scope TODO: Better msg")})?
-				.keep()	
-		;
-		
-		let (
-			Some(block),
-			Some(params),
-			Some(name),
-		) = (
-			self.matched.pop().unwrap(),
-			self.matched.pop().unwrap(),
-			self.matched.pop().unwrap(),
-		) else {
-			panic!();
-		};
-
-		self.last_op = Some(QuAction::FnDeclare(
-			Box::new(name),
-			Box::new(params),
-			Box::new(block),
-		));
-
-		return Ok(self);
-	}
-
-
-	fn match_fn_parameters(&mut self) -> Result<&mut Self, QuMsg> {
-		if self.utl_statement_start()?.is_none() {
-			return Ok(self);
-		}
-
-		if !self.match_str("(")?.required().is_ok() {
-			self.last_op = None;
-			return Ok(self);
-		}
-
-		self.match_parameter()?;
-		let mut p_count = 0;
-		loop {
-			if self.last_op.is_none() {
-				break;
-			}
-			p_count += 1;
-			self.keep();
-			self.match_str(",")?;
-			if self.last_op.is_none() {
-				break;
-			}
-			self.match_parameter()?;
-		}
-
-		self.match_str(")")?
-				.err(||{QuMsg::general("Parameters expected a ')'")})?
-		;
-
-		let mut props = Vec::with_capacity(p_count);
-		for _ in 0..p_count {
-			props.push(self.matched.pop().unwrap());
-		}
-		props.reverse();
-
-		self.last_op = Some(QuAction::Parameters(
-			props.into_iter().collect::<Option<Vec<_>>>().unwrap()
-		));
-
-		return Ok(self);
-	}
-
-
-	/// Matches to [`QuAction::Name`] if the token_type of the [`QuToken`] at
-	/// `self.tk_idx` matches a name.
-	fn match_name(&mut self) -> Result<&mut Self, QuMsg> {
-		let tk_op = self.tk_spy_option(0);
-
-		match tk_op {
-			Some(tk) => {
-				if tk.tk_type == TOKEN_TYPE_NAME {
-					self.last_op = Some(QuAction::Name(Box::new(tk.clone())));
-					self.tk_next_option();
-				} else {
-					self.last_op = None;
-				}
-			},
-			None => {
-				self.last_op = None;
-			},
-		}
-
-		return Ok(self);
-	}
-
-
-	/// Matches to [`QuAction::Number`] if the `token_type` of the [`QuToken`]
-	/// at `self.tk_idx` matches a number.
-	fn match_number(&mut self) -> Result<&mut Self, QuMsg> {
-		let Some(num_tk)
-		= self.get_match_token_type(TOKEN_TYPE_NUMBER) else {
-			self.last_op = None;
-			return Ok(self);
-		};
-
-		self.last_op = Some(
-			QuAction::Number(Box::new(num_tk.clone()))
-		);
-		return Ok(self);
-	}
-
-
-	fn match_parameter(&mut self) -> Result<&mut Self, QuMsg> {
-		if self.match_name()?.required().is_err() {
-			self.last_op = None;
-			return Ok(self);
-		}
-		self.keep();
-		self.match_name()?
-				.keep()
-			;
-		
-		let (p_type, Some(p_name)) = (
-			self.matched.pop().unwrap(),
-			self.matched.pop().unwrap(),
-		) else {panic!()};
-		let p_type = match p_type {
-			Some(t) => Some(Box::new(t)),
-			None => None,
-		};
-
-		self.last_op = Some(QuAction::Parameter(
-			Box::new(p_name),
-			p_type,
-		));
-		
-		return Ok(self);
-	}
-
-
-	fn match_statement(&mut self) -> Result<&mut Self, QuMsg> {
-		self.match_var_assign()?;
-		if let Some(_) = &self.last_op {
-			return Ok(self);
-		}
-
-		self.match_var_decl()?;
-		if let Some(_) = &self.last_op {
-			return Ok(self);
-		}
-
-		self.match_fn_decl()?;
-		if let Some(_) = &self.last_op {
-			return Ok(self);
-		}
-
-		self.match_flow(FLOW_IF)?;
-		if let Some(_) = &self.last_op {
-			return Ok(self);
-		}
-
-		self.match_flow(FLOW_WHILE)?;
-		if let Some(_) = &self.last_op {
-			return Ok(self);
-		}
-
-		self.match_expression()?;
-		if let Some(_) = &self.last_op {
-			return Ok(self);
-		}
-
-		self.last_op = None;
-		return Ok(self);
-
-	}
-
-
-	fn match_str(&mut self, match_against:&str) -> Result<&mut Self, QuMsg> {
-		let tk_op = self.tk_spy_option(0);
-
-		match tk_op {
-			Some(tk) => {
-				if tk == match_against {
-					self.last_op = Some(QuAction::None);
-					self.tk_next_option();
-				} else {
-					self.last_op = None;
-				}
-			},
-			None => {
-				self.last_op = None;
-			},
-		}
-
-		return Ok(self);
-	}
-
-
-	fn match_var_assign(&mut self) -> Result<&mut Self, QuMsg> {
-		if self.utl_statement_start()?.is_none() {
-			self.last_op = None;
-			return Ok(self);
-		}
-
-		// Check if this is variable assignment
-		// HACK: I don't know if saving the token state is needed here. Might
-		// be removable.
-		self.tk_state_save();
-		self.match_variable()?;
-		if !self.required().is_ok() {
-			return Ok(self);
-		}
-		self.keep();
-
-		self.match_str(OP_ASSIGN_SYMBOL)?;
-		if !self.required().is_ok() {
-			self.tk_state_pop();
-			return Ok(self);
-		}
-
-		// Match rest of variable assignment
-		self
-			.match_expression()?
-				.err(||{QuMsg::general("Variable assignment lacks expression. TODO:Better msg")})?
-				.keep()
-			;
-		
-		let (Some(variable), Some(expression)) = (
-			take(&mut self.matched[0]),
-			take(&mut self.matched[1]),
-		) else {
-			return Err(QuMsg::general(
-				"Encountered error in variable assignment."
-			));
-		};
-		self.matched = vec![];
-
-		self.last_op = Some(QuAction::Assign(
-			Box::new(variable),
-			Box::new(expression),
-		));
-
-		return Ok(self);
-	}
-
-
-	fn match_var_decl(&mut self) -> Result<&mut Self, QuMsg> {
-		if self.utl_statement_start()?.is_none() {
-			self.last_op = None;
-			return Ok(self);
-		}
-
-		// Match the 'var' keyword
-		self.match_str(KEYWORD_VAR)?;
-		if !self.required().is_ok() {
-			return Ok(self);
-		}
-		// Match rest of declaration
-		self
-			.match_parameter()?
-				.err(||{QuMsg::general("Variable declaration lacks a name. TODO:Better msg")})?
-				.keep()
-			.match_str(OP_ASSIGN_SYMBOL)?
-				.err(||{QuMsg::general("Variable declaration lacks '='. TODO:Better msg")})?
-			.match_expression()?
-				.err(||{QuMsg::general("Variable declaration lacks expression. TODO:Better msg")})?
-				.keep()
-			;
-		
-		let (Some(expression), Some(var_name))= (
-			self.matched.pop().unwrap(),
-			self.matched.pop().unwrap(),
-		) else {
-			panic!();
-		};
-
-		self.last_op = Some(QuAction::VarDeclare(
-			Box::new(var_name),
-			Some(Box::new(expression)))
-		);
-		return Ok(self);
-	}
-
-
-	/// Matches to [`QuAction::Var`].
-	fn match_var_name(&mut self) -> Result<&mut Self, QuMsg> {
-		if self.match_name()?.required().is_err() {
-			return Ok(self);
-		}
-		let Some(name) = take(&mut self.last_op) else {
-			panic!();
-		};
-		self.last_op = Some(QuAction::Var(Box::new(name)));
-
-		return Ok(self);
-	}
-
-
-	/// Matches an in-scope variable.
-	fn match_variable(&mut self) -> Result<&mut Self, QuMsg> {
-		// TODO: Implement match_variable
-		self.match_var_name()?;
-		return Ok(self);
-	}
-
-
+	
 	/// Parses a Qu script.
-	pub fn parse(&mut self, script:String) -> Result<QuAction, QuMsg> {
+	pub fn parse(&mut self, script:String) -> Result<Vec<QuLeaf>, QuMsg> {
 		self.tk_idx = 0;
 		self.line = 0;
 		self.indent = u8::MAX;
@@ -1696,19 +903,20 @@ pub struct QuParser {
 				u8::MAX)
 		);
 
-		let res = self.match_code_block();
+		let res = self.ck_code_block();
 		match res {
-			Ok(_) => {
+			Ok(data_opt) => {
 				if self.tk_idx != self.tokens.len()-1 {
 					// Parsing ended early, must be an unexpected token
 					panic!("Parsing ended without all tokens being searched");
 				}
-				let leafs = take(&mut self.last_op).ok_or(
-					QuMsg::general(
-						"TODO: Proper error for the function 'parse' not getting a vec of leafs")
-				)?;
-				return Ok(leafs);
+
+				let Some(data) = data_opt
+					else {return Ok(vec![])};
+				return Ok(data);
 			}
+
+			// Add token for location to error
 			Err(mut msg) => {
 				msg.token = self.tk_spy(0).clone();
 				return Err(msg);
@@ -1855,10 +1063,16 @@ pub struct QuParser {
 
 #[cfg(test)]
 mod test_qu_matcher {
+    use crate::QuLeaf;
+    use crate::QuLeafExpr;
+    use crate::parser::FLOW_TYPE_IF;
     use crate::parser::QuAction;
     use crate::QuParser;
 	use crate::QuMsg;
-use crate::tokens::QuToken;
+	use crate::tokens::QuToken;
+use crate::vm::OPLIB;
+
+use super::FLOW_TYPE_WHILE;
 
 	// TODO: Make unit test for parsing expression order
 
@@ -1867,173 +1081,64 @@ use crate::tokens::QuToken;
 		let mut p = QuParser::new();
 		let res = p.parse("2 + 3 - 3".to_owned())?;
 		
-		let expected = QuAction::Block(
-			vec![
-				QuAction::Sub(
-					Box::new(QuAction::Add(
-						Box::new(QuAction::Number(Box::new(
-							QuToken::from_str("2")
-						))),
-						Box::new(QuAction::Number(Box::new(
-							QuToken::from_str("3")
-						))),
+		let expc = vec![
+			QuLeaf::Expression(Box::new(
+				QuLeafExpr::Equation(
+					9,
+					Box::new(QuLeafExpr::Equation(
+						8,
+						Box::new(QuLeafExpr::Number(Box::new(QuToken::from_str("2")))),
+						Box::new(QuLeafExpr::Number(Box::new(QuToken::from_str("3")))),
 					)),
-					Box::new(QuAction::Number(
-						Box::new(QuToken::from_str("3"))
-					)),
+					Box::new(QuLeafExpr::Number(Box::new(QuToken::from_str("3")))),
 				),
-			]
-		);
+			)),
+		];
 
-		assert_eq!(res, expected);
+		assert_eq!(res.len(), expc.len());
+		assert_eq!(res, expc);
 
 		return Ok(());
 	}
 
 
+	macro_rules! test_equation {
+		($symbol:expr, $p:ident) => {
+			{
+				let res = $p.parse(format!("23 {} 18", $symbol))?;
+				let expc = vec![
+					QuLeaf::Expression(
+						Box::new(QuLeafExpr::Equation(
+							OPLIB.op_id_from_symbol($symbol),
+							Box::new(QuLeafExpr::Number(
+								Box::new(QuToken::from_str("23")))
+							),
+							Box::new(QuLeafExpr::Number(
+								Box::new(QuToken::from_str("18")))
+							),
+						)),
+					),
+				];
+				assert_eq!(res, expc);
+			}
+		};
+	}
+
 	#[test]
 	fn parse_expression_outputs() -> Result<(), QuMsg>{
 		let mut p = QuParser::new();
 		
-		// Test lesser
-		let res = p.parse("23 < 18".to_owned())?;
-		let expected = QuAction::Block(vec![
-			QuAction::Les(
-				Box::new(QuAction::Number(Box::new(
-					QuToken::from_str("23")
-				))),
-				Box::new(QuAction::Number(Box::new(
-					QuToken::from_str("18")
-				))),
-			),
-		]);
-		assert_eq!(res, expected);
-
-		// Test lesser or equal
-		let res = p.parse("23 <= 18".to_owned())?;
-		let expected = QuAction::Block(vec![
-			QuAction::Lse(
-				Box::new(QuAction::Number(Box::new(
-					QuToken::from_str("23")
-				))),
-				Box::new(QuAction::Number(Box::new(
-					QuToken::from_str("18")
-				))),
-			),
-		]);
-		assert_eq!(res, expected);
-
-		// Test greater
-		let res = p.parse("23 > 18".to_owned())?;
-		let expected = QuAction::Block(vec![
-			QuAction::Grt(
-				Box::new(QuAction::Number(Box::new(
-					QuToken::from_str("23")
-				))),
-				Box::new(QuAction::Number(Box::new(
-					QuToken::from_str("18")
-				))),
-			),
-		]);
-		assert_eq!(res, expected);
-
-		// Test greater or equal
-		let res = p.parse("23 >= 18".to_owned())?;
-		let expected = QuAction::Block(vec![
-			QuAction::Gte(
-				Box::new(QuAction::Number(Box::new(
-					QuToken::from_str("23")
-				))),
-				Box::new(QuAction::Number(Box::new(
-					QuToken::from_str("18")
-				))),
-			),
-		]);
-		assert_eq!(res, expected);
-
-		// Test equals
-		let res = p.parse("23 == 18".to_owned())?;
-		let expected = QuAction::Block(vec![
-			QuAction::Eql(
-				Box::new(QuAction::Number(Box::new(
-					QuToken::from_str("23")
-				))),
-				Box::new(QuAction::Number(Box::new(
-					QuToken::from_str("18")
-				))),
-			),
-		]);
-		assert_eq!(res, expected);
-
-		// Test not equals
-		let res = p.parse("23 != 18".to_owned())?;
-		let expected = QuAction::Block(vec![
-			QuAction::Neq(
-				Box::new(QuAction::Number(Box::new(
-					QuToken::from_str("23")
-				))),
-				Box::new(QuAction::Number(Box::new(
-					QuToken::from_str("18")
-				))),
-			),
-		]);
-		assert_eq!(res, expected);
-
-		// Test not subtract
-		let res = p.parse("23 - 18".to_owned())?;
-		let expected = QuAction::Block(vec![
-			QuAction::Sub(
-				Box::new(QuAction::Number(Box::new(
-					QuToken::from_str("23")
-				))),
-				Box::new(QuAction::Number(Box::new(
-					QuToken::from_str("18")
-				))),
-			),
-		]);
-		assert_eq!(res, expected);
-
-		// Test not add
-		let res = p.parse("23 + 18".to_owned())?;
-		let expected = QuAction::Block(vec![
-			QuAction::Add(
-				Box::new(QuAction::Number(Box::new(
-					QuToken::from_str("23")
-				))),
-				Box::new(QuAction::Number(Box::new(
-					QuToken::from_str("18")
-				))),
-			),
-		]);
-		assert_eq!(res, expected);
-
-		// Test not divide
-		let res = p.parse("23 / 18".to_owned())?;
-		let expected = QuAction::Block(vec![
-			QuAction::Div(
-				Box::new(QuAction::Number(Box::new(
-					QuToken::from_str("23")
-				))),
-				Box::new(QuAction::Number(Box::new(
-					QuToken::from_str("18")
-				))),
-			),
-		]);
-		assert_eq!(res, expected);
-
-		// Test not multiply
-		let res = p.parse("23 * 18".to_owned())?;
-		let expected = QuAction::Block(vec![
-			QuAction::Mul(
-				Box::new(QuAction::Number(Box::new(
-					QuToken::from_str("23")
-				))),
-				Box::new(QuAction::Number(Box::new(
-					QuToken::from_str("18")
-				))),
-			),
-		]);
-		assert_eq!(res, expected);
+		test_equation!("<", p);
+		//test_equation!("<=", p);
+		test_equation!(">", p);
+		//test_equation!(">=", p);
+		test_equation!("==", p);
+		test_equation!("!=", p);
+		test_equation!("-", p);
+		test_equation!("+", p);
+		test_equation!("/", p);
+		test_equation!("*", p);
+		test_equation!("<", p);
 
 		return Ok(());
 	}
@@ -2045,40 +1150,44 @@ use crate::tokens::QuToken;
 		let res = p.parse("2 + 3 * 9".to_owned())?;
 		let res2 = p.parse("(2 + 3) * 9".to_owned())?;
 
-		let expt = QuAction::Block(
-			vec![
-				QuAction::Add(
-					Box::new(QuAction::Number(Box::new(
-						QuToken::from_str("2")
-					))),
-					Box::new(QuAction::Mul(
-						Box::new(QuAction::Number(Box::new(
-							QuToken::from_str("3")
-						))),
-						Box::new(QuAction::Number(Box::new(
-							QuToken::from_str("9")
-						))),
+		let expt = vec![
+			QuLeaf::Expression(
+				Box::new(QuLeafExpr::Equation(
+					8,
+					Box::new(QuLeafExpr::Number(
+						Box::new(QuToken::from_str("2")),
 					)),
-				)
-			]
-		);
-		let expt2 = QuAction::Block(
-			vec![
-				QuAction::Mul(
-					Box::new(QuAction::Add(
-						Box::new(QuAction::Number(Box::new(
-							QuToken::from_str("2")
-						))),
-						Box::new(QuAction::Number(Box::new(
-							QuToken::from_str("3")
-						))),
+					Box::new(QuLeafExpr::Equation(
+						10,
+						Box::new(QuLeafExpr::Number(
+							Box::new(QuToken::from_str("3")),
+						)),
+						Box::new(QuLeafExpr::Number(
+							Box::new(QuToken::from_str("9")),
+						)),
 					)),
-					Box::new(QuAction::Number(Box::new(
-						QuToken::from_str("9")
-					))),
-				)
-			]
-		);
+				)),
+			),
+		];
+		let expt2 = vec![
+			QuLeaf::Expression(
+				Box::new(QuLeafExpr::Equation(
+					10,
+					Box::new(QuLeafExpr::Equation(
+						8,
+						Box::new(QuLeafExpr::Number(
+							Box::new(QuToken::from_str("2")),
+						)),
+						Box::new(QuLeafExpr::Number(
+							Box::new(QuToken::from_str("3")),
+						)),
+					)),
+					Box::new(QuLeafExpr::Number(
+						Box::new(QuToken::from_str("9")),
+					)),
+				)),
+			),
+		];
 
 		assert_ne!(&res, &res2);
 		assert_eq!(&res, &expt);
@@ -2092,53 +1201,50 @@ use crate::tokens::QuToken;
 	fn parse_flow_if() -> Result<(), QuMsg>{
 		let mut p = QuParser::new();
 		let res = p.parse(r##"
-		if 2:
-			25
+		if 1:
+			2
+			3
+		while 4:
+			5
 		"##.to_owned())?;
 
-		let expected = QuAction::Block(
-			vec![
-				QuAction::If(
-					Box::new(QuAction::Number(Box::new(
-						QuToken::from_str("2")
-					))),
-					Box::new(QuAction::Block(vec![
-						QuAction::Number(Box::new(
-							QuToken::from_str("25")
-						))
-					])),
-				)
-			]
-		);
-
-		assert_eq!(res, expected);
-
-		return Ok(());
-	}
-
-
-	#[test]
-	fn parse_flow_while() -> Result<(), QuMsg>{
-		let mut p = QuParser::new();
-		let res = p.parse(r##"
-		while 2:
-			25
-		"##.to_owned())?;
-
-		let expected = QuAction::Block(
-			vec![
-				QuAction::While(
-					Box::new(QuAction::Number(Box::new(
-						QuToken::from_str("2")
-					))),
-					Box::new(QuAction::Block(vec![
-						QuAction::Number(Box::new(
-							QuToken::from_str("25")
-						))
-					])),
-				)
-			]
-		);
+		let expected = vec![
+			QuLeaf::FlowStatement(
+				FLOW_TYPE_IF,
+				Box::new(QuLeafExpr::Number(
+					Box::new(QuToken::from_str("1")),
+				)),
+				Box::new(QuLeaf::Block(
+					vec![
+						QuLeaf::Expression(
+							Box::new(QuLeafExpr::Number(
+								Box::new(QuToken::from_str("2")),
+							)),
+						),
+						QuLeaf::Expression(
+							Box::new(QuLeafExpr::Number(
+								Box::new(QuToken::from_str("3")),
+							)),
+						),
+					],
+				)),
+			),
+			QuLeaf::FlowStatement(
+				FLOW_TYPE_WHILE,
+				Box::new(QuLeafExpr::Number(
+					Box::new(QuToken::from_str("4")),
+				)),
+				Box::new(QuLeaf::Block(
+					vec![
+						QuLeaf::Expression(
+							Box::new(QuLeafExpr::Number(
+								Box::new(QuToken::from_str("5")),
+							)),
+						),
+					],
+				)),
+			),
+		];
 
 		assert_eq!(res, expected);
 
@@ -2150,19 +1256,22 @@ use crate::tokens::QuToken;
 	fn parse_fn_call() -> Result<(), QuMsg>{
 		let mut p = QuParser::new();
 		let res = p.parse(r##"
-		add()
+		add() + sub()
 		"##.to_owned())?;
 
-		let expected = QuAction::Block(
-			vec![
-				QuAction::FnCall(
-					Box::new(QuAction::Var(Box::new(
-						QuAction::Name(Box::new(QuToken::from_str("add")))
-					))),
-					vec![],
-				)
-			]
-		);
+		let expected = vec![
+			QuLeaf::Expression(
+				Box::new(QuLeafExpr::Equation(
+					OPLIB.op_id_from_symbol("+"),
+					Box::new(QuLeafExpr::FnCall(
+						Box::new(QuToken::from_str("add")),
+					)),
+					Box::new(QuLeafExpr::FnCall(
+						Box::new(QuToken::from_str("sub")),
+					)),
+				)),
+			),
+		];
 
 		assert_eq!(res, expected);
 
@@ -2180,58 +1289,48 @@ use crate::tokens::QuToken;
 				6
 		"##.to_owned())?;
 
-		let expt = QuAction::Block(
-			vec![
-				QuAction::FnDeclare(
-            		Box::new(QuAction::Name(Box::new(QuToken::from_str("add")))),
-            		Box::new(QuAction::Parameters(vec![
-						QuAction::Parameter(
-							Box::new(QuAction::Name(Box::new(
-								QuToken::from_str("a")
-							))),
-							None,
-						),
-						QuAction::Parameter(
-							Box::new(QuAction::Name(Box::new(
-								QuToken::from_str("b")
-							))),
-							None,
-						),
-					])),
-            		Box::new(QuAction::Block(vec![
-                    	QuAction::Number(Box::new(
-							QuToken::from_str("5")
+		let expt = vec![
+			QuLeaf::FnDecl(
+				Box::new(QuToken::from_str("add")),
+				vec![
+					(
+						QuToken::from_str("a"),
+						None,
+					),
+					(
+						QuToken::from_str("b"),
+						None,
+					),
+				],
+				Box::new(QuLeaf::Block(vec![
+					QuLeaf::Expression(
+						Box::new(QuLeafExpr::Number(
+							Box::new(QuToken::from_str("5")),
 						)),
-					])),
-				),
-				QuAction::FnDeclare(
-            		Box::new(QuAction::Name(Box::new(QuToken::from_str("sub")))),
-            		Box::new(QuAction::Parameters(vec![
-						QuAction::Parameter(
-							Box::new(QuAction::Name(Box::new(
-								QuToken::from_str("a")
-							))),
-							Some(Box::new(QuAction::Name(Box::new(
-								QuToken::from_str("int")
-							)))),
-						),
-						QuAction::Parameter(
-							Box::new(QuAction::Name(Box::new(
-								QuToken::from_str("b")
-							))),
-							Some(Box::new(QuAction::Name(Box::new(
-								QuToken::from_str("int")
-							)))),
-						),
-					])),
-            		Box::new(QuAction::Block(vec![
-                    	QuAction::Number(Box::new(
-							QuToken::from_str("6")
+					),
+				])),
+			),
+			QuLeaf::FnDecl(
+				Box::new(QuToken::from_str("sub")),
+				vec![
+					(
+						QuToken::from_str("a"),
+						Some(QuToken::from_str("int")),
+					),
+					(
+						QuToken::from_str("b"),
+						Some(QuToken::from_str("int")),
+					),
+				],
+				Box::new(QuLeaf::Block(vec![
+					QuLeaf::Expression(
+						Box::new(QuLeafExpr::Number(
+							Box::new(QuToken::from_str("6")),
 						)),
-					])),
-				)
-			]
-		);
+					),
+				])),
+			),
+		];
 
 		assert_eq!(res, expt);
 
@@ -2244,25 +1343,22 @@ use crate::tokens::QuToken;
 		let mut p = QuParser::new();
 		let res = p.parse("count = 3/2".to_owned())?;
 
-		let expected = QuAction::Block(
-			vec![
-				QuAction::Assign(
-					Box::new(QuAction::Var(Box::new(
-						QuAction::Name(Box::new(QuToken::from_str("count")))
-					))),
-					Box::new(QuAction::Div(
-						Box::new(QuAction::Number(Box::new(
-							QuToken::from_str("3")
-						))),
-						Box::new(QuAction::Number(Box::new(
-							QuToken::from_str("2")
-						))),
+		let expc = vec![
+			QuLeaf::VarAssign(
+				Box::new(QuToken::from_str("count")),
+				Box::new(QuLeafExpr::Equation(
+					OPLIB.op_id_from_symbol("/"),
+					Box::new(QuLeafExpr::Number(
+						Box::new(QuToken::from_str("3")),
 					)),
-				)
-			]
-		);
+					Box::new(QuLeafExpr::Number(
+						Box::new(QuToken::from_str("2")),
+					)),
+				)),
+			),
+		];
 
-		assert_eq!(res, expected);
+		assert_eq!(&res, &expc);
 
 		return Ok(());
 	}
@@ -2271,30 +1367,25 @@ use crate::tokens::QuToken;
 	#[test]
 	fn parse_variable_declaration() -> Result<(), QuMsg>{
 		let mut p = QuParser::new();
-		let res = p.parse("var count = 20 * 8".to_owned())?;
+		let res = p.parse("var count int = 20 * 8".to_owned())?;
 
-		let expected = QuAction::Block(
-			vec![
-				QuAction::VarDeclare(
-					Box::new(QuAction::Parameter(
-						Box::new(QuAction::Name(
-							Box::new(QuToken::from_str("count")))
-						),
-						None,
+		let expc = vec![
+			QuLeaf::VarDecl(
+				Box::new(QuToken::from_str("count")),
+				Some(Box::new(QuToken::from_str("int"))),
+				Some(Box::new(QuLeafExpr::Equation(
+					OPLIB.op_id_from_symbol("*"),
+					Box::new(QuLeafExpr::Number(
+						Box::new(QuToken::from_str("20")),
 					)),
-					Some(Box::new(QuAction::Mul(
-						Box::new(QuAction::Number(Box::new(
-							QuToken::from_str("20")
-						))),
-						Box::new(QuAction::Number(Box::new(
-							QuToken::from_str("8")
-						))),
-					))),
-				)
-			]
-		);
+					Box::new(QuLeafExpr::Number(
+						Box::new(QuToken::from_str("8")),
+					)),
+				))),
+			),
+		];
 
-		assert_eq!(res, expected);
+		assert_eq!(&res, &expc);
 
 		return Ok(());
 	}

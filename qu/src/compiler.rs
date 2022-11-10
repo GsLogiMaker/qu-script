@@ -64,14 +64,14 @@ pub struct QuCompiler {
 		return match leaf {
 			QuLeafExpr::FnCall(
 				name
-			) => self.cmp_fn_call(name, output_reg),
+			) => self.cmp_fn_call(&name.text, output_reg),
 			QuLeafExpr::Equation(
 				op,
 				left,
 				right
 			) => self.cmp_expr_math(*op, &**left, &**right, output_reg),
-			QuLeafExpr::Int(val)
-				=> Ok(self.cmp_expr_int(*val, output_reg)),
+			QuLeafExpr::Number(val)
+				=> Ok(self.cmp_expr_int(val, output_reg)),
 				QuLeafExpr::Tuple(items)
 				=> self.cmp_expr_tuple(items, output_reg),
 			QuLeafExpr::Var(token)
@@ -108,8 +108,12 @@ pub struct QuCompiler {
 
 
 	/// Compiles a constant integer expression into bytecode.
-	fn cmp_expr_int(&mut self, val:u64, output_reg:u8) -> Vec<u8> {
+	fn cmp_expr_int(&mut self, val:&QuToken, output_reg:u8) -> Vec<u8> {
 		// TODO: Support other int sizes
+
+		let Ok(val) = val.text.parse::<u8>() else {
+			panic!("Could not convert text to number!");
+		};
 
 		let mut code = vec![];
 		// The vm operation
@@ -333,11 +337,11 @@ pub struct QuCompiler {
 			}
 			QuLeaf::FnDecl(
 				name,
-				statements,
 				parameters,
+				statements,
 			) => {
 				// TODO: Compiler fn declaration parameters
-				return self.cmp_fn_decl(name, statements);
+				return self.cmp_fn_decl(&name.text, statements);
 			}
 			QuLeaf::Print(leaf_expr) => {
 				// TODO Handle errors for compiling Print
@@ -394,9 +398,11 @@ pub struct QuCompiler {
 
 
 	/// Compiles a variable declaration.
-	fn cmp_var_decl(&mut self, var_token:&QuToken,
-			variable_type_token:&Option<QuToken>,
-	assign_to:&Option<QuLeafExpr>) -> Result<Vec<u8>, QuMsg> {
+	fn cmp_var_decl(
+		&mut self, var_token:&QuToken,
+		variable_type_token:&Option<Box<QuToken>>,
+		assign_to:&Option<Box<QuLeafExpr>>
+	) -> Result<Vec<u8>, QuMsg> {
 
 		// Check if the variable is already defined
 		if self.is_var_defined(&var_token.text) {
@@ -414,7 +420,7 @@ pub struct QuCompiler {
 					.ok_or_else(|| {
 						let mut msg = QuMsg::undefined_type_access(
 							&type_tk.text);
-						msg.token = type_tk.clone();
+						msg.token = *type_tk.clone();
 						return msg;
 					}
 				)?;
@@ -500,14 +506,14 @@ pub struct QuCompiler {
 		return  match expr_leaf {
 			QuLeafExpr::Equation(_, _, _) => Ok(self.stack_reserve()),
 			QuLeafExpr::FnCall(_) => Ok(self.stack_reserve()),
-			QuLeafExpr::Int(_) => Ok(self.stack_reserve()),
+			QuLeafExpr::Number(_) => Ok(self.stack_reserve()),
 			QuLeafExpr::Tuple(_) => Ok(self.stack_reserve()),
 			QuLeafExpr::Var(name) => {
 				self.get_var_register(&name.text)
 					.ok_or_else(||{
 						let mut msg
 							= QuMsg::undefined_var_access(&name.text);
-						msg.token = name.clone();
+						msg.token = *name.clone();
 						return msg;
 					}
 				)

@@ -113,10 +113,8 @@ pub struct Qu {
 		let leaf_block = parser.parse(code_str)?;
 
 		// Compile
-		// TODO: Change compiler to use QuAction
-		return Ok(vec![]);
-		//let mut c = QuCompiler::new();
-		//return Ok(c.compile(&leaf_block)?);
+		let mut c = QuCompiler::new();
+		return Ok(c.compile(&QuLeaf::Block(leaf_block))?);
 	}
 
 
