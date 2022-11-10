@@ -3,7 +3,7 @@ use crate::QuFunc;
 use crate::QuMsg;
 
 
-/// Defines a [QuOpLibrary] struct
+/// Defines a [QuOpLibrary] struct.
 /// 
 /// Example:
 /// ```
@@ -252,7 +252,7 @@ pub struct QuVm {
 
 } impl QuVm {
 
-	/// Instantiate a new [QuVm] struct.
+	/// Instantiate a new [`QuVm`] struct.
 	pub fn new() -> Self {
 		let mut vm = QuVm { 
 			functions: Vec::default(),

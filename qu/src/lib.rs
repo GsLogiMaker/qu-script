@@ -114,7 +114,7 @@ pub struct Qu {
 
 		// Compile
 		let mut c = QuCompiler::new();
-		return Ok(c.compile(&QuLeaf::Block(leaf_block))?);
+		return Ok(c.compile(&leaf_block)?);
 	}
 
 

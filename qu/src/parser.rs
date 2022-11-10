@@ -1,13 +1,9 @@
 
-use std::fmt;
-use std::fmt::Display;
-use std::mem::take;
 use std::vec;
 
 use crate::errors;
 use crate::TOKEN_TYPE_NAME;
 use crate::tokens::RULES;
-use crate::tokens::TOKEN_TYPE_NUMBER;
 use crate::tokens::tokenize;
 use crate::vm::OPLIB;
 use crate::QuToken;
@@ -17,7 +13,7 @@ use crate::QuMsg;
 pub const FLOW_TYPE_IF:u8 = 0;
 pub const FLOW_TYPE_WHILE:u8 = 1;
 
-pub const KEYWORD_CLASS:&str = "stamp";
+pub const KEYWORD_CLASS:&str = "class";
 pub const KEYWORD_ELSE:&str = "else";
 pub const KEYWORD_ELIF:&str = "elif";
 pub const KEYWORD_FN:&str = "fn";
@@ -40,81 +36,21 @@ pub const OP_MATH_MUL:&str = "*";
 pub const OP_MATH_NEQ:&str = "!=";
 pub const OP_MATH_SUB:&str = "-";
 
-type QuNodeParam = (QuToken, Option<QuToken>);
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum QuAction {
-	/// Holds a left side expression and a right side expression.
-	Assign(Box<QuAction>, Box<QuAction>),
-	/// Holds a [`Vec`] of code.
-	Block(Vec<QuAction>),
-	BlockEnd,
-	BlockStart,
-	/// Holds a [`QuAction::Name`], [`QuAction::Parameters`], and a
-	/// [`QuAction::Block`].
-	FnDeclare(Box<QuAction>, Box<QuAction>, Box<QuAction>),
-	For,
-	/// Holds an expression and a [`QuAction::Block`].
-	If(Box<QuAction>, Box<QuAction>),
-	None,
-	/// Holds QuToken of a name.
-	Name(Box<QuToken>),
-	/// Holds a parameter name [`QuAction::Name`] and optionally its type as
-	/// a [`QuAction::Name`].
-	Parameter(Box<QuAction>, Option<Box<QuAction>>),
-	/// Holds a [`Vec`] of [`QuAction::Parameter`]
-	Parameters(Vec<QuAction>),
-	/// Holds an expression.
-	Return(Option<Box<QuAction>>),
-	/// Holds the [`QuAction::Name`] and the assignment expression.
-	VarDeclare(Box<QuAction>, Option<Box<QuAction>>),
-	/// Holds an expression and a code block.
-	While(Box<QuAction>, Box<QuAction>),
-
-	// --- Expressions ---
-
-	/// Holds two expressions.
-	Add(Box<QuAction>, Box<QuAction>),
-	/// Holds two expressions.
-	Div(Box<QuAction>, Box<QuAction>),
-	/// Holds two expressions.
-	Eql(Box<QuAction>, Box<QuAction>),
-	/// Holds the name of the function and its parameters.
-	FnCall(Box<QuAction>, Vec<QuAction>),
-	/// Greater. Holds two expressions.
-	Grt(Box<QuAction>, Box<QuAction>),
-	/// Greater or equal. Holds two expressions.
-	Gte(Box<QuAction>, Box<QuAction>),
-	/// Lesser . Holds two expressions.
-	Les(Box<QuAction>, Box<QuAction>),
-	/// Lesser or equal. Holds two expressions.
-	Lse(Box<QuAction>, Box<QuAction>),
-	/// Holds two expressions.
-	Mul(Box<QuAction>, Box<QuAction>),
-	/// Holds two expressions.
-	Neq(Box<QuAction>, Box<QuAction>),
-	/// Holds a numeric value as a [`QuToken`].
-	Number(Box<QuToken>),
-	/// Holds two expressions.
-	Sub(Box<QuAction>, Box<QuAction>),
-	/// Holds the [`QuAction::Name`] of the variable.
-	Var(Box<QuAction>),
-}
+type QuBlockNode = Vec<QuLeaf>;
+type QuParamNode = (QuToken, Option<QuToken>);
 
 
 #[derive(Debug, Clone, PartialEq)]
 /// A Qu instruction.
 pub enum QuLeaf {
-	/// A Block of leafs.
-	Block(Vec<QuLeaf>),
 	/// A floating expression
 	Expression(Box<QuLeafExpr>),
 	/// An if statement. Contains an assertion statement and a [`Vec`] of
 	/// instructions.
-	FlowStatement(u8, Box<QuLeafExpr>, Box<QuLeaf>),
+	FlowStatement(u8, Box<QuLeafExpr>, QuBlockNode),
 	/// A function declaration branch. Contains the function name,
 	/// parameters, and instructions.
-	FnDecl(Box<QuToken>, Vec<QuNodeParam>, Box<QuLeaf>),
+	FnDecl(Box<QuToken>, Vec<QuParamNode>, QuBlockNode),
 	/// Prints a register to the console.
 	Print(Box<QuLeafExpr>),
 	/// A return statement for a function
@@ -158,9 +94,6 @@ pub struct QuParser {
 	/// The [QuTokens] being parsed.
 	tokens:Vec<QuToken>,
 
-	last_op:Option<QuAction>,
-	matched:Vec<Option<QuAction>>,
-
 } impl QuParser {
 
 	/// Creates and returns a new [QuParser].
@@ -171,8 +104,6 @@ pub struct QuParser {
 			tk_idx:0,
 			tk_stack:vec![],
 			tokens:vec![],
-			last_op:None,
-			matched:vec![],
 		}
 	}
 
@@ -267,8 +198,8 @@ pub struct QuParser {
 
 		// Check keyword
 		let keyword = match token_type {
-			FLOW_TYPE_IF => "if",
-			FLOW_TYPE_WHILE => "while",
+			FLOW_TYPE_IF => KEYWORD_IF,
+			FLOW_TYPE_WHILE => KEYWORD_WHILE,
 			_ => unimplemented!(),
 		};
 		let keyword_tk = self.tk_next()
@@ -304,7 +235,8 @@ pub struct QuParser {
 			QuLeaf::FlowStatement(
 				token_type,
 				Box::new(expr),
-				Box::new(QuLeaf::Block(scope_data)))
+				scope_data,
+			)
 		));
 	}
 
@@ -378,7 +310,7 @@ pub struct QuParser {
 			QuLeaf::FnDecl(
 				Box::new(fn_name_tk.clone()),
 				params,
-				Box::new(QuLeaf::Block(scope_leafs)),
+				scope_leafs,
 			)
 		));
 	}
@@ -392,7 +324,7 @@ pub struct QuParser {
 
 
 	/// Attempts to parse function parameters, not including parenthesis.
-	fn ck_fn_parameters(&mut self) -> Result<Option<Vec<QuNodeParam>>, QuMsg> {
+	fn ck_fn_parameters(&mut self) -> Result<Option<Vec<QuParamNode>>, QuMsg> {
 		if self.utl_statement_start()?.is_none() {
 			return Ok(None);
 		}
@@ -468,7 +400,7 @@ pub struct QuParser {
 
 	/// Attempts to parse a division expression.
 	fn ck_op_div(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
-		return self.ck_operation("/", &Self::ck_op_mul);
+		return self.ck_operation(OP_MATH_DIV, &Self::ck_op_mul);
 	}
 
 
@@ -745,7 +677,7 @@ pub struct QuParser {
 		};
 
 		// Match optional assignment
-		let mut assign_leaf_opt
+		let assign_leaf_opt
 			= if self.ck_str(OP_ASSIGN_SYMBOL)?.is_some() {
 
 			// Custom error handling
@@ -797,7 +729,7 @@ pub struct QuParser {
 	/// Attempts to parse a variable name and optionally a type.
 	fn ck_var_name_type(
 		&mut self
-	) -> Result<Option<QuNodeParam>, QuMsg> {
+	) -> Result<Option<QuParamNode>, QuMsg> {
 		let name_tk = match self.ck_var_name()? {
 			Some(name_tk) => name_tk,
 			None => {
@@ -811,86 +743,6 @@ pub struct QuParser {
 	}
 
 
-	/// Returns an error if the last match was unsuccessful.
-	fn err<F: FnOnce()->QuMsg>(
-		&mut self, else_clause:F
-	) -> Result<&mut Self, QuMsg> {
-		match &self.last_op {
-			Some(token) => {
-				return Ok(self);
-			},
-			None => {
-				let msg = else_clause();
-				return Err(msg);
-			},
-		}
-	}
-
-
-	fn get_match_token_type(&mut self, tk_type:u8) -> Option<QuToken> {
-		let tk_op = self.tk_spy_option(0);
-
-		match tk_op {
-			Some(tk) => {
-				if tk.tk_type == tk_type {
-					let tk = Some(tk.clone());
-					self.tk_next_option();
-					return tk;
-				} else {
-					return None;
-				}
-				
-			},
-			None => {
-				return None;
-			},
-		}
-	}
-
-
-	/// A helper function for checking operations like addition or equality.
-	fn get_match_operation(
-		&mut self, operator:&str,
-		next:&dyn Fn(&mut Self)->Result<&mut Self, QuMsg>,
-		repeat:&dyn Fn(&mut Self)->Result<&mut Self, QuMsg>,
-		) -> Result<(Option<QuAction>, Option<QuAction>), QuMsg> {
-
-	self.tk_state_save();
-
-	// Check left side for value
-	next(self)?;
-	if let None = self.last_op {
-		self.tk_state_pop();
-		return Ok((None, None));
-	}
-	let data_l = take(&mut self.last_op).unwrap();
-
-	// Check operator
-	let tk_op = self.tk_spy(0);
-	if tk_op != operator {
-		return Ok((Some(data_l), None));
-	}
-	self.tk_next().expect("Improper indentation TODO: Bette message");
-
-	// Check right side for expression
-	repeat(self)?;
-	if let None = self.last_op {
-		self.tk_state_pop();
-		return Ok((Some(data_l), None));
-	}
-	let data_r = take(&mut self.last_op).unwrap();
-
-	return Ok((Some(data_l), Some(data_r)));
-}
-
-
-	/// Stores the last calculated match in *matched*.
-	fn keep(&mut self) -> &mut Self {
-		self.matched.push(take(&mut self.last_op));
-		return self;
-	}
-
-	
 	/// Parses a Qu script.
 	pub fn parse(&mut self, script:String) -> Result<Vec<QuLeaf>, QuMsg> {
 		self.tk_idx = 0;
@@ -925,19 +777,6 @@ pub struct QuParser {
 	}
 
 
-	/// Returns an error if the previous match was unsuccesful.
-	fn required(&mut self) -> Result<&mut Self, QuMsg> {
-		match &self.last_op {
-			Some(token) => {
-				return Ok(self);
-			},
-			None => {
-				return Err(QuMsg::failed_parser_match());
-			},
-		}
-	}
-
-
 	/// A helper function for whenever starting to parse a statement.
 	fn utl_statement_start(&mut self) -> Result<Option<()>, QuMsg> {
 		let tk = self.tk_spy(0);
@@ -968,30 +807,18 @@ pub struct QuParser {
 
 	/// Returns the next token to parse.
 	/// 
-	/// Returns [`Err`] if there is a parser error, Although the
-	/// token can still be accessed from the [`Err`] if the indentation rules
-	/// need to be ignored.
+	/// Error:
 	/// 
-	/// For a [`QuToken`] to follow the indentation rules it must be on
-	/// the same line as its statement, unless the token is indented two times
-	/// more than the statement.
+	/// Returns an [`Err`] if the next [`QuToken`] violates indentation rules.
 	fn tk_next(&mut self) -> Result<&QuToken, QuMsg> {
-		let (line, indent) = (self.line, self.indent);
-		let tk = &self.tokens[self.tk_idx];
-
-		// Check for proper indentation
-		if tk.row != line as u64 {
-			if tk.indent != indent+2 {
-				//panic!("");
-				return Err(QuMsg::invalid_indent());
-			}
-		}
-
-		self.tk_idx += 1;
+		let Some(tk) = self.tk_next_option()
+			else {return Err(QuMsg::invalid_indent())};
 		return Ok(tk);
 	}
 
 
+	/// Returns the next [`QuToken`] to parse or [`None`] if it violates
+	/// indentation rules.
 	fn tk_next_option(&mut self) -> Option<&QuToken> {
 		let (line, indent) = (self.line, self.indent);
 
@@ -1018,7 +845,7 @@ pub struct QuParser {
 	}
 
 
-	/// Returns to a previously saved token index.
+	/// Reverts `tk_idx` to the last index saved by [#tk_state_save].
 	fn tk_state_pop(&mut self) {
 		self.tk_idx = self.tk_stack.pop().unwrap();
 	}
@@ -1066,13 +893,20 @@ mod test_qu_matcher {
     use crate::QuLeaf;
     use crate::QuLeafExpr;
     use crate::parser::FLOW_TYPE_IF;
-    use crate::parser::QuAction;
+    use crate::parser::OP_MATH_ADD;
+    use crate::parser::OP_MATH_DIV;
+    use crate::parser::OP_MATH_EQL;
+    use crate::parser::OP_MATH_GRT;
+    use crate::parser::OP_MATH_LES;
+    use crate::parser::OP_MATH_MUL;
+    use crate::parser::OP_MATH_NEQ;
+    use crate::parser::OP_MATH_SUB;
     use crate::QuParser;
 	use crate::QuMsg;
 	use crate::tokens::QuToken;
-use crate::vm::OPLIB;
+	use crate::vm::OPLIB;
 
-use super::FLOW_TYPE_WHILE;
+	use super::FLOW_TYPE_WHILE;
 
 	// TODO: Make unit test for parsing expression order
 
@@ -1128,17 +962,16 @@ use super::FLOW_TYPE_WHILE;
 	fn parse_expression_outputs() -> Result<(), QuMsg>{
 		let mut p = QuParser::new();
 		
-		test_equation!("<", p);
+		test_equation!(OP_MATH_LES, p);
 		//test_equation!("<=", p);
-		test_equation!(">", p);
+		test_equation!(OP_MATH_GRT, p);
 		//test_equation!(">=", p);
-		test_equation!("==", p);
-		test_equation!("!=", p);
-		test_equation!("-", p);
-		test_equation!("+", p);
-		test_equation!("/", p);
-		test_equation!("*", p);
-		test_equation!("<", p);
+		test_equation!(OP_MATH_EQL, p);
+		test_equation!(OP_MATH_NEQ, p);
+		test_equation!(OP_MATH_SUB, p);
+		test_equation!(OP_MATH_ADD, p);
+		test_equation!(OP_MATH_DIV, p);
+		test_equation!(OP_MATH_MUL, p);
 
 		return Ok(());
 	}
@@ -1214,35 +1047,31 @@ use super::FLOW_TYPE_WHILE;
 				Box::new(QuLeafExpr::Number(
 					Box::new(QuToken::from_str("1")),
 				)),
-				Box::new(QuLeaf::Block(
-					vec![
-						QuLeaf::Expression(
-							Box::new(QuLeafExpr::Number(
-								Box::new(QuToken::from_str("2")),
-							)),
-						),
-						QuLeaf::Expression(
-							Box::new(QuLeafExpr::Number(
-								Box::new(QuToken::from_str("3")),
-							)),
-						),
-					],
-				)),
+				vec![
+					QuLeaf::Expression(
+						Box::new(QuLeafExpr::Number(
+							Box::new(QuToken::from_str("2")),
+						)),
+					),
+					QuLeaf::Expression(
+						Box::new(QuLeafExpr::Number(
+							Box::new(QuToken::from_str("3")),
+						)),
+					),
+				],
 			),
 			QuLeaf::FlowStatement(
 				FLOW_TYPE_WHILE,
 				Box::new(QuLeafExpr::Number(
 					Box::new(QuToken::from_str("4")),
 				)),
-				Box::new(QuLeaf::Block(
-					vec![
-						QuLeaf::Expression(
-							Box::new(QuLeafExpr::Number(
-								Box::new(QuToken::from_str("5")),
-							)),
-						),
-					],
-				)),
+				vec![
+					QuLeaf::Expression(
+						Box::new(QuLeafExpr::Number(
+							Box::new(QuToken::from_str("5")),
+						)),
+					),
+				],
 			),
 		];
 
@@ -1262,7 +1091,7 @@ use super::FLOW_TYPE_WHILE;
 		let expected = vec![
 			QuLeaf::Expression(
 				Box::new(QuLeafExpr::Equation(
-					OPLIB.op_id_from_symbol("+"),
+					OPLIB.op_id_from_symbol(OP_MATH_ADD),
 					Box::new(QuLeafExpr::FnCall(
 						Box::new(QuToken::from_str("add")),
 					)),
@@ -1302,13 +1131,13 @@ use super::FLOW_TYPE_WHILE;
 						None,
 					),
 				],
-				Box::new(QuLeaf::Block(vec![
+				vec![
 					QuLeaf::Expression(
 						Box::new(QuLeafExpr::Number(
 							Box::new(QuToken::from_str("5")),
 						)),
 					),
-				])),
+				]
 			),
 			QuLeaf::FnDecl(
 				Box::new(QuToken::from_str("sub")),
@@ -1322,13 +1151,13 @@ use super::FLOW_TYPE_WHILE;
 						Some(QuToken::from_str("int")),
 					),
 				],
-				Box::new(QuLeaf::Block(vec![
+				vec![
 					QuLeaf::Expression(
 						Box::new(QuLeafExpr::Number(
 							Box::new(QuToken::from_str("6")),
 						)),
 					),
-				])),
+				]
 			),
 		];
 
@@ -1347,7 +1176,7 @@ use super::FLOW_TYPE_WHILE;
 			QuLeaf::VarAssign(
 				Box::new(QuToken::from_str("count")),
 				Box::new(QuLeafExpr::Equation(
-					OPLIB.op_id_from_symbol("/"),
+					OPLIB.op_id_from_symbol(OP_MATH_DIV),
 					Box::new(QuLeafExpr::Number(
 						Box::new(QuToken::from_str("3")),
 					)),
@@ -1374,7 +1203,7 @@ use super::FLOW_TYPE_WHILE;
 				Box::new(QuToken::from_str("count")),
 				Some(Box::new(QuToken::from_str("int"))),
 				Some(Box::new(QuLeafExpr::Equation(
-					OPLIB.op_id_from_symbol("*"),
+					OPLIB.op_id_from_symbol(OP_MATH_MUL),
 					Box::new(QuLeafExpr::Number(
 						Box::new(QuToken::from_str("20")),
 					)),

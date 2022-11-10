@@ -174,7 +174,7 @@ pub struct QuCompiler {
 
 
 	/// Compiles an *if* statement into bytecode.
-	fn cmp_flow_if(&mut self, condition:&QuLeafExpr, body:&Box<QuLeaf>
+	fn cmp_flow_if(&mut self, condition:&QuLeafExpr, body:&Vec<QuLeaf>
 	) -> Result<Vec<u8>, QuMsg> {
 		// Get expression register
 		let mut expr_code = with!{
@@ -207,7 +207,7 @@ pub struct QuCompiler {
 
 
 	/// Compiles a *while* statement into bytecode.
-	fn cmp_flow_while(&mut self, condition:&QuLeafExpr, body:&Box<QuLeaf>
+	fn cmp_flow_while(&mut self, condition:&QuLeafExpr, body:&Vec<QuLeaf>
 	) -> Result<Vec<u8>, QuMsg> {
 		// Get expression register
 		let mut expr_code = with!(
@@ -272,7 +272,7 @@ pub struct QuCompiler {
 	}
 
 
-	fn cmp_fn_decl(&mut self, name:&str, body:&QuLeaf
+	fn cmp_fn_decl(&mut self, name:&str, body:&Vec<QuLeaf>
 	) -> Result<Vec<u8>, QuMsg> {
 		let code = with!(self.stack_frame_start, self.stack_frame_end {
 			let name_index = self.str_constants.len() as u32;
@@ -281,7 +281,7 @@ pub struct QuCompiler {
 			self.functions.insert(name.to_string(), name_index);
 
 			// Compile code block
-			let mut body_compiled = self.cmp_leaf(body)?;
+			let mut body_compiled = self.cmp_leafs(body)?;
 			body_compiled.push(OPLIB.end);
 			let code_length = body_compiled.len() as u32;
 
@@ -304,14 +304,6 @@ pub struct QuCompiler {
 	/// Compiles a [QuLeaf] into bytecode.
 	fn cmp_leaf(&mut self, leaf:&QuLeaf) -> Result<Vec<u8>, QuMsg> {
 		match leaf {
-			QuLeaf::Block(leafs) => {
-				let mut code = vec![];
-				for block_leaf in leafs {
-					let mut block_code = self.cmp_leaf(block_leaf)?;
-					code.append(&mut block_code);
-				}
-				return Ok(code);
-			},
 			QuLeaf::Expression(
 				expr_leaf,
 			) => {
@@ -374,6 +366,16 @@ pub struct QuCompiler {
 					name_rk, value_leaf);
 			}
 		};
+	}
+
+
+	/// Compiles a [`Vec<QuLeaf>`] into bytecode.
+	fn cmp_leafs(&mut self, leafs:&Vec<QuLeaf>) -> Result<Vec<u8>, QuMsg> {
+		let mut code = vec![];
+		for l in leafs {
+			code.append(&mut self.cmp_leaf(l)?);
+		}
+		return Ok(code);
 	}
 
 
@@ -454,10 +456,10 @@ pub struct QuCompiler {
 
 
 	/// Compiles a scope.
-	fn cmp_scope(&mut self, leaf:&QuLeaf) -> Result<Vec<u8>, QuMsg> {
+	fn cmp_scope(&mut self, leaf:&Vec<QuLeaf>) -> Result<Vec<u8>, QuMsg> {
 		let compiled = with!{
 			self.stack_frame_start, self.stack_frame_end {
-				/*return*/ self.cmp_leaf(leaf)
+				/*return*/ self.cmp_leafs(leaf)
 			}
 		};
 		return compiled;
@@ -485,7 +487,7 @@ pub struct QuCompiler {
 
 
 	/// Compiles from a [QuLeaf] instruction into bytecode (into a [Vec]<[u8]>.)
-	pub fn compile(&mut self, leafs:&QuLeaf) -> Result<Vec<u8>, QuMsg> {
+	pub fn compile(&mut self, leafs:&Vec<QuLeaf>) -> Result<Vec<u8>, QuMsg> {
 		// Main code
 		let mut code = self.cmp_scope(leafs)?;
 		code.push(OPLIB.end);
