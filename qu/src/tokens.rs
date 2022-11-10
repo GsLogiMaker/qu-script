@@ -238,6 +238,7 @@ pub fn chars_fit_rule<'a>(chars:&Vec<char>, rules:&Rules<'a>) -> (bool, u8) {
 
 /// A slice of a script file with information on the row, column, and indent of
 /// the slice.
+#[derive(Default)]
 pub struct QuToken {
 	/// Where in the script this token starts.
 	pub begin:u64,

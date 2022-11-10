@@ -1,9 +1,11 @@
 
+use std::mem::take;
 use std::vec;
 
 use crate::errors;
 use crate::TOKEN_TYPE_NAME;
 use crate::tokens::RULES;
+use crate::tokens::TOKEN_TYPE_NUMBER;
 use crate::tokens::tokenize;
 use crate::vm::OPLIB;
 use crate::QuToken;
@@ -262,27 +264,19 @@ pub struct QuParser {
 		self.tk_state_save();
 
 		// Check function name
-		let fn_name_opt = self.ck_fn_name()?;
-
-		let fn_name_tk = match fn_name_opt {
-			Some(name) => name,
-			None => {return Ok(None)},
-		};
+		let Some(fn_name_tk) = self.ck_fn_name()?
+			else {return Ok(None)};
 
 		// Match an open '('
-		let opening_p = match self.tk_next() {
-			Ok(tk) => tk,
-			Err(_) => {return Ok(None)},
-		};
-		if opening_p!= "(" {
-			self.tk_state_pop();
-			return Ok(None);
-		}
+		let Ok(Some(_)) = self.ck_str("(")
+			else {
+				self.tk_state_pop();
+				return Ok(None);
+			};
 
 		// Match a close ')'
-		if self.tk_next()? != ")" {
-			return Err(QuMsg::missing_token(")"));
-		}
+		let Some(_) = self.ck_str(")")?
+			else {return Err(QuMsg::missing_token(")"))};
 
 		return Ok(Some(QuLeafExpr::FnCall(Box::new(fn_name_tk.clone()))));
 	}
@@ -347,6 +341,18 @@ pub struct QuParser {
 			)};
 
 		return Ok(Some(params));
+	}
+
+
+	/// Attempts to parse a number literal
+	fn ck_number(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
+		let tk = self.tk_spy(0);
+		if tk.tk_type == TOKEN_TYPE_NUMBER {
+			return Ok(Some(
+				QuLeafExpr::Number(Box::new(self.tk_next()?.clone()))
+			))
+		}
+		return Ok(None);
 	}
 
 
@@ -600,16 +606,34 @@ pub struct QuParser {
 	/// Attempts to parse a value.
 	fn ck_value(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
 		self.tk_state_save();
+		if self.tk_next_option().is_none() {
+			self.tk_state_pop();
+			return Ok(None);
+		}
+		self.tk_state_pop();
+
 		// Check function call
 		if let Some(leaf) = self.ck_fn_call()? {
 			return Ok(Some(leaf));
 		}
-		self.tk_state_pop();
 
-		self.tk_state_save();
-		let tk = self.tk_next()?;
+		// Check variable
+		if let Some(leaf) = self.ck_var()? {
+			return Ok(Some(leaf));
+		}
 
-		return Ok(Some(QuLeafExpr::Number(Box::new(tk.clone()))));
+		return Ok(self.ck_number()?);
+	}
+
+
+	/// Attempts to parse a variable as an expression.
+	fn ck_var(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
+		let Some(var_name) = self.ck_var_name()?
+			else {return Ok(None)};
+
+		return Ok(Some(
+			QuLeafExpr::Var(Box::new(var_name))
+		));
 	}
 
 
@@ -812,7 +836,9 @@ pub struct QuParser {
 	/// Returns an [`Err`] if the next [`QuToken`] violates indentation rules.
 	fn tk_next(&mut self) -> Result<&QuToken, QuMsg> {
 		let Some(tk) = self.tk_next_option()
-			else {return Err(QuMsg::invalid_indent())};
+			else {
+				return Err(QuMsg::invalid_indent())
+			};
 		return Ok(tk);
 	}
 
@@ -872,8 +898,6 @@ pub struct QuParser {
 
 	/// Returns a &[QuToken] relative to the current token index without
 	/// incrementing the current token index.
-	/// 
-	/// This function will not check if the token follows indentation rules.
 	fn tk_spy_option(&mut self, at:usize) -> Option<&QuToken> {
 		if self.tk_idx+at >= self.tokens.len() {
 			return None;
@@ -909,6 +933,38 @@ mod test_qu_matcher {
 	use super::FLOW_TYPE_WHILE;
 
 	// TODO: Make unit test for parsing expression order
+
+	#[test]
+	fn parse_code_example() -> Result<(), QuMsg>{
+		let mut p = QuParser::new();
+		let res = p.parse(r#"
+		 	fn add():
+		 		var left = 2
+		 		var right = 5
+		 		print left + right
+		 
+		 	add()
+		"#.to_owned())?;
+		
+		let expc = vec![
+			QuLeaf::Expression(Box::new(
+				QuLeafExpr::Equation(
+					9,
+					Box::new(QuLeafExpr::Equation(
+						8,
+						Box::new(QuLeafExpr::Number(Box::new(QuToken::from_str("2")))),
+						Box::new(QuLeafExpr::Number(Box::new(QuToken::from_str("3")))),
+					)),
+					Box::new(QuLeafExpr::Number(Box::new(QuToken::from_str("3")))),
+				),
+			)),
+		];
+
+		dbg!(&res);
+
+		return Ok(());
+	}
+	
 
 	#[test]
 	fn parse_expression() -> Result<(), QuMsg>{

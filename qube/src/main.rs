@@ -25,7 +25,6 @@ SOFTWARE.
 
 use qu::Qu;
 
-
 fn main() {
 	println!("---START---\n");
 

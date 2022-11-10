@@ -728,3 +728,32 @@ pub struct QuVm {
 	}
 
 }
+
+
+#[cfg(test)]
+mod test_vm {
+    use std::any::Any;
+
+    use crate::{Qu, QuMsg};
+
+	#[test]
+	fn test_runtime_object_storage() -> Result<(), QuMsg>{
+		let mut v:Vec<Box<dyn Any>> = vec![];
+		v.push(Box::new(5u8));
+		v.push(Box::new("hello wolrd!"));
+
+		let a = &v[0];
+		let b = &v[1];
+
+		let Some(a_int) = a.downcast_ref::<u8>()
+			else {return Err(QuMsg::general("First is not int"))};
+		let Some(b_str) = b.downcast_ref::<&str>()
+			else {return Err(QuMsg::general("Second is not str"))};
+		
+		assert_eq!(a_int, &5u8);
+		assert_eq!(b_str, &"hello wolrd!");
+
+		return Ok(());
+	}
+
+}

@@ -26,7 +26,6 @@ SOFTWARE.
 //! TODO: Project level documentation.
 
 #![warn(missing_docs)]
-#![warn(rustdoc::missing_doc_code_examples)]
 #![warn(rustdoc::broken_intra_doc_links)]
 
 
@@ -57,7 +56,7 @@ mod tests {
 }
 
 
-use tokens::{RULES, TOKEN_TYPE_NAME, tokenize, QuToken};
+use tokens::{TOKEN_TYPE_NAME, QuToken};
 pub use errors::QuMsg;
 pub use compiler::QuCompiler;
 pub use parser::{QuParser, QuLeaf, QuLeafExpr};
@@ -65,26 +64,37 @@ pub use vm::QuVm;
 
 
 /// The interface for the Qu programming language.
-///
+/// 
 /// # Examples
 /// ```
-/// // FIXME:
-/// //use qu::Qu;
-/// //let mut qu = Qu::new();
-/// //qu.run("
-/// //	fn add():
-/// //		var left = 2
-/// //		var right = 5
-/// //		print left + right
-/// //
-/// //	add()
-/// //").unwrap();
+/// # use qu::Qu;
+/// # use qu::QuMsg;
+/// # fn main() {run_test().unwrap();}
+/// # fn run_test() -> Result<(), QuMsg>{
+/// let mut qu = Qu::new();
+/// qu.run(r#"
+/// 	fn add():
+/// 		var left = 2
+/// 		var right = 5
+/// 		print left + right
+/// 
+/// 	add()
+/// "#)?;
+/// # return Ok(());
+/// # }
 /// ```
 pub struct Qu {
 	vm:QuVm,
 
 } impl Qu {
-	/// Instantiates the [Qu] struct.
+	/// Instantiates a [`Qu`] struct.
+	/// 
+	/// # Examples
+	/// 
+	/// ```
+	/// # use qu::Qu;
+	/// let qu = Qu::new();
+	/// ```
 	pub fn new() -> Self {
 		Qu {
 			vm:QuVm::new(),
@@ -92,19 +102,23 @@ pub struct Qu {
 	}
 
 
-	/// Compiles Qu script into bytecode.
+	/// Compiles Qu script into a [`Vec<u8>`].
 	///
-	/// Examples:
+	/// # Errors
+	/// 
+	/// If `code` contains improper Qu syntax then an [`Err`] is returned.
+	/// 
+	/// # Examples
 	/// 
 	/// ```
-	/// // FIXME:
-	/// //use qu::Qu;
-	/// //use qu::OPLIB;
-	/// //
-	/// //let qu = Qu::new();
-	/// //let bytecode = qu.compile("vl count = 0").unwrap();
-	/// //
-	/// //assert_eq!(bytecode, vec![OPLIB.load_val_u8, 0, 0, OPLIB.end]);
+	/// # use qu::Qu;
+	/// # use qu::QuMsg;
+	/// # fn main(){example().unwrap()}
+	/// # fn example() -> Result<(), QuMsg> {
+	/// let qu = Qu::new();
+	/// let bytecode = qu.compile("var count = 0")?;
+	/// # return Ok(());
+	/// # }
 	/// ```
 	pub fn compile(&self, code:&str) -> Result<Vec<u8>, QuMsg> {
 		// Parse
@@ -118,25 +132,34 @@ pub struct Qu {
 	}
 
 
-	/// Compiles Qu code to Qu assembly.
+	/// Compiles Qu code to a [`String`] representing Qu assembly.
 	/// 
-	/// Example:
+	/// # Errors
+	/// 
+	/// If `code` contains improper Qu syntax then an [`Err`] is returned.
+	/// 
+	/// # Example
 	/// 
 	/// ```
-	/// // TODO: Fix doc tests
-	/// //use qu::Qu;
-	/// //use qu::OPLIB;
-	/// //
-	/// //let mut qu = Qu::new();
-	/// //let asm = qu.compile_to_asm("vl added = 5 + 6").unwrap();
-	/// //
-	/// //assert_eq!(asm, "\nLDU8 6 1\nLDU8 5 0\nADD 0 1 0\nEND".to_string());
+	/// # use qu::Qu;
+	/// # use qu::QuMsg;
+	/// # fn main() {example().unwrap()}
+	/// # fn example() -> Result<(), QuMsg> {
+	/// let mut qu = Qu::new();
+	/// let asm = qu.compile_to_asm("var added = 5 + 6")?;
+	/// 
+	/// assert_eq!(
+	/// 	asm,
+	/// 	format!("{}{}{}{}",
+	/// 		"\nLDU8 5 0",
+	/// 		"\nLDU8 6 1",
+	/// 		"\nADD 0 1 0",
+	/// 		"\nEND",
+	///	 	)
+	/// );
+	/// # return Ok(());
+	/// # }
 	/// ```
-	/// 
-	/// Errors:
-	/// 
-	/// Returns a [String] if compilation is successful, otherwise returns a
-	/// [QuMsg] if invalid syntax was given.
 	pub fn compile_to_asm(&mut self, code:&str) -> Result<String, QuMsg> {
 		let code = self.compile(code)?;
 
@@ -144,22 +167,25 @@ pub struct Qu {
 	}
 
 
-	/// Runs a [String] of Qu code.
+	/// Runs [`&str`] as Qu script.
 	/// 
-	/// Example:
+	/// # Errors
+	/// 
+	/// If `code` contains improper Qu syntax or if a Qu runtime error occurs
+	/// then an [`Err`] is returned.
+	/// 
+	/// # Example
 	/// 
 	/// ```
-	/// // FIXME:
-	/// //use qu::Qu;
-	/// //
-	/// //let mut qu = Qu::new();
-	/// //qu.run("vl count = 5 + 6").unwrap();
+	/// # use qu::Qu;
+	/// # use qu::QuMsg;
+	/// # fn main(){example().unwrap()}
+	/// # fn example() -> Result<(), QuMsg> {
+	/// let mut qu = Qu::new();
+	/// qu.run("var count = 5 + 6")?;
+	/// # return Ok(());
+	/// # }
 	/// ```
-	/// 
-	/// Errors:
-	/// 
-	/// Returns an empty [Ok] when ran successfully, otherwise returns a [QuMsg]
-	/// if improper syntax was given, or if there was a runtime error raised.
 	pub fn run(&mut self, script:&str) -> Result<(), QuMsg> {
 		let code_res = self.compile(script);
 		match code_res{
@@ -174,23 +200,26 @@ pub struct Qu {
 	}
 
 
-	/// Runs Qu bytecode.
+	/// Runs `&[u8]` as Qu bytecode.
 	/// 
-	/// Example:
+	/// # Errors
+	/// 
+	/// If `bytes` does not pass the sanity checks or a Qu runtime error
+	/// occurs then an [`Err`] is returned.
+	/// 
+	/// # Examples
 	/// 
 	/// ```
-	/// // FIXME:
-	/// //use qu::Qu;
-	/// //
-	/// //let mut qu = Qu::new();
-	/// //let bytecode = qu.compile("vl count = 5 + 6").unwrap();
-	/// //qu.run_bytes(&bytecode).unwrap();
+	/// # use qu::Qu;
+	/// # use qu::QuMsg;
+	/// # fn main(){example().unwrap()}
+	/// # fn example() -> Result<(), QuMsg> {
+	/// let mut qu = Qu::new();
+	/// let bytecode = qu.compile("var count = 5 + 6")?;
+	/// qu.run_bytes(&bytecode)?;
+	/// # return Ok(());
+	/// # }
 	/// ```
-	/// 
-	/// Errors:
-	/// 
-	/// Returns an empty [Ok] when ran successfully, otherwise returns a [QuMsg]
-	/// if improper syntax was given, or if there was a runtime error raised.
 	pub fn run_bytes(&mut self, bytes:&[u8]) -> Result<(), QuMsg> {
 		return self.vm.run_bytes(bytes);
 	}
@@ -292,3 +321,22 @@ struct QuVar {
 
 }
 
+#[cfg(test)]
+mod test_lib {
+    use crate::{Qu, QuMsg};
+
+	#[test]
+	fn run_qu_example() -> Result<(), QuMsg>{
+		let mut qu = Qu::new();
+		qu.run(r#"
+			fn add():
+				var left = 2
+				var right = 5
+				print left + right
+		
+			add()
+		"#)?;
+		return Ok(());
+	}
+
+}

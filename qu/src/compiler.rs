@@ -112,7 +112,7 @@ pub struct QuCompiler {
 		// TODO: Support other int sizes
 
 		let Ok(val) = val.text.parse::<u8>() else {
-			panic!("Could not convert text to number!");
+			panic!("Could not convert text '{}' to number!", val.text);
 		};
 
 		let mut code = vec![];
