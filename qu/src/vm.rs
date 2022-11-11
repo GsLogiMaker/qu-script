@@ -1,6 +1,11 @@
 
-use crate::QuFunc;
+use std::any::Any;
+use std::collections::HashMap;
+
 use crate::QuMsg;
+use crate::objects::QuCodeObject;
+use crate::objects::QuFnObject;
+use crate::objects::QuType;
 
 
 /// Defines a [QuOpLibrary] struct.
@@ -235,13 +240,19 @@ pub struct QuOperation<'a> {
 /// 
 /// This struct is not meant to be accessed directly (in most cases). See
 /// [Qu] for interfacing with Qu script.
+#[derive(Debug, Default)]
 pub struct QuVm {
-	/// A [Vec] of all defined [QuFunc]s.
-	functions:Vec<QuFunc>,
-	/// All defined constant [String]s.
-	str_constants:Vec<String>,
 	/// Holds the outputed value of the last executed operation.
 	hold:usize,
+
+	/// Holds defined constants.
+	constants:Vec<Box<dyn Any>>,
+	/// Maps constant names to their index in [`QuMemory::constants`].
+	constant_map:HashMap<String, usize>,
+	/// Holds allocated data types.
+	memory:Vec<Box<dyn Any>>,
+	/// Maps variable names to their index in [`QuMemory::memory`].
+	memory_map:HashMap<String, usize>,
 
 	/// The memory registers. Holds all primatives of the VM.
 	registers:Vec<RegisterValue>,
@@ -252,12 +263,23 @@ pub struct QuVm {
 
 } impl QuVm {
 
-	/// Instantiate a new [`QuVm`] struct.
+	/// Constructs a new [`QuVm`].
+	/// 
+	/// # Example
+	/// 
+	/// ```
+	/// # use qu::QuVm;;
+	/// let vm = QuVm::new();
+	/// ```
 	pub fn new() -> Self {
 		let mut vm = QuVm { 
-			functions: Vec::default(),
-			str_constants: Vec::default(),
 			hold: usize::default(),
+
+			constants: Vec::default(),
+			constant_map: HashMap::default(),
+			memory: Vec::default(),
+			memory_map: HashMap::default(),
+
 			registers:Vec::with_capacity(u8::MAX as usize),
 			register_offset: 0,
 			pc: 0,
@@ -270,18 +292,14 @@ pub struct QuVm {
 
 
 	/// Converts byte code to human readable Qu assembly instructions.
-	/// Example:
+	/// 
+	/// # Example
 	/// 
 	/// ```
-	/// // FIXME:
-	/// //use qu::QuVm;
-	/// //use qu::OPLIB;
-	/// //
-	/// //// Bytecode representing an add operation which adds 5 and 6, then
-	/// //// stores the result in register 0.
-	/// //let asm = QuVm::code_to_asm(&[8, 5, 6, 0], false);
-	/// //
-	/// //assert_eq!(asm, "\nADD 5 6 0".to_string());
+	/// # use qu::QuVm;
+	/// let asm = QuVm::code_to_asm(&[8, 5, 6, 0], false);
+	/// 
+	/// assert_eq!(asm, "\nADD 5 6 0".to_owned());
 	/// ```
 	pub fn code_to_asm(code:&[u8], include_line_columns:bool
 	) -> String {
@@ -361,30 +379,84 @@ pub struct QuVm {
 	}
 
 
-	/// Defines a constant [String] in the VM.
+	/// Defines a new constant in Qu.
 	///
-	/// Example:
+	/// # Examples
 	/// 
 	/// ```
-	/// use qu::QuVm;
-	/// 
+	/// # use qu::QuVm;
+	/// # use qu::QuMsg;
+	/// # fn main() {example().unwrap()}
+	/// # fn example() -> Result<(), QuMsg> {
 	/// let mut vm = QuVm::new();
-	/// vm.define_const_string("Hello world!");
-	/// vm.define_const_string("The second!");
+	/// vm.define_const("BIRTHDAY".to_owned(), Box::new("c280800"));
 	/// 
-	/// assert_eq!(vm.get_const_string(0), "Hello world!");
-	/// assert_eq!(vm.get_const_string(1), "The second!");
+	/// let constant = vm.get_const::<&str>("BIRTHDAY")?;
+	/// assert_eq!(*constant, "c280800");
+	/// # return Ok(());
+	/// # }
 	/// ```
-	#[inline]
-	pub fn define_const_string(&mut self, value:&str) {
-		self.str_constants.push(value.to_owned());
+	pub fn define_const(&mut self, name:String, value:Box<dyn Any>) {
+		assert_eq!(self.constants.len(), self.constant_map.len());
+		let const_index = self.constants.len();
+
+		self.constants.push(value);
+		self.constant_map.insert(name.to_owned(), const_index);
 	}
 
 
-	/// Defines a Qu function in the VM.
+	/// Defines a Qu function.
+	/// 
+	/// # Example
+	/// 
+	/// ```
+	/// # use qu::QuVm;
+	/// let vm = QuVm::new();
+	/// 
+	/// vm.define_fn("add", 0);
+	/// assert_eq!(
+	/// 	*vm.get_const("add"),
+	/// 	QuFnObject::new(
+	///			vec![],
+	///			QuCodeObject::new(0),
+	///			QuType::Void,
+	///		))
+	/// ```
 	fn define_fn(&mut self, name:&str, code_start:usize) {
-		let id = self.functions.len();
-		self.functions.push(QuFunc::new(&name, id, code_start));
+		self.define_const(
+			name.to_owned(),
+			Box::new(QuFnObject::new(
+				vec![],
+				QuCodeObject::new(code_start),
+				QuType::Void,
+			))
+		);
+	}
+
+
+	/// Defines a variable in Qu memory.
+	/// 
+	/// # Examples
+	/// 
+	/// ```
+	/// # use qu::QuVm;
+	/// # use qu::QuMsg;
+	/// # fn main() {example().unwrap()}
+	/// # fn example() -> Result<(), QuMsg> {
+	/// let mut vm = QuVm::new();
+	/// vm.define_mem("name".to_owned(), Box::new("Dave"));
+	/// 
+	/// let constant = vm.get_mem::<&str>("name")?;
+	/// assert_eq!(*constant, "name");
+	/// # return Ok(());
+	/// # }
+	/// ```
+	pub fn define_mem(&mut self, name:String, value:Box<dyn Any>) {
+		assert_eq!(self.memory.len(), self.memory_map.len());
+		let const_index = self.memory.len();
+
+		self.memory.push(value);
+		self.memory_map.insert(name.to_owned(), const_index);
 	}
 
 
@@ -397,43 +469,39 @@ pub struct QuVm {
 
 	/// Reads the bytecode of a function call command and executes it.
 	fn exc_call_fn(&mut self, code:&[u8]) -> Result<(), QuMsg> {
-		let fn_id = self.next_u32(code) as usize;
-		let frame_offset = self.next_u8(code) as usize;
-
-		self.register_offset += frame_offset;
-		// Assure registers is big enought to fit u8::MAX more values
-		if (self.register_offset + u8::MAX as usize) > self.registers.len() {
-			self.registers.resize(
-				self.register_offset + u8::MAX as usize, 0);
-		}
-		let return_pc = self.pc;
-
-		self.frame_start(self.functions[fn_id].code_start);
-		self.do_loop(code)?;
-
-		self.register_offset -= frame_offset;
-		self.pc = return_pc;
-
-		return Ok(());
-	}
-
-
-	fn exc_define_const_str(&mut self, code:&[u8]) {
-		let string = self.next_ascii(code);
-		self.define_const_string(&string);
+		unimplemented!();
+//		let fn_id = self.next_u32(code) as usize;
+//		let frame_offset = self.next_u8(code) as usize;
+//
+//		self.register_offset += frame_offset;
+//		// Assure registers is big enought to fit u8::MAX more values
+//		if (self.register_offset + u8::MAX as usize) > self.registers.len() {
+//			self.registers.resize(
+//				self.register_offset + u8::MAX as usize, 0);
+//		}
+//		let return_pc = self.pc;
+//
+//		self.frame_start(self.get_const(name)[fn_id].body.code_start);
+//		self.do_loop(code)?;
+//
+//		self.register_offset -= frame_offset;
+//		self.pc = return_pc;
+//
+//		return Ok(());
 	}
 
 
 	/// Defines a function from next bytes in the code.
 	fn exc_define_fn(&mut self, code:&[u8]) {
-		let name_const_idx = self.next_u32(code) as usize;
-		let fn_length = self.next_u32(code) as usize;
-
-		let name = self.get_const_string(name_const_idx).to_owned();
-		let code_start = self.pc;
-
-		self.define_fn(&name, code_start);
-		self.pc += fn_length;
+		unimplemented!();
+//		let name_const_idx = self.next_u32(code) as usize;
+//		let fn_length = self.next_u32(code) as usize;
+//
+//		let name = self.get_const_string(name_const_idx).to_owned();
+//		let code_start = self.pc;
+//
+//		self.define_fn(&name, code_start);
+//		self.pc += fn_length;
 	}
 
 
@@ -548,23 +616,230 @@ pub struct QuVm {
 	}
 
 
-	#[inline]
-	/// Returns a previously defined constant &[str] by its index.
-	pub fn get_const_string(&self, at:usize) -> &str {
-		//!
-		//! Example:
-		//! 
-		//! ```
-		//! use qu::QuVm;
-		//! 
-		//! let mut vm = QuVm::new();
-		//! vm.define_const_string("Hello world!");
-		//! vm.define_const_string("The second!");
-		//! 
-		//! assert_eq!(vm.get_const_string(0), "Hello world!");
-		//! assert_eq!(vm.get_const_string(1), "The second!");
-		//! ```
-		return self.str_constants[at].as_str();
+	/// Returns a reference to a Qu constant.
+	/// 
+	/// # Errors
+	/// 
+	/// If no constant called `name` is found or if the constant can't be cast
+	/// to `T` then an [`Err`] is returned.
+	/// 
+	/// # Examples
+	/// 
+	/// ```
+	/// # use qu::QuVm;
+	/// # use qu::QuMsg;
+	/// # fn main() {example().unwrap()}
+	/// # fn example() -> Result<(), QuMsg> {
+	/// let mut vm = QuVm::new();
+	/// vm.define_const("MEANING_OF_LIFE".to_owned(), Box::new(42));
+	/// 
+	/// let constant = vm.get_const::<i32>("MEANING_OF_LIFE")?;
+	/// assert_eq!(*constant, 42);
+	/// # return Ok(());
+	/// # }
+	/// ```
+	pub fn get_const<'a, T:'a + 'static>(&'a self, name:&str
+	) -> Result<&T, QuMsg> {
+		let Some(index) = self.constant_map.get(&name.to_owned())
+			else {return Err(QuMsg::general(
+				&format!("No constant by name {name} found. TODO: Better msg.")
+			))};
+		
+		let const_ref = self.get_const_by_index::<T>(*index)?;
+
+		return Ok(const_ref);
+	}
+
+
+	/// Returns a reference to a Qu constant by its index.
+	/// 
+	/// # Errors
+	/// 
+	/// If `index` is out of range or the constant can't be cast to `T` then an
+	/// [`Err`] is returned.
+	/// 
+	/// # Examples
+	/// 
+	/// ```
+	/// # use qu::QuVm;
+	/// # use qu::QuMsg;
+	/// # fn main() {example().unwrap()}
+	/// # fn example() -> Result<(), QuMsg> {
+	/// let mut vm = QuVm::new();
+	/// vm.define_const("BITS".to_owned(), Box::new(128));
+	/// 
+	/// let BITS = vm.get_const_by_index::<i32>(0)?;
+	/// assert_eq!(*BITS, 128);
+	/// # return Ok(());
+	/// # }
+	/// ```
+	pub fn get_const_by_index<'a, T:'a + 'static>(&'a self, index:usize
+	) -> Result<&T, QuMsg> {
+		let Some(any) = self.constants.get(index)
+			else {return Err(QuMsg::general(
+				"Can't acsess constant by index {index}. Index is out of range. TODO: Better msg"
+			))};
+
+		let Some(cast) = any.downcast_ref::<T>()
+			else {return Err(QuMsg::general(
+				&format!("Can't cast constant to specified T. TODO: Better msg.")
+			))};
+
+		return Ok(cast);
+	}
+
+
+	/// Returns a mutable reference to a variable in Qu memory.
+	/// 
+	/// # Errors
+	/// 
+	/// If no variable called `name` is found or if the variable can't be cast
+	/// to `T` then an [`Err`] is returned.
+	/// 
+	/// # Examples
+	/// 
+	/// ```
+	/// # use qu::QuVm;
+	/// # use qu::QuMsg;
+	/// # fn main() {example().unwrap()}
+	/// # fn example() -> Result<(), QuMsg> {
+	/// let mut vm = QuVm::new();
+	/// vm.define_mem("count".to_owned(), Box::new(100));
+	/// 
+	/// let count = vm.get_mem_mut::<i32>("count")?;
+	/// assert_eq!(*count, 100);
+	/// 
+	/// *count += 5;
+	/// let altered_count = vm.get_mem_mut::<i32>("count")?;
+	/// assert_eq!(*altered_count, 105);
+	/// # return Ok(());
+	/// # }
+	/// ```
+	pub fn get_mem_mut<'a, T:'a + 'static>(&'a mut self, name:&str
+	) -> Result<&mut T, QuMsg> {
+		let Some(index) = self.memory_map.get(&name.to_owned())
+			else {return Err(QuMsg::general(
+				&format!("No variable by name {name} found. TODO: Better msg.")
+			))};
+		
+		let cast = self.get_mem_mut_by_index(*index)?
+			else {return Err(QuMsg::general(
+				&format!("Can't cast variable to specified T. TODO: Better msg.")
+			))};
+
+		return Ok(cast);
+	}
+
+
+	/// Returns a mutable reference to a variable in Qu memory by its index.
+	/// 
+	/// # Errors
+	/// 
+	/// If `index` is out of range or if the variable can't be cast to `T` then
+	/// an [`Err`] is returned.
+	/// 
+	/// # Examples
+	/// 
+	/// ```
+	/// # use qu::QuVm;
+	/// # use qu::QuMsg;
+	/// # fn main() {example().unwrap()}
+	/// # fn example() -> Result<(), QuMsg> {
+	/// let mut vm = QuVm::new();
+	/// vm.define_mem("apple_count".to_owned(), Box::new(25));
+	/// 
+	/// let apples = vm.get_mem_mut_by_index::<i32>(0)?;
+	/// assert_eq!(*apples, 25);
+	/// 
+	/// *apples += 5;
+	/// let altered_apples = vm.get_mem_mut_by_index::<i32>(0)?;
+	/// assert_eq!(*altered_apples, 30);
+	/// # return Ok(());
+	/// # }
+	/// ```
+	pub fn get_mem_mut_by_index<'a, T:'a + 'static>(&'a mut self, index:usize
+	) -> Result<&mut T, QuMsg> {
+		let Some(any) = self.memory.get_mut(index)
+		else {return Err(QuMsg::general(
+			&format!("Can't get variable. Index {index} is out of range.")
+		))};
+		let Some(cast) = any.downcast_mut::<T>()
+			else {return Err(QuMsg::general(
+				&format!("Can't cast variable to specified T. TODO: Better msg.")
+			))};
+
+		return Ok(cast);
+	}
+
+
+	/// Returns a reference to a variable in Qu memory.
+	/// 
+	/// # Errors
+	/// 
+	/// If no variable called `name` is found or if the variable can't be
+	/// cast to `T` then an [`Err`] is returned.
+	/// 
+	/// # Examples
+	/// 
+	/// ```
+	/// # use qu::QuVm;
+	/// # use qu::QuMsg;
+	/// # fn main() {example().unwrap()}
+	/// # fn example() -> Result<(), QuMsg> {
+	/// let mut vm = QuVm::new();
+	/// vm.define_mem("count".to_owned(), Box::new(100));
+	/// 
+	/// let count = vm.get_mem::<i32>("count")?;
+	/// assert_eq!(*count, 100);
+	/// # return Ok(());
+	/// # }
+	/// ```
+	pub fn get_mem<'a, T:'a + 'static>(&'a self, name:&str
+	) -> Result<&T, QuMsg> {
+		let Some(index) = self.memory_map.get(&name.to_owned())
+			else {return Err(QuMsg::general(
+				&format!("No variable by name {name} found. TODO: Better msg.")
+			))};
+
+		return Ok(self.get_mem_by_index(*index)?);
+	}
+
+
+	/// Returns a reference to a variable in Qu memory by its index.
+	/// 
+	/// # Errors
+	/// 
+	/// If `index` is out of range or if the variable can't be
+	/// cast to `T` then an [`Err`] is returned.
+	/// 
+	/// # Examples
+	/// 
+	/// ```
+	/// # use qu::QuVm;
+	/// # use qu::QuMsg;
+	/// # fn main() {example().unwrap()}
+	/// # fn example() -> Result<(), QuMsg> {
+	/// let mut vm = QuVm::new();
+	/// vm.define_mem("count".to_owned(), Box::new(100));
+	/// 
+	/// let count = vm.get_mem_by_index::<i32>(0)?;
+	/// assert_eq!(*count, 100);
+	/// # return Ok(());
+	/// # }
+	/// ```
+	pub fn get_mem_by_index<'a, T:'a + 'static>(&'a self, index:usize
+	) -> Result<&T, QuMsg> {
+		let Some(any) = self.memory.get(index)
+			else {return Err(QuMsg::general(
+				&format!("Can't get variable. Index {index} is out of range.")
+			))};
+
+		let Some(cast) = self.memory[index].downcast_ref::<T>()
+			else {return Err(QuMsg::general(
+				&format!("Can't cast variable to specified T. TODO: Better msg.")
+			))};
+
+		return Ok(cast);
 	}
 
 
@@ -599,7 +874,7 @@ pub struct QuVm {
 	}
 
 
-	/// Gets the next byte in the source code as a u8 int.
+	/// Gets the next byte in the source code as a [`u8`].
 	fn next_u8(&mut self, code:&[u8]) -> u8 {
 		let val = code[self.pc];
 		self.pc += 1;
@@ -607,7 +882,7 @@ pub struct QuVm {
 	}
 
 
-	/// Gets the next 2 byte in the source code as a u16 int.
+	/// Gets the next 2 byte in the source code as a [`u16`].
 	fn next_u16(&mut self, code:&[u8]) -> u16 {
 		let bytes = [code[self.pc], code[self.pc+1]];
 		self.pc += 2;
@@ -615,7 +890,7 @@ pub struct QuVm {
 	}
 
 
-	/// Gets the next 4 byte in the source code as a u32 int.
+	/// Gets the next 4 byte in the source code as a [`u32`].
 	fn next_u32(&mut self, code:&[u8]) -> u32 {
 		let bytes = [
 			code[self.pc], code[self.pc+1],
@@ -626,7 +901,7 @@ pub struct QuVm {
 	}
 
 
-	// Gets the next 8 byte in the source code as a u64 int.
+	// Gets the next 8 byte in the source code as a [`u64`].
 	fn next_u64(&mut self, code:&[u8]) -> u64 {
 		let bytes = [
 			code[self.pc], code[self.pc+1],
@@ -699,7 +974,6 @@ pub struct QuVm {
 			x if x == OPLIB.print => self.exc_print(bytecode),
 			x if x == OPLIB.call => self.exc_call_fn(bytecode)?,
 			x if x == OPLIB.define_fn => self.exc_define_fn(bytecode),
-			x if x == OPLIB.define_const_str => self.exc_define_const_str(bytecode),
 
 			x => { println!("{x}"); todo!(); }
 		};
@@ -707,7 +981,25 @@ pub struct QuVm {
 	}
 
 
-	/// Run the passed bytecode.
+	/// Runs `bytecode`.
+	/// 
+	/// # Errors
+	/// 
+	/// If `bytecode` does not pass the sanity checks or there is a runtime
+	/// error then an [`Err`] is returend.
+	/// 
+	/// # Examples
+	/// 
+	/// ```
+	/// # use qu::QuVm;
+	/// # use qu::QuMsg;
+	/// # fn main() {example().unwrap()}
+	/// # fn example() -> Result<(), QuMsg> {
+	/// let mut vm = QuVm::new();
+	/// vm.run_bytes(&vec![1, 5, 0])?;
+	/// # return Ok(());
+	/// # }
+	/// ```
 	pub fn run_bytes(&mut self, bytecode:&[u8]) -> Result<(), QuMsg> {
 		while self.pc != bytecode.len() {
 			match self.do_next(&bytecode) {
@@ -734,7 +1026,55 @@ pub struct QuVm {
 mod test_vm {
     use std::any::Any;
 
-    use crate::{Qu, QuMsg};
+    use crate::{Qu, QuVm, QuMsg};
+
+	#[test]
+	fn define_and_get_const() -> Result<(), QuMsg> {
+		let mut vm = QuVm::new();
+		vm.define_const("MEANING_OF_LIFE".to_owned(), Box::new(42));
+		vm.define_const("NAME".to_owned(), Box::new("Qu"));
+
+		let meaning = vm.get_const::<i32>("MEANING_OF_LIFE")?;
+		let name = vm.get_const::<&str>("NAME")?;
+		let bad_type = vm.get_const::<&str>("MEANING_OF_LIFE");
+		let not_defined = vm.get_const::<i32>("DIVIDE_BY_INF");
+		
+		assert_eq!(*meaning, 42);
+		assert_eq!(*name, "Qu");
+		assert!(bad_type.is_err());
+		assert!(not_defined.is_err());
+
+		return Ok(());
+	}
+
+
+	#[test]
+	fn define_and_get_mem() -> Result<(), QuMsg> {
+		let mut vm = QuVm::new();
+		vm.define_mem("health".to_owned(), Box::new(10.0f32));
+		vm.define_mem("lives".to_owned(), Box::new(3));
+
+		assert_eq!(*vm.get_mem::<f32>("health")?, 10.0);
+		assert_eq!(*vm.get_mem::<i32>("lives")?, 3);
+
+		let health = vm.get_mem_mut::<f32>("health")?;
+		*health = 5.0;
+
+		let lives = vm.get_mem_mut::<i32>("lives")?;
+		*lives = 2;
+
+		assert_eq!(*vm.get_mem::<f32>("health")?, 5.0);
+		assert_eq!(*vm.get_mem::<i32>("lives")?, 2);
+
+		let bad_type = vm.get_const::<&str>("health");
+		let not_defined = vm.get_const::<i32>("i_dont_exist");
+		
+		assert!(bad_type.is_err());
+		assert!(not_defined.is_err());
+
+		return Ok(());
+	}
+
 
 	#[test]
 	fn test_runtime_object_storage() -> Result<(), QuMsg>{

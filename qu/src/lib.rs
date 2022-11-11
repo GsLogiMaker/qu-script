@@ -23,7 +23,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-//! TODO: Project level documentation.
+//! The API to embed Qu into a project. TODO: Better documentation.
 
 #![warn(missing_docs)]
 #![warn(rustdoc::broken_intra_doc_links)]
@@ -35,25 +35,10 @@ extern crate lazy_static;
 
 mod compiler;
 mod errors;
+pub mod objects;
 mod parser;
 mod tokens;
 mod vm;
-
-
-#[cfg(test)]
-mod tests {
-
-	use crate::Qu;
-
-	#[test]
-	fn var_define() {
-		let mut vm = Qu::new();
-		let result = vm.run("var a_variable = 1");
-		
-		assert!(result.is_ok());
-	}
-
-}
 
 
 use tokens::{TOKEN_TYPE_NAME, QuToken};
@@ -228,6 +213,7 @@ pub struct Qu {
 
 
 /// A declared Qu function. Contains all the metadata for a defined function.
+#[derive(Debug, Default)]
 pub struct QuFunc {
 	/// The name of this funciton.
 	name:String,
@@ -253,14 +239,14 @@ pub struct QuFunc {
 
 
 /// An object type (Ex: int, bool, String, Object).
-pub struct QuType {
+pub struct QuType2 {
 	name:String,
 	size:usize,
-} impl QuType {
+} impl QuType2 {
 
 	/// Makes a new [`QuType`].
-	fn new(name:String, size:usize) -> QuType {
-		return QuType{
+	fn new(name:String, size:usize) -> QuType2 {
+		return QuType2{
 			name,
 			size,
 		};
@@ -268,23 +254,23 @@ pub struct QuType {
 
 
 	/// Instantiates a boolean [`QuType`].
-	fn bool() -> QuType {
+	fn bool() -> QuType2 {
 		// TODO:: Make "bool" string a constant
-		return QuType::new("bool".to_string(), 1);
+		return QuType2::new("bool".to_string(), 1);
 	}
 
 
 	/// Instantiates an integer [`QuType`].
-	fn int() -> QuType {
+	fn int() -> QuType2 {
 		// TODO: Make "int" string a constant
-		return QuType::new("int".to_string(), 1);
+		return QuType2::new("int".to_string(), 1);
 	}
 
 
 	/// Instantiates an unsigned integer [`QuType`].
-	fn uint() -> QuType {
+	fn uint() -> QuType2 {
 		// TODO:: Make "uint" string a constant
-		return QuType::new("uint".to_string(), 1);
+		return QuType2::new("uint".to_string(), 1);
 	}
 
 }

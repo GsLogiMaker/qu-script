@@ -3,7 +3,7 @@ use crate::QuLeaf;
 use crate::QuLeafExpr;
 use crate::QuMsg;
 use crate::QuToken;
-use crate::QuType;
+use crate::QuType2;
 use crate::QuVar;
 
 use std::collections::HashMap;
@@ -30,7 +30,7 @@ pub struct QuCompiler {
 	functions:HashMap<String, u32>,
 	stack_layers:Vec<u8>,
 	stack_idx:u8,
-	types:Vec<QuType>,
+	types:Vec<QuType2>,
 	types_map:HashMap<String, usize>,
 
 
@@ -44,7 +44,7 @@ pub struct QuCompiler {
 			functions:HashMap::default(),
 			stack_layers:Vec::default(),
 			stack_idx:0,
-			types:vec![QuType::int(), QuType::uint(), QuType::bool()],
+			types:vec![QuType2::int(), QuType2::uint(), QuType2::bool()],
 			types_map:HashMap::new(),
 		};
 
