@@ -33,5 +33,4 @@ lazy_static = "1.4.0"
 qu = {path = "../qu"}
 
 [dev-dependencies]
-criterion = "0.3"
 

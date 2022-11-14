@@ -1,5 +1,4 @@
 
-use std::mem::take;
 use std::vec;
 
 use crate::errors;
@@ -768,11 +767,11 @@ pub struct QuParser {
 
 
 	/// Parses a Qu script.
-	pub fn parse(&mut self, script:String) -> Result<Vec<QuLeaf>, QuMsg> {
+	pub fn parse(&mut self, script:&str) -> Result<Vec<QuLeaf>, QuMsg> {
 		self.tk_idx = 0;
 		self.line = 0;
 		self.indent = u8::MAX;
-		self.tokens = tokenize(&script, RULES);
+		self.tokens = tokenize(&script.to_owned(), RULES);
 		self.tokens.push(
 			QuToken::new(self.tokens.len() as u64,
 				self.tokens.len() as u64, 0, 0, 0,
@@ -944,7 +943,7 @@ mod test_qu_matcher {
 		 		print left + right
 		 
 		 	add()
-		"#.to_owned())?;
+		"#)?;
 		
 		let expc = vec![
 			QuLeaf::Expression(Box::new(
@@ -969,7 +968,7 @@ mod test_qu_matcher {
 	#[test]
 	fn parse_expression() -> Result<(), QuMsg>{
 		let mut p = QuParser::new();
-		let res = p.parse("2 + 3 - 3".to_owned())?;
+		let res = p.parse("2 + 3 - 3")?;
 		
 		let expc = vec![
 			QuLeaf::Expression(Box::new(
@@ -995,7 +994,7 @@ mod test_qu_matcher {
 	macro_rules! test_equation {
 		($symbol:expr, $p:ident) => {
 			{
-				let res = $p.parse(format!("23 {} 18", $symbol))?;
+				let res = $p.parse(&format!("23 {} 18", $symbol))?;
 				let expc = vec![
 					QuLeaf::Expression(
 						Box::new(QuLeafExpr::Equation(
@@ -1036,8 +1035,8 @@ mod test_qu_matcher {
 	#[test]
 	fn parse_expression_parenthesies() -> Result<(), QuMsg>{
 		let mut p = QuParser::new();
-		let res = p.parse("2 + 3 * 9".to_owned())?;
-		let res2 = p.parse("(2 + 3) * 9".to_owned())?;
+		let res = p.parse("2 + 3 * 9")?;
+		let res2 = p.parse("(2 + 3) * 9")?;
 
 		let expt = vec![
 			QuLeaf::Expression(
@@ -1095,7 +1094,7 @@ mod test_qu_matcher {
 			3
 		while 4:
 			5
-		"##.to_owned())?;
+		"##)?;
 
 		let expected = vec![
 			QuLeaf::FlowStatement(
@@ -1142,7 +1141,7 @@ mod test_qu_matcher {
 		let mut p = QuParser::new();
 		let res = p.parse(r##"
 		add() + sub()
-		"##.to_owned())?;
+		"##)?;
 
 		let expected = vec![
 			QuLeaf::Expression(
@@ -1172,7 +1171,7 @@ mod test_qu_matcher {
 				5
 			fn sub(a int, b int):
 				6
-		"##.to_owned())?;
+		"##)?;
 
 		let expt = vec![
 			QuLeaf::FnDecl(
@@ -1226,7 +1225,7 @@ mod test_qu_matcher {
 	#[test]
 	fn parse_variable_assignment() -> Result<(), QuMsg>{
 		let mut p = QuParser::new();
-		let res = p.parse("count = 3/2".to_owned())?;
+		let res = p.parse("count = 3/2")?;
 
 		let expc = vec![
 			QuLeaf::VarAssign(
@@ -1252,7 +1251,7 @@ mod test_qu_matcher {
 	#[test]
 	fn parse_variable_declaration() -> Result<(), QuMsg>{
 		let mut p = QuParser::new();
-		let res = p.parse("var count int = 20 * 8".to_owned())?;
+		let res = p.parse("var count int = 20 * 8")?;
 
 		let expc = vec![
 			QuLeaf::VarDecl(

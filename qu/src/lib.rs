@@ -44,6 +44,7 @@ mod vm;
 use tokens::{TOKEN_TYPE_NAME, QuToken};
 pub use errors::QuMsg;
 pub use compiler::QuCompiler;
+pub use objects::*;
 pub use parser::{QuParser, QuLeaf, QuLeafExpr};
 pub use vm::QuVm;
 
@@ -52,8 +53,9 @@ pub use vm::QuVm;
 /// 
 /// # Examples
 /// ```
-/// # use qu::Qu;
-/// # use qu::QuMsg;
+/// use qu::Qu;
+/// use qu::QuMsg;
+/// 
 /// # fn main() {run_test().unwrap();}
 /// # fn run_test() -> Result<(), QuMsg>{
 /// let mut qu = Qu::new();
@@ -77,7 +79,8 @@ pub struct Qu {
 	/// # Examples
 	/// 
 	/// ```
-	/// # use qu::Qu;
+	/// use qu::Qu;
+	/// 
 	/// let qu = Qu::new();
 	/// ```
 	pub fn new() -> Self {
@@ -96,8 +99,9 @@ pub struct Qu {
 	/// # Examples
 	/// 
 	/// ```
-	/// # use qu::Qu;
-	/// # use qu::QuMsg;
+	/// use qu::Qu;
+	/// use qu::QuMsg;
+	/// 
 	/// # fn main(){example().unwrap()}
 	/// # fn example() -> Result<(), QuMsg> {
 	/// let qu = Qu::new();
@@ -106,14 +110,9 @@ pub struct Qu {
 	/// # }
 	/// ```
 	pub fn compile(&self, code:&str) -> Result<Vec<u8>, QuMsg> {
-		// Parse
-		let code_str = code.to_string();
-		let mut parser = QuParser::new();
-		let leaf_block = parser.parse(code_str)?;
-
 		// Compile
 		let mut c = QuCompiler::new();
-		return Ok(c.compile(&leaf_block)?);
+		return Ok(c.compile(code)?);
 	}
 
 
@@ -126,13 +125,14 @@ pub struct Qu {
 	/// # Example
 	/// 
 	/// ```
-	/// # use qu::Qu;
-	/// # use qu::QuMsg;
+	/// use qu::Qu;
+	/// use qu::QuMsg;
+	/// 
 	/// # fn main() {example().unwrap()}
 	/// # fn example() -> Result<(), QuMsg> {
 	/// let mut qu = Qu::new();
-	/// let asm = qu.compile_to_asm("var added = 5 + 6")?;
 	/// 
+	/// let asm = qu.compile_to_asm("var added = 5 + 6")?;
 	/// assert_eq!(
 	/// 	asm,
 	/// 	format!("{}{}{}{}",
@@ -162,8 +162,9 @@ pub struct Qu {
 	/// # Example
 	/// 
 	/// ```
-	/// # use qu::Qu;
-	/// # use qu::QuMsg;
+	/// use qu::Qu;
+	/// use qu::QuMsg;
+	/// 
 	/// # fn main(){example().unwrap()}
 	/// # fn example() -> Result<(), QuMsg> {
 	/// let mut qu = Qu::new();
@@ -195,11 +196,13 @@ pub struct Qu {
 	/// # Examples
 	/// 
 	/// ```
-	/// # use qu::Qu;
-	/// # use qu::QuMsg;
+	/// use qu::Qu;
+	/// use qu::QuMsg;
+	/// 
 	/// # fn main(){example().unwrap()}
 	/// # fn example() -> Result<(), QuMsg> {
 	/// let mut qu = Qu::new();
+	/// 
 	/// let bytecode = qu.compile("var count = 5 + 6")?;
 	/// qu.run_bytes(&bytecode)?;
 	/// # return Ok(());
@@ -238,6 +241,7 @@ pub struct QuFunc {
 }
 
 
+/// TODO: Remove this struct, it is replaced with an enum.
 /// An object type (Ex: int, bool, String, Object).
 pub struct QuType2 {
 	name:String,
@@ -277,6 +281,7 @@ pub struct QuType2 {
 
 
 /// Metadata for a Qu variable.
+#[derive(Debug, Default, Clone)]
 struct QuVar {
 	/// The name of this variable.
 	name:String,
@@ -323,6 +328,64 @@ mod test_lib {
 			add()
 		"#)?;
 		return Ok(());
+	}
+
+
+	#[test]
+	fn run_qu_example_var_scoping1() -> Result<(), QuMsg>{
+		let mut qu = Qu::new();
+		qu.run(r#"
+			fn add():
+				var left = 2
+				var right = 5
+				print left + right
+			print add()
+		"#)?;
+		return Ok(());
+	}
+
+
+	#[test]
+	#[should_panic]
+	fn run_qu_example_var_scoping1_panic() {
+		let mut qu = Qu::new();
+		qu.run(r#"
+			fn add():
+				var left = 2
+				var right = 5
+				print left + right
+			print left
+			add()
+		"#).unwrap();
+	}
+
+
+	#[test]
+	#[should_panic]
+	fn run_qu_example_var_scoping2() {
+		let mut qu = Qu::new();
+		qu.run(r#"
+			var counter = 1
+			if count:
+				var value = 25
+				print value
+			print counter
+		"#).unwrap();
+	}
+
+
+	#[test]
+	#[should_panic]
+	fn run_qu_example_var_scoping2_panic() {
+		let mut qu = Qu::new();
+		qu.run(r#"
+			var counter = 1
+			if count:
+				var value = 25
+				print value
+			print counter
+			print value
+		"#).unwrap();
 	}
 
 }

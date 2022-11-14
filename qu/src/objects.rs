@@ -30,7 +30,8 @@ pub struct QuCodeObject {
 	/// # Examples
 	/// 
 	/// ```
-	/// # use qu::QuCodeObject;
+	/// use qu::QuCodeObject;
+	/// 
 	/// let codeobj = QuCodeObject::new(0);
 	/// ```
 	pub fn new(start_index:usize) -> Self {
@@ -57,12 +58,14 @@ pub struct QuFnObject {
 	/// # Examples
 	/// 
 	/// ```
-	/// # use qu::QuFnObject
-	/// # use qu::QuCodeObject
+	/// use qu::QuCodeObject;
+	/// use qu::QuFnObject;
+	/// use qu::QuType;
+	/// 
 	/// let func = QuFnObject::new(
 	/// 	vec![],
 	/// 	QuCodeObject::new(0),
-	/// 	`QuType::Void
+	/// 	QuType::Void
 	/// );
 	/// ```
 	pub fn new(parameters:Vec<QuType>, body:QuCodeObject, return_type:QuType

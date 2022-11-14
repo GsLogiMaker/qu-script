@@ -206,7 +206,7 @@ struct_QuOpLibrary!{
 
 	[ 24] call:CALL(QuAsmTypes::Uint32, QuAsmTypes::UInt8)
 
-	[ 25] define_fn:DFFN(QuAsmTypes::Uint32, QuAsmTypes::Uint32)
+	[ 25] define_fn:DFFN(QuAsmTypes::Str, QuAsmTypes::Uint32)
 	[ 26] define_const_str:DFCS(QuAsmTypes::Str)
 }
 
@@ -239,7 +239,7 @@ pub struct QuOperation<'a> {
 /// The virtual machine that runs Qu code.
 /// 
 /// This struct is not meant to be accessed directly (in most cases). See
-/// [Qu] for interfacing with Qu script.
+/// [`qu::Qu`] for interfacing with Qu script.
 #[derive(Debug, Default)]
 pub struct QuVm {
 	/// Holds the outputed value of the last executed operation.
@@ -268,7 +268,8 @@ pub struct QuVm {
 	/// # Example
 	/// 
 	/// ```
-	/// # use qu::QuVm;;
+	/// use qu::QuVm;;
+	/// 
 	/// let vm = QuVm::new();
 	/// ```
 	pub fn new() -> Self {
@@ -296,9 +297,9 @@ pub struct QuVm {
 	/// # Example
 	/// 
 	/// ```
-	/// # use qu::QuVm;
-	/// let asm = QuVm::code_to_asm(&[8, 5, 6, 0], false);
+	/// use qu::QuVm;
 	/// 
+	/// let asm = QuVm::code_to_asm(&[8, 5, 6, 0], false);
 	/// assert_eq!(asm, "\nADD 5 6 0".to_owned());
 	/// ```
 	pub fn code_to_asm(code:&[u8], include_line_columns:bool
@@ -384,8 +385,9 @@ pub struct QuVm {
 	/// # Examples
 	/// 
 	/// ```
-	/// # use qu::QuVm;
-	/// # use qu::QuMsg;
+	/// use qu::QuVm;
+	/// use qu::QuMsg;
+	/// 
 	/// # fn main() {example().unwrap()}
 	/// # fn example() -> Result<(), QuMsg> {
 	/// let mut vm = QuVm::new();
@@ -406,22 +408,6 @@ pub struct QuVm {
 
 
 	/// Defines a Qu function.
-	/// 
-	/// # Example
-	/// 
-	/// ```
-	/// # use qu::QuVm;
-	/// let vm = QuVm::new();
-	/// 
-	/// vm.define_fn("add", 0);
-	/// assert_eq!(
-	/// 	*vm.get_const("add"),
-	/// 	QuFnObject::new(
-	///			vec![],
-	///			QuCodeObject::new(0),
-	///			QuType::Void,
-	///		))
-	/// ```
 	fn define_fn(&mut self, name:&str, code_start:usize) {
 		self.define_const(
 			name.to_owned(),
@@ -439,15 +425,16 @@ pub struct QuVm {
 	/// # Examples
 	/// 
 	/// ```
-	/// # use qu::QuVm;
-	/// # use qu::QuMsg;
+	/// use qu::QuVm;
+	/// use qu::QuMsg;
+	/// 
 	/// # fn main() {example().unwrap()}
 	/// # fn example() -> Result<(), QuMsg> {
 	/// let mut vm = QuVm::new();
 	/// vm.define_mem("name".to_owned(), Box::new("Dave"));
 	/// 
 	/// let constant = vm.get_mem::<&str>("name")?;
-	/// assert_eq!(*constant, "name");
+	/// assert_eq!(*constant, "Dave");
 	/// # return Ok(());
 	/// # }
 	/// ```
@@ -469,39 +456,37 @@ pub struct QuVm {
 
 	/// Reads the bytecode of a function call command and executes it.
 	fn exc_call_fn(&mut self, code:&[u8]) -> Result<(), QuMsg> {
-		unimplemented!();
-//		let fn_id = self.next_u32(code) as usize;
-//		let frame_offset = self.next_u8(code) as usize;
-//
-//		self.register_offset += frame_offset;
-//		// Assure registers is big enought to fit u8::MAX more values
-//		if (self.register_offset + u8::MAX as usize) > self.registers.len() {
-//			self.registers.resize(
-//				self.register_offset + u8::MAX as usize, 0);
-//		}
-//		let return_pc = self.pc;
-//
-//		self.frame_start(self.get_const(name)[fn_id].body.code_start);
-//		self.do_loop(code)?;
-//
-//		self.register_offset -= frame_offset;
-//		self.pc = return_pc;
-//
-//		return Ok(());
+		let fn_id = self.next_u32(code) as usize;
+		let frame_offset = self.next_u8(code) as usize;
+		let fn_obj:&QuFnObject = self.get_const_by_index(fn_id)?;
+		let code_start = fn_obj.body.start_index;
+
+		self.register_offset += frame_offset;
+		// Assure registers is big enought to fit u8::MAX more values
+		if (self.register_offset + u8::MAX as usize) > self.registers.len() {
+			self.registers.resize(
+				self.register_offset + u8::MAX as usize, 0);
+		}
+		let return_pc = self.pc;
+
+		self.frame_start(code_start);
+		self.do_loop(code)?;
+
+		self.register_offset -= frame_offset;
+		self.pc = return_pc;
+
+		return Ok(());
 	}
 
 
 	/// Defines a function from next bytes in the code.
 	fn exc_define_fn(&mut self, code:&[u8]) {
-		unimplemented!();
-//		let name_const_idx = self.next_u32(code) as usize;
-//		let fn_length = self.next_u32(code) as usize;
-//
-//		let name = self.get_const_string(name_const_idx).to_owned();
-//		let code_start = self.pc;
-//
-//		self.define_fn(&name, code_start);
-//		self.pc += fn_length;
+		let name = self.next_ascii(code);
+		let fn_length = self.next_u32(code) as usize;
+
+		self.define_fn(&name, self.pc);
+
+		self.pc += fn_length;
 	}
 
 
@@ -626,8 +611,9 @@ pub struct QuVm {
 	/// # Examples
 	/// 
 	/// ```
-	/// # use qu::QuVm;
-	/// # use qu::QuMsg;
+	/// use qu::QuVm;
+	/// use qu::QuMsg;
+	/// 
 	/// # fn main() {example().unwrap()}
 	/// # fn example() -> Result<(), QuMsg> {
 	/// let mut vm = QuVm::new();
@@ -661,8 +647,9 @@ pub struct QuVm {
 	/// # Examples
 	/// 
 	/// ```
-	/// # use qu::QuVm;
-	/// # use qu::QuMsg;
+	/// use qu::QuVm;
+	/// use qu::QuMsg;
+	/// 
 	/// # fn main() {example().unwrap()}
 	/// # fn example() -> Result<(), QuMsg> {
 	/// let mut vm = QuVm::new();
@@ -699,8 +686,9 @@ pub struct QuVm {
 	/// # Examples
 	/// 
 	/// ```
-	/// # use qu::QuVm;
-	/// # use qu::QuMsg;
+	/// use qu::QuVm;
+	/// use qu::QuMsg;
+	/// 
 	/// # fn main() {example().unwrap()}
 	/// # fn example() -> Result<(), QuMsg> {
 	/// let mut vm = QuVm::new();
@@ -741,8 +729,9 @@ pub struct QuVm {
 	/// # Examples
 	/// 
 	/// ```
-	/// # use qu::QuVm;
-	/// # use qu::QuMsg;
+	/// use qu::QuVm;
+	/// use qu::QuMsg;
+	/// 
 	/// # fn main() {example().unwrap()}
 	/// # fn example() -> Result<(), QuMsg> {
 	/// let mut vm = QuVm::new();
@@ -782,8 +771,9 @@ pub struct QuVm {
 	/// # Examples
 	/// 
 	/// ```
-	/// # use qu::QuVm;
-	/// # use qu::QuMsg;
+	/// use qu::QuVm;
+	/// use qu::QuMsg;
+	/// 
 	/// # fn main() {example().unwrap()}
 	/// # fn example() -> Result<(), QuMsg> {
 	/// let mut vm = QuVm::new();
@@ -815,8 +805,9 @@ pub struct QuVm {
 	/// # Examples
 	/// 
 	/// ```
-	/// # use qu::QuVm;
-	/// # use qu::QuMsg;
+	/// use qu::QuVm;
+	/// use qu::QuMsg;
+	/// 
 	/// # fn main() {example().unwrap()}
 	/// # fn example() -> Result<(), QuMsg> {
 	/// let mut vm = QuVm::new();
@@ -991,8 +982,9 @@ pub struct QuVm {
 	/// # Examples
 	/// 
 	/// ```
-	/// # use qu::QuVm;
-	/// # use qu::QuMsg;
+	/// use qu::QuVm;
+	/// use qu::QuMsg;
+	/// 
 	/// # fn main() {example().unwrap()}
 	/// # fn example() -> Result<(), QuMsg> {
 	/// let mut vm = QuVm::new();
