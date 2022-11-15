@@ -125,12 +125,13 @@ pub struct QuCompiler {
 	/// Compiles a math or logic expression into bytecode.
 	fn cmp_expr_math(&mut self, op:u8, left:&QuLeafExpr, right:&QuLeafExpr,
 			output_reg:u8) -> Result<QuAsmBuilder, QuMsg> {
+		let left_reg = self.get_expr_reg(left)?;
 		let right_reg = self.get_expr_reg(right)?;
 
 		let mut builder = QuAsmBuilder::new();
-		builder.add_builder(self.cmp_expr(left, output_reg)?);
+		builder.add_builder(self.cmp_expr(left, left_reg)?);
 		builder.add_builder(self.cmp_expr(right, right_reg)?);
-		builder.add_code(vec![op, output_reg, right_reg, output_reg]);
+		builder.add_code(vec![op, left_reg, right_reg, output_reg]);
 
 		return Ok(builder);
 	}
@@ -205,10 +206,7 @@ pub struct QuCompiler {
 		let mut expr_b = with!{
 			self.stack_frame_start, self.stack_frame_end {
 				let expr_reg = self.get_expr_reg(condition)?;
-				/*return*/ self.cmp_expr(
-					condition,
-					expr_reg
-				)
+				self.cmp_expr(condition, expr_reg)
 			}
 		}?;
 
@@ -296,7 +294,6 @@ pub struct QuCompiler {
 				let reg = self.stack_reserve();
 				let parameter_expr = self.cmp_expr(&p, reg)?;
 				builder.add_builder(parameter_expr);
-				builder.add_code(vec![OPLIB.parameter_add, reg]);
 			}
 			Ok(())
 		})?;
@@ -319,16 +316,20 @@ pub struct QuCompiler {
 
 		let body_code
 			= with!(self.context_start, self.context_end {
-			let mut b = QuAsmBuilder::new();
+
+			// Add return value variable for padding.
+			self.add_variable("return value".to_owned());
+			let _ = self.stack_reserve();
 
 			// Compile parameters
 			for p in params {
 				self.add_variable(p.0.text.clone());
-				let reg = self.stack_reserve();
-				b.add_builder(self.cmp_parameter_pop(reg));
+				// Reserver space for parameter
+				let _ = self.stack_reserve();
 			}
 
 			// Compile code block
+			let mut b = QuAsmBuilder::new();
 			b.add_builder(self.cmp_leafs(body)?);
 			b.add_u8(OPLIB.end);
 			Ok(b)
@@ -393,7 +394,17 @@ pub struct QuCompiler {
 				return Ok(code);
 			},
 			QuLeaf::Return(expr) => {
-				return self.cmp_expr(expr, 0);
+				let mut code = QuAsmBuilder::new();
+				match expr {
+					Some(l) => {
+						let reg = self.get_expr_reg(l)?;
+						code.add_builder(self.cmp_expr(l, reg)?);
+						code.add_code(vec![OPLIB.copy_reg, reg, 0]);
+					},
+					None => {},
+				}
+				code.add_u8(OPLIB.end);
+				return Ok(code);
 			}
 			QuLeaf::VarDecl(
 					name_tk,
@@ -421,13 +432,6 @@ pub struct QuCompiler {
 			b.add_builder(self.cmp_leaf(l)?);
 		}
 		return Ok(b);
-	}
-
-
-	fn cmp_parameter_pop(&mut self, reg:u8) -> QuAsmBuilder {
-		let mut b = QuAsmBuilder::new();
-		b.add_code(vec![OPLIB.parameter_pop, reg]);
-		return b;
 	}
 
 

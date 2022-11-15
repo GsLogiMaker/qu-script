@@ -80,6 +80,16 @@ pub struct QuFnObject {
 }
 
 
+/// Defines all the types supported by Qu.
+#[derive(Debug, Default, Clone)]
+pub enum QuValue {
+	#[default] Void,
+	Int(isize),
+	Bool(bool),
+	Object(usize),
+}
+
+
 #[cfg(test)]
 mod test_objects {
 

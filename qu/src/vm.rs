@@ -1,8 +1,10 @@
 
 use std::any::Any;
 use std::collections::HashMap;
+use std::mem::take;
 
 use crate::QuMsg;
+use crate::QuValue;
 use crate::objects::QuCodeObject;
 use crate::objects::QuFnObject;
 use crate::objects::QuType;
@@ -209,8 +211,6 @@ struct_QuOpLibrary!{
 	[ 25] define_fn:DFFN(QuAsmTypes::Str, QuAsmTypes::Uint32)
 	[ 26] define_const_str:DFCS(QuAsmTypes::Str)
 
-	[ 27] parameter_add:PAD(QuAsmTypes::UInt8)
-	[ 28] parameter_pop:PPO(QuAsmTypes::UInt8)
 }
 
 
@@ -256,6 +256,8 @@ pub struct QuVm {
 	memory:Vec<Box<dyn Any>>,
 	/// Maps variable names to their index in [`QuMemory::memory`].
 	memory_map:HashMap<String, usize>,
+	/// Holds the value returned from a Qu script.
+	return_value:Option<QuValue>,
 
 	/// The memory registers. Holds all primatives of the VM.
 	registers:Vec<RegisterValue>,
@@ -263,8 +265,6 @@ pub struct QuVm {
 	register_offset:usize,
 	/// The program counter.
 	pc:usize,
-	/// Holds the parameters of the next function.
-	parameters:Vec<RegisterValue>,
 
 } impl QuVm {
 
@@ -285,11 +285,11 @@ pub struct QuVm {
 			constant_map: HashMap::default(),
 			memory: Vec::default(),
 			memory_map: HashMap::default(),
+			return_value: None,
 
 			registers:Vec::with_capacity(u8::MAX as usize),
 			register_offset: 0,
 			pc: 0,
-			parameters: Vec::default(),
 		};
 
 		vm.registers.resize(u8::MAX as usize, 0);
@@ -453,6 +453,16 @@ pub struct QuVm {
 	}
 
 
+	/// Returns the value returned by the last run Qu script.
+	/// 
+	/// # Examples
+	/// 
+	/// //TODO: Example
+	pub fn get_return_value(&mut self) -> Option<QuValue> {
+		return take(&mut self.return_value);
+	}
+
+
 	fn exc_copy_reg(&mut self, code:&[u8]) {
 		let from_reg = self.next_u8(code) as usize;
 		let to_reg = self.next_u8(code) as usize;
@@ -463,11 +473,11 @@ pub struct QuVm {
 	/// Reads the bytecode of a function call command and executes it.
 	fn exc_call_fn(&mut self, code:&[u8]) -> Result<(), QuMsg> {
 		let fn_id = self.next_u32(code) as usize;
-		let frame_offset = self.next_u8(code) as usize;
+		let output_reg = self.next_u8(code) as usize;
 		let fn_obj:&QuFnObject = self.get_const_by_index(fn_id)?;
 		let code_start = fn_obj.body.start_index;
 
-		self.register_offset += frame_offset;
+		self.register_offset += output_reg;
 		// Assure registers is big enought to fit u8::MAX more values
 		if (self.register_offset + u8::MAX as usize) > self.registers.len() {
 			self.registers.resize(
@@ -478,7 +488,7 @@ pub struct QuVm {
 		self.frame_start(code_start);
 		self.do_loop(code)?;
 
-		self.register_offset -= frame_offset;
+		self.register_offset -= output_reg;
 		self.pc = return_pc;
 
 		return Ok(());
@@ -566,25 +576,6 @@ pub struct QuVm {
 
 	fn exc_load_mem(&mut self, _:&[u8]) {
 		unimplemented!();
-	}
-
-
-	/// Adds a register value as a parameter for a function.
-	fn exc_parameter_add(&mut self, code:&[u8]) {
-		let reg = self.next_u8(code) as RegisterValue;
-		self.parameters.push(self.registers[reg]);
-	}
-
-
-	/// Pops a parameter value into a register.
-	fn exc_parameter_pop(&mut self, code:&[u8]) -> Result<(), QuMsg> {
-		let Some(x) = self.parameters.pop()
-			else {return Err(QuMsg::general(
-				"Could not pop parameter. Parameters is empty. TODO: Better msg"
-			))};
-		let to_reg = self.next_u8(code) as usize;
-		self.registers[to_reg] = x;
-		return Ok(());
 	}
 
 
@@ -932,15 +923,15 @@ pub struct QuVm {
 
 	#[inline]
 	/// Gets a register value.
-	fn reg_get(&self, at:usize) -> RegisterValue {
-		return self.registers[self.register_offset+at];
+	fn reg_get(&self, at_reg:usize) -> RegisterValue {
+		return self.registers[self.register_offset+at_reg];
 	}
 
 
 	#[inline]
 	/// Sets a register value.
-	fn reg_set(&mut self, at:usize, with:RegisterValue) {
-		return self.registers[self.register_offset+at] = with;
+	fn reg_set(&mut self, at_reg:usize, to:RegisterValue) {
+		return self.registers[self.register_offset+at_reg] = to;
 	}
 
 
@@ -993,8 +984,6 @@ pub struct QuVm {
 			x if x == OPLIB.print => self.exc_print(bytecode),
 			x if x == OPLIB.call => self.exc_call_fn(bytecode)?,
 			x if x == OPLIB.define_fn => self.exc_define_fn(bytecode),
-			x if x == OPLIB.parameter_add => self.exc_parameter_add(bytecode),
-			x if x == OPLIB.parameter_pop => self.exc_parameter_pop(bytecode)?,
 
 			x => { println!("{x}"); todo!(); }
 		};

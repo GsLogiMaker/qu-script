@@ -55,7 +55,7 @@ pub enum QuLeaf {
 	/// Prints a register to the console.
 	Print(Box<QuLeafExpr>),
 	/// A return statement for a function
-	Return(Box<QuLeafExpr>),
+	Return(Option<Box<QuLeafExpr>>),
 	/// A variable assignment. Contains a var name and a [`QuLeafExpr`].
 	VarAssign(Box<QuToken>, Box<QuLeafExpr>),
 	/// A variable declaration. Contains a var name, type(TODO), and
@@ -139,7 +139,7 @@ pub struct QuParser {
 			ck_parse!(ch_print);
 
 			// Return Statement
-			ck_parse!(ch_return);
+			ck_parse!(ch_keyword_return);
 
 			// Function declaration
 			ck_parse!(ck_fn_decl);
@@ -358,6 +358,23 @@ pub struct QuParser {
 	}
 
 
+	/// Attempts to return statemente.
+	fn ch_keyword_return(&mut self) -> Result<Option<QuLeaf>, QuMsg> {
+		if self.utl_statement_start()?.is_none() {
+			return Ok(None);
+		}
+
+		// Match keyword
+		let Some(_) = self.ck_str(KEYWORD_RETURN)?
+			else {return Ok(None)};
+
+		return match self.ck_expr()? {
+			Some(l) => Ok(Some(QuLeaf::Return(Some(Box::new(l))))),
+			None => Ok(Some(QuLeaf::Return(None))),
+		};
+	}
+
+
 	/// Attempts to parse a number literal
 	fn ck_number(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
 		let tk = self.tk_spy(0);
@@ -572,31 +589,6 @@ pub struct QuParser {
 			.expect("Print needs number TODO: Better msg");
 
 		return Ok(Some(QuLeaf::Print(Box::new(reg_tk))));
-	}
-
-
-	/// Attempts to parse a print statement.
-	fn ch_return(&mut self) -> Result<Option<QuLeaf>, QuMsg> {
-		if self.utl_statement_start()?.is_none() {
-			return Ok(None);
-		}
-
-		// Match return keyword
-		let keyword_tk = self.tk_spy(0);
-		if keyword_tk != KEYWORD_RETURN {
-			return Ok(None);
-		}
-		self.tk_next()?;
-
-		// Match returning expression
-		let reg_tk = self.ck_expr()?.ok_or_else(
-			||{
-				// TODO: Proper error message
-				return QuMsg::flow_statement_lacks_expression();
-			}
-		)?;
-
-		return Ok(Some(QuLeaf::Return(Box::new(reg_tk))));
 	}
 
 
