@@ -37,8 +37,8 @@ pub const OP_MATH_MUL:&str = "*";
 pub const OP_MATH_NEQ:&str = "!=";
 pub const OP_MATH_SUB:&str = "-";
 
-type QuBlockNode = Vec<QuLeaf>;
-type QuParamNode = (QuToken, Option<QuToken>);
+pub type QuBlockNode = Vec<QuLeaf>;
+pub type QuParamNode = (QuToken, Option<QuToken>);
 
 
 #[derive(Debug, Clone, PartialEq)]
@@ -69,7 +69,7 @@ pub enum QuLeaf {
 /// Defines an expression in a Qu program tree.
 pub enum QuLeafExpr {
 	/// Call function branch.
-	FnCall(Box<QuToken>), // TODO: Implement arguments
+	FnCall(Box<QuToken>, Vec<QuLeafExpr>), // TODO: Implement arguments
 	/// A calculable expression. Contains an operator and two [`QuLeafExpr`]s.
 	Equation(u8, Box<QuLeafExpr>, Box<QuLeafExpr>),
 	/// A literal int value.
@@ -273,11 +273,26 @@ pub struct QuParser {
 				return Ok(None);
 			};
 
+		// Match function parameters
+		let params = match self.ck_expr()? {
+			Some(l) => {
+				if let QuLeafExpr::Tuple(tup) = l {
+					tup
+				} else {
+					vec![l]
+				}
+			},
+			None => vec![],
+		};
+
 		// Match a close ')'
 		let Some(_) = self.ck_str(")")?
 			else {return Err(QuMsg::missing_token(")"))};
 
-		return Ok(Some(QuLeafExpr::FnCall(Box::new(fn_name_tk.clone()))));
+		return Ok(Some(QuLeafExpr::FnCall(
+			Box::new(fn_name_tk.clone()),
+			params,
+		)));
 	}
 
 
@@ -1149,9 +1164,11 @@ mod test_qu_matcher {
 					OPLIB.op_id_from_symbol(OP_MATH_ADD),
 					Box::new(QuLeafExpr::FnCall(
 						Box::new(QuToken::from_str("add")),
+						vec![],
 					)),
 					Box::new(QuLeafExpr::FnCall(
 						Box::new(QuToken::from_str("sub")),
+						vec![],
 					)),
 				)),
 			),

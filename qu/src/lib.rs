@@ -74,6 +74,7 @@ pub struct Qu {
 	vm:QuVm,
 
 } impl Qu {
+
 	/// Instantiates a [`Qu`] struct.
 	/// 
 	/// # Examples
@@ -132,7 +133,7 @@ pub struct Qu {
 	/// # fn example() -> Result<(), QuMsg> {
 	/// let mut qu = Qu::new();
 	/// 
-	/// let asm = qu.compile_to_asm("var added = 5 + 6")?;
+	/// let asm = qu.compile_to_asm("var added = 5 + 6", false)?;
 	/// assert_eq!(
 	/// 	asm,
 	/// 	format!("{}{}{}{}",
@@ -145,10 +146,11 @@ pub struct Qu {
 	/// # return Ok(());
 	/// # }
 	/// ```
-	pub fn compile_to_asm(&mut self, code:&str) -> Result<String, QuMsg> {
+	pub fn compile_to_asm(&mut self, code:&str, include_line_columns:bool
+	) -> Result<String, QuMsg> {
 		let code = self.compile(code)?;
 
-		return Ok(QuVm::code_to_asm(&code, false));
+		return Ok(QuVm::code_to_asm(&code, include_line_columns));
 	}
 
 
@@ -317,6 +319,23 @@ mod test_lib {
     use crate::{Qu, QuMsg};
 
 	#[test]
+	// TODO: Actually check that the results are correct.
+	fn fn_call() -> Result<(), QuMsg>{
+		let mut qu = Qu::new();
+		let script = r#"
+			fn add(a, b):
+				print a + b
+
+			print add(11, 20)
+		"#;
+
+		qu.run(script)?;
+
+		return Ok(());
+	}
+
+
+	#[test]
 	fn run_qu_example() -> Result<(), QuMsg>{
 		let mut qu = Qu::new();
 		qu.run(r#"
@@ -335,11 +354,9 @@ mod test_lib {
 	fn run_qu_example_var_scoping1() -> Result<(), QuMsg>{
 		let mut qu = Qu::new();
 		qu.run(r#"
-			fn add():
-				var left = 2
-				var right = 5
-				print left + right
-			print add()
+			fn add(a, b):
+				print a + b
+			print add(1, 2)
 		"#)?;
 		return Ok(());
 	}

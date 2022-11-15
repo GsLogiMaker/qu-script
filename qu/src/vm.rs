@@ -208,6 +208,9 @@ struct_QuOpLibrary!{
 
 	[ 25] define_fn:DFFN(QuAsmTypes::Str, QuAsmTypes::Uint32)
 	[ 26] define_const_str:DFCS(QuAsmTypes::Str)
+
+	[ 27] parameter_add:PAD(QuAsmTypes::UInt8)
+	[ 28] parameter_pop:PPO(QuAsmTypes::UInt8)
 }
 
 
@@ -260,6 +263,8 @@ pub struct QuVm {
 	register_offset:usize,
 	/// The program counter.
 	pc:usize,
+	/// Holds the parameters of the next function.
+	parameters:Vec<RegisterValue>,
 
 } impl QuVm {
 
@@ -284,6 +289,7 @@ pub struct QuVm {
 			registers:Vec::with_capacity(u8::MAX as usize),
 			register_offset: 0,
 			pc: 0,
+			parameters: Vec::default(),
 		};
 
 		vm.registers.resize(u8::MAX as usize, 0);
@@ -560,6 +566,25 @@ pub struct QuVm {
 
 	fn exc_load_mem(&mut self, _:&[u8]) {
 		unimplemented!();
+	}
+
+
+	/// Adds a register value as a parameter for a function.
+	fn exc_parameter_add(&mut self, code:&[u8]) {
+		let reg = self.next_u8(code) as RegisterValue;
+		self.parameters.push(self.registers[reg]);
+	}
+
+
+	/// Pops a parameter value into a register.
+	fn exc_parameter_pop(&mut self, code:&[u8]) -> Result<(), QuMsg> {
+		let Some(x) = self.parameters.pop()
+			else {return Err(QuMsg::general(
+				"Could not pop parameter. Parameters is empty. TODO: Better msg"
+			))};
+		let to_reg = self.next_u8(code) as usize;
+		self.registers[to_reg] = x;
+		return Ok(());
 	}
 
 
@@ -925,7 +950,11 @@ pub struct QuVm {
 		while self.pc != bytecode.len() {
 			let result = self.do_next(bytecode);
 			if let Err(e) = result {
-				if e.description == "Done" {return Ok(())};
+				if e.description == "Done" {
+					return Ok(())
+				} else {
+					return Err(e);
+				}
 			}
 		}
 		return Ok(());
@@ -934,9 +963,8 @@ pub struct QuVm {
 
 	/// Runs the next command in the given bytecode.
 	fn do_next(&mut self, bytecode:&[u8]) -> Result<(), QuMsg> {
-		// TODO: Error handling for running operations
 		let op = self.next_u8(bytecode);
-//		println!("Doing op: {}", OPLIB.ops[op as usize].name);
+		//println!("Doing op: {}", &OPLIB.ops[op as usize].name);
 		match op {
 			x if x == OPLIB.end as u8 => {self.frame_end()?},
 
@@ -965,6 +993,8 @@ pub struct QuVm {
 			x if x == OPLIB.print => self.exc_print(bytecode),
 			x if x == OPLIB.call => self.exc_call_fn(bytecode)?,
 			x if x == OPLIB.define_fn => self.exc_define_fn(bytecode),
+			x if x == OPLIB.parameter_add => self.exc_parameter_add(bytecode),
+			x if x == OPLIB.parameter_pop => self.exc_parameter_pop(bytecode)?,
 
 			x => { println!("{x}"); todo!(); }
 		};

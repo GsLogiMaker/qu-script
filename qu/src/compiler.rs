@@ -2,17 +2,16 @@
 use crate::QuParser;
 use crate::parser::FLOW_TYPE_IF;
 use crate::parser::FLOW_TYPE_WHILE;
+use crate::parser::QuParamNode;
 use crate::vm::OPLIB;
 use crate::QuLeaf;
 use crate::QuLeafExpr;
 use crate::QuMsg;
 use crate::QuToken;
 use crate::QuType2;
-use crate::QuVar;
 
 use core::panic;
 use std::collections::HashMap;
-use std::mem::take;
 
 // TODO: Fix compiler's documentation
 
@@ -66,7 +65,6 @@ pub struct QuCompiler {
 	contexts:Vec<QuCmpContext>,
 	types:Vec<QuType2>,
 	types_map:HashMap<String, usize>,
-	builder:QuAsmBuilder,
 
 
 } impl QuCompiler {
@@ -78,7 +76,6 @@ pub struct QuCompiler {
 			contexts:Vec::default(),
 			types:vec![QuType2::int(), QuType2::uint(), QuType2::bool()],
 			types_map:HashMap::new(),
-			builder: QuAsmBuilder::default(),
 		};
 
 		let mut i:usize = 0;
@@ -107,8 +104,9 @@ pub struct QuCompiler {
 			-> Result<QuAsmBuilder, QuMsg> {
 		return match leaf {
 			QuLeafExpr::FnCall(
-				name
-			) => self.cmp_fn_call(&name.text, output_reg),
+				name,
+				params,
+			) => self.cmp_fn_call(&name.text, params, output_reg),
 			QuLeafExpr::Equation(
 				op,
 				left,
@@ -289,9 +287,20 @@ pub struct QuCompiler {
 	}
 
 
-	fn cmp_fn_call(&mut self, name:&str, store_to:u8
+	fn cmp_fn_call(&mut self, name:&str, params:&Vec<QuLeafExpr>, store_to:u8
 	) -> Result<QuAsmBuilder, QuMsg> {
 		let mut builder = QuAsmBuilder::new();
+
+		with!(self.stack_frame_start, self.stack_frame_end {
+			for p in params {
+				let reg = self.stack_reserve();
+				let parameter_expr = self.cmp_expr(&p, reg)?;
+				builder.add_builder(parameter_expr);
+				builder.add_code(vec![OPLIB.parameter_add, reg]);
+			}
+			Ok(())
+		})?;
+
 		builder.add_u8(OPLIB.call);
 		builder.add_name_ref(name.to_owned());
 		builder.add_u8(store_to);
@@ -300,22 +309,35 @@ pub struct QuCompiler {
 	}
 
 
-	fn cmp_fn_decl(&mut self, name:&str, body:&Vec<QuLeaf>
+	fn cmp_fn_decl(
+		&mut self,
+		name:&str,
+		params:&Vec<QuParamNode>,
+		body:&Vec<QuLeaf>
 	) -> Result<QuAsmBuilder, QuMsg> {
 		self.add_name_ref(name.to_string());
 
 		let body_code
 			= with!(self.context_start, self.context_end {
+			let mut b = QuAsmBuilder::new();
+
+			// Compile parameters
+			for p in params {
+				self.add_variable(p.0.text.clone());
+				let reg = self.stack_reserve();
+				b.add_builder(self.cmp_parameter_pop(reg));
+			}
+
 			// Compile code block
-			let mut body_code = self.cmp_leafs(body)?;
-			body_code.add_u8(OPLIB.end);
-			Ok(body_code)
+			b.add_builder(self.cmp_leafs(body)?);
+			b.add_u8(OPLIB.end);
+			Ok(b)
 		})?;
 
 		// Add fn declaration operation
 		let mut code = QuAsmBuilder::new();
 		code.add_u8(OPLIB.define_fn);
-		code.add_name_ref(name.to_owned());
+		code.add_short_str(name.to_owned())?;
 		code.add_u32(body_code.len() as u32);
 
 		// Add body
@@ -357,7 +379,7 @@ pub struct QuCompiler {
 				statements,
 			) => {
 				// TODO: Compiler fn declaration parameters
-				return self.cmp_fn_decl(&name.text, statements);
+				return self.cmp_fn_decl(&name.text, parameters, statements);
 			}
 			QuLeaf::Print(leaf_expr) => {
 				// TODO Handle errors for compiling Print
@@ -399,6 +421,13 @@ pub struct QuCompiler {
 			b.add_builder(self.cmp_leaf(l)?);
 		}
 		return Ok(b);
+	}
+
+
+	fn cmp_parameter_pop(&mut self, reg:u8) -> QuAsmBuilder {
+		let mut b = QuAsmBuilder::new();
+		b.add_code(vec![OPLIB.parameter_pop, reg]);
+		return b;
 	}
 
 
@@ -561,7 +590,7 @@ pub struct QuCompiler {
 	fn get_expr_reg(&mut self, expr_leaf:&QuLeafExpr) -> Result<u8, QuMsg> {
 		return  match expr_leaf {
 			QuLeafExpr::Equation(_, _, _) => Ok(self.stack_reserve()),
-			QuLeafExpr::FnCall(_) => Ok(self.stack_reserve()),
+			QuLeafExpr::FnCall(_, _) => Ok(self.stack_reserve()),
 			QuLeafExpr::Number(_) => Ok(self.stack_reserve()),
 			QuLeafExpr::Tuple(_) => Ok(self.stack_reserve()),
 			QuLeafExpr::Var(name) => {
@@ -699,9 +728,11 @@ struct QuAsmBuilder {
 	}
 
 
-	fn add_str(&mut self, string:String) -> Result<(), QuMsg>{
+	fn add_short_str(&mut self, string:String) -> Result<(), QuMsg>{
 		if string.len() > 255 {
-			return Err(QuMsg::general("A name is too long. TODO: Better msg"));
+			return Err(QuMsg::general(
+				"The string is too long. TODO: Better msg"
+			));
 		}
 		let mut string_vec = string.as_bytes().to_vec();
 		let mut code = vec![(string_vec.len() as u8)];
