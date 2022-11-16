@@ -673,7 +673,7 @@ pub struct QuParser {
 				self.tk_state_pop();
 				let false_expr = self.tk_spy(2).clone();
 				return Err(QuMsg::var_assign_invalid_value(
-					&name_tk.text, &false_expr.text
+					&name_tk.slice, &false_expr.slice
 				));
 			},
 		};
@@ -718,7 +718,7 @@ pub struct QuParser {
 				if msg.title == errors::ERR_TITLE_INVALID_INDENTATION {
 					self.tk_idx -= 1;
 					return Err(QuMsg::var_assign_lacks_value(
-						&name_tk.text))
+						&name_tk.slice))
 				}
 				// Return normal error
 				return Err(msg);
@@ -780,9 +780,9 @@ pub struct QuParser {
 		self.indent = u8::MAX;
 		self.tokens = tokenize(&script.to_owned(), RULES);
 		self.tokens.push(
-			QuToken::new(self.tokens.len() as u64,
-				self.tokens.len() as u64, 0, 0, 0,
-				u8::MAX)
+			QuToken::new(
+				0, 0, 0, u8::MAX, "",
+			)
 		);
 
 		let res = self.ck_code_block();
@@ -800,7 +800,7 @@ pub struct QuParser {
 
 			// Add token for location to error
 			Err(mut msg) => {
-				msg.token = self.tk_spy(0).clone();
+				msg.token = self.tk_spy(0).char_index.clone();
 				return Err(msg);
 			}
 		}
@@ -810,8 +810,8 @@ pub struct QuParser {
 	/// A helper function for whenever starting to parse a statement.
 	fn utl_statement_start(&mut self) -> Result<Option<()>, QuMsg> {
 		let tk = self.tk_spy(0);
-		let tk_row = tk.row as usize;
-		let tk_indent = tk.indent as u8;
+		let tk_row = tk.char_index.row as usize;
+		let tk_indent = tk.char_index.indent as u8;
 
 		if self.indent == u8::MAX {
 			self.indent = tk_indent;
@@ -862,8 +862,8 @@ pub struct QuParser {
 		let tk = &self.tokens[self.tk_idx];
 
 		// Check for proper indentation
-		if tk.row != line as u64 {
-			if tk.indent != indent+2 {
+		if tk.char_index.row != line as u32 {
+			if tk.char_index.indent != indent+2 {
 				return None;
 			}
 		}
@@ -942,31 +942,56 @@ mod test_qu_matcher {
 
 	#[test]
 	fn parse_code_example() -> Result<(), QuMsg>{
+		let script = r#"
+			fn add():
+				var left = 2
+				var right = 5
+				print left + right
+		
+			add()
+		"#;
 		let mut p = QuParser::new();
-		let res = p.parse(r#"
-		 	fn add():
-		 		var left = 2
-		 		var right = 5
-		 		print left + right
-		 
-		 	add()
-		"#)?;
+		let res = p.parse(script)?;
 		
 		let expc = vec![
-			QuLeaf::Expression(Box::new(
-				QuLeafExpr::Equation(
-					9,
-					Box::new(QuLeafExpr::Equation(
+			QuLeaf::FnDecl(
+				Box::new(QuToken::from("add")),
+				vec![],
+				vec![
+					QuLeaf::VarDecl(
+						Box::new(QuToken::from("left")),
+						None,
+						Some(Box::new(QuLeafExpr::Number(
+							Box::new(QuToken::from("2"))
+						))),
+					),
+					QuLeaf::VarDecl(
+						Box::new((QuToken::from("right"))),
+						None,
+						Some(Box::new(QuLeafExpr::Number(
+							Box::new(QuToken::from("5"))
+						))),
+					),
+					QuLeaf::Print(Box::new(QuLeafExpr::Equation(
 						8,
-						Box::new(QuLeafExpr::Number(Box::new(QuToken::from_str("2")))),
-						Box::new(QuLeafExpr::Number(Box::new(QuToken::from_str("3")))),
-					)),
-					Box::new(QuLeafExpr::Number(Box::new(QuToken::from_str("3")))),
-				),
-			)),
+						Box::new(QuLeafExpr::Var(
+							Box::new(QuToken::from("left"))
+						)),
+						Box::new(QuLeafExpr::Var(
+							Box::new(QuToken::from("right"))
+						)),
+					)))
+				]
+			),
+			QuLeaf::Expression(
+				Box::new(QuLeafExpr::FnCall(
+					Box::new(QuToken::from("add")),
+					vec![]
+				)),
+			),
 		];
 
-		dbg!(&res);
+		assert_eq!(&res, &expc);
 
 		return Ok(());
 	}
@@ -976,6 +1001,7 @@ mod test_qu_matcher {
 	fn parse_expression() -> Result<(), QuMsg>{
 		let mut p = QuParser::new();
 		let res = p.parse("2 + 3 - 3")?;
+		dbg!(&res);
 		
 		let expc = vec![
 			QuLeaf::Expression(Box::new(
@@ -983,10 +1009,10 @@ mod test_qu_matcher {
 					9,
 					Box::new(QuLeafExpr::Equation(
 						8,
-						Box::new(QuLeafExpr::Number(Box::new(QuToken::from_str("2")))),
-						Box::new(QuLeafExpr::Number(Box::new(QuToken::from_str("3")))),
+						Box::new(QuLeafExpr::Number(Box::new(QuToken::from("2")))),
+						Box::new(QuLeafExpr::Number(Box::new(QuToken::from("3")))),
 					)),
-					Box::new(QuLeafExpr::Number(Box::new(QuToken::from_str("3")))),
+					Box::new(QuLeafExpr::Number(Box::new(QuToken::from("3")))),
 				),
 			)),
 		];
@@ -1007,10 +1033,10 @@ mod test_qu_matcher {
 						Box::new(QuLeafExpr::Equation(
 							OPLIB.op_id_from_symbol($symbol),
 							Box::new(QuLeafExpr::Number(
-								Box::new(QuToken::from_str("23")))
+								Box::new(QuToken::from("23")))
 							),
 							Box::new(QuLeafExpr::Number(
-								Box::new(QuToken::from_str("18")))
+								Box::new(QuToken::from("18")))
 							),
 						)),
 					),
@@ -1050,15 +1076,15 @@ mod test_qu_matcher {
 				Box::new(QuLeafExpr::Equation(
 					8,
 					Box::new(QuLeafExpr::Number(
-						Box::new(QuToken::from_str("2")),
+						Box::new(QuToken::from("2")),
 					)),
 					Box::new(QuLeafExpr::Equation(
 						10,
 						Box::new(QuLeafExpr::Number(
-							Box::new(QuToken::from_str("3")),
+							Box::new(QuToken::from("3")),
 						)),
 						Box::new(QuLeafExpr::Number(
-							Box::new(QuToken::from_str("9")),
+							Box::new(QuToken::from("9")),
 						)),
 					)),
 				)),
@@ -1071,14 +1097,14 @@ mod test_qu_matcher {
 					Box::new(QuLeafExpr::Equation(
 						8,
 						Box::new(QuLeafExpr::Number(
-							Box::new(QuToken::from_str("2")),
+							Box::new(QuToken::from("2")),
 						)),
 						Box::new(QuLeafExpr::Number(
-							Box::new(QuToken::from_str("3")),
+							Box::new(QuToken::from("3")),
 						)),
 					)),
 					Box::new(QuLeafExpr::Number(
-						Box::new(QuToken::from_str("9")),
+						Box::new(QuToken::from("9")),
 					)),
 				)),
 			),
@@ -1107,17 +1133,17 @@ mod test_qu_matcher {
 			QuLeaf::FlowStatement(
 				FLOW_TYPE_IF,
 				Box::new(QuLeafExpr::Number(
-					Box::new(QuToken::from_str("1")),
+					Box::new(QuToken::from("1")),
 				)),
 				vec![
 					QuLeaf::Expression(
 						Box::new(QuLeafExpr::Number(
-							Box::new(QuToken::from_str("2")),
+							Box::new(QuToken::from("2")),
 						)),
 					),
 					QuLeaf::Expression(
 						Box::new(QuLeafExpr::Number(
-							Box::new(QuToken::from_str("3")),
+							Box::new(QuToken::from("3")),
 						)),
 					),
 				],
@@ -1125,12 +1151,12 @@ mod test_qu_matcher {
 			QuLeaf::FlowStatement(
 				FLOW_TYPE_WHILE,
 				Box::new(QuLeafExpr::Number(
-					Box::new(QuToken::from_str("4")),
+					Box::new(QuToken::from("4")),
 				)),
 				vec![
 					QuLeaf::Expression(
 						Box::new(QuLeafExpr::Number(
-							Box::new(QuToken::from_str("5")),
+							Box::new(QuToken::from("5")),
 						)),
 					),
 				],
@@ -1155,11 +1181,11 @@ mod test_qu_matcher {
 				Box::new(QuLeafExpr::Equation(
 					OPLIB.op_id_from_symbol(OP_MATH_ADD),
 					Box::new(QuLeafExpr::FnCall(
-						Box::new(QuToken::from_str("add")),
+						Box::new(QuToken::from("add")),
 						vec![],
 					)),
 					Box::new(QuLeafExpr::FnCall(
-						Box::new(QuToken::from_str("sub")),
+						Box::new(QuToken::from("sub")),
 						vec![],
 					)),
 				)),
@@ -1184,41 +1210,41 @@ mod test_qu_matcher {
 
 		let expt = vec![
 			QuLeaf::FnDecl(
-				Box::new(QuToken::from_str("add")),
+				Box::new(QuToken::from("add")),
 				vec![
 					(
-						QuToken::from_str("a"),
+						QuToken::from("a"),
 						None,
 					),
 					(
-						QuToken::from_str("b"),
+						QuToken::from("b"),
 						None,
 					),
 				],
 				vec![
 					QuLeaf::Expression(
 						Box::new(QuLeafExpr::Number(
-							Box::new(QuToken::from_str("5")),
+							Box::new(QuToken::from("5")),
 						)),
 					),
 				]
 			),
 			QuLeaf::FnDecl(
-				Box::new(QuToken::from_str("sub")),
+				Box::new(QuToken::from("sub")),
 				vec![
 					(
-						QuToken::from_str("a"),
-						Some(QuToken::from_str("int")),
+						QuToken::from("a"),
+						Some(QuToken::from("int")),
 					),
 					(
-						QuToken::from_str("b"),
-						Some(QuToken::from_str("int")),
+						QuToken::from("b"),
+						Some(QuToken::from("int")),
 					),
 				],
 				vec![
 					QuLeaf::Expression(
 						Box::new(QuLeafExpr::Number(
-							Box::new(QuToken::from_str("6")),
+							Box::new(QuToken::from("6")),
 						)),
 					),
 				]
@@ -1238,14 +1264,14 @@ mod test_qu_matcher {
 
 		let expc = vec![
 			QuLeaf::VarAssign(
-				Box::new(QuToken::from_str("count")),
+				Box::new(QuToken::from("count")),
 				Box::new(QuLeafExpr::Equation(
 					OPLIB.op_id_from_symbol(OP_MATH_DIV),
 					Box::new(QuLeafExpr::Number(
-						Box::new(QuToken::from_str("3")),
+						Box::new(QuToken::from("3")),
 					)),
 					Box::new(QuLeafExpr::Number(
-						Box::new(QuToken::from_str("2")),
+						Box::new(QuToken::from("2")),
 					)),
 				)),
 			),
@@ -1264,15 +1290,15 @@ mod test_qu_matcher {
 
 		let expc = vec![
 			QuLeaf::VarDecl(
-				Box::new(QuToken::from_str("count")),
-				Some(Box::new(QuToken::from_str("int"))),
+				Box::new(QuToken::from("count")),
+				Some(Box::new(QuToken::from("int"))),
 				Some(Box::new(QuLeafExpr::Equation(
 					OPLIB.op_id_from_symbol(OP_MATH_MUL),
 					Box::new(QuLeafExpr::Number(
-						Box::new(QuToken::from_str("20")),
+						Box::new(QuToken::from("20")),
 					)),
 					Box::new(QuLeafExpr::Number(
-						Box::new(QuToken::from_str("8")),
+						Box::new(QuToken::from("8")),
 					)),
 				))),
 			),

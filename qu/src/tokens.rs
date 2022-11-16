@@ -135,37 +135,39 @@ pub fn tokenrule_symbols(added_so_far:&[char]) -> bool {
 
 
 /// Tokenizes a [String] according to the passed [Rules].
-pub fn tokenize<'a>(script:&'a String, rules:&Rules<'a>) -> Vec<QuToken> {
+pub fn tokenize<'a>(script:&'a str, rules:&Rules<'a>) -> Vec<QuToken> {
 	let mut tokens = vec!();
 
 	/* WARNING: This does not account for grapheme clusters. Currently hoping
 	This won't be a problem. */
-	let mut row:u64 = 0;
-	let mut col:u64 = 0;
+	let mut row:u32 = 0;
+	let mut column:u8 = 0;
 	let mut indent:u8 = 0;
-	let mut in_begining:bool = true;
+	let mut tk_start:usize = 0;
+	let mut in_new_line:bool = true;
 	let mut added_so_far:Vec<char> = Vec::with_capacity(20);
 	let mut curr_token = 0;
-	for (idx, char) in script.char_indices() {
-		col += 1;
+
+	for (index, char) in script.char_indices() {
+		column += 1;
 
 		if char != '\t' && char != ' ' {
-			in_begining = false;
+			in_new_line = false;
 		}
 
 		// Check tab
 		if char == '\t' {
-			if in_begining {
+			if in_new_line {
 				indent += 1;
 				added_so_far.clear();
 			}
 			
 		// Check newline
 		} else if char == '\n' {
-			col = 0;
+			column = 0;
 			row += 1;
 			indent = 0;
-			in_begining = true;		
+			in_new_line = true;		
 		}
 
 		// Any other characters
@@ -174,27 +176,25 @@ pub fn tokenize<'a>(script:&'a String, rules:&Rules<'a>) -> Vec<QuToken> {
 		// Update token end if it fits rule, 
 		// otherwise clear the added so far
 		loop {
-			let (does_fit, char_type) = chars_fit_rule(
+			let (does_fit, tk_type) = chars_fit_rule(
 				&added_so_far,
 				rules,
 			);
 			if does_fit{
 				if curr_token <= tokens.len() && added_so_far.len() == 1 {
 					tokens.push(QuToken::new(
-						idx as u64,
-						idx as u64,
 						row,
-						col,
+						column,
 						indent,
-						char_type,
+						tk_type,
+						""
 					));
+					tk_start = index;
 				}
-				tokens[curr_token].end = idx as u64;
-				tokens[curr_token].tk_type = char_type;
-
-				if idx+1 == script.len() {
-					tokens[curr_token].text
-							= tokens[curr_token].text(script);
+				tokens[curr_token].tk_type = tk_type;
+				if index+1 == script.len() {
+					tokens[curr_token].slice
+						= script[tk_start..=index].to_owned();
 				}
 				break;
 				
@@ -203,8 +203,8 @@ pub fn tokenize<'a>(script:&'a String, rules:&Rules<'a>) -> Vec<QuToken> {
 				break;
 			}else {
 				if curr_token+1 == tokens.len() {
-					tokens[curr_token].text
-							= tokens[curr_token].text(script);
+					tokens[curr_token].slice
+						= script[tk_start..index].to_owned();
 					curr_token += 1;
 				}
 				added_so_far.clear();
@@ -238,131 +238,98 @@ pub fn chars_fit_rule<'a>(chars:&Vec<char>, rules:&Rules<'a>) -> (bool, u8) {
 
 /// A slice of a script file with information on the row, column, and indent of
 /// the slice.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct QuToken {
-	/// Where in the script this token starts.
-	pub begin:u64,
-	/// Where in the script this token ends.
-	pub end:u64,
-	/// The row this token is on.
-	pub row:u64,
-	/// The column this token starts on.
-	pub _col:u64,
-	/// The indentation of this token.
-	pub indent:u8,
-	/// The text of this token.
-	pub text:String,
+	pub char_index:QuCharIndex,
 	/// The type of this token.
 	pub tk_type:u8,
+	/// The slice of text this token represents.
+	pub slice:String,
 
 } impl QuToken {
 
 	/// Makes a new [`QuToken`].
 	pub fn new(
-			begin:u64, end:u64, row:u64, col:u64, indent:u8,
-			varient:u8,) -> QuToken {
-		return QuToken{
-			begin,
-			end,
-			row,
-			_col:col,
-			indent,
-			text:String::new(),
-			tk_type:varient
+			row:u32, column:u8, indent:u8, tk_type:u8, slice:&str
+	) -> QuToken {
+		return QuToken {
+			char_index: QuCharIndex::new(row, column, indent),
+			tk_type,
+			slice: slice.to_owned(),
 		};
 	}
 
 
-	/// Makes a new empty [`QuToken`].
-	pub fn default() -> QuToken {
-	return QuToken{
-			begin:0,
-			end:0,
-			row:0,
-			_col:0,
-			indent:0,
-			text:"".to_string(),
-			tk_type:0
+	pub fn from(slice:&str) -> QuToken {
+		return Self {
+			char_index: QuCharIndex::default(),
+			tk_type: 0,
+			slice: slice.to_owned(),
 		};
 	}
 
-
-	/// Makes a new empty [`QuToken`].
-	pub fn from_str(text:&str) -> QuToken {
-		return QuToken{
-				begin:0,
-				end:0,
-				row:0,
-				_col:0,
-				indent:0,
-				text:text.to_owned(),
-				tk_type:0
-			};
-		}
-
-
-	// TODO: Replace this function with the text parameter of the struct.
-	/// Returns the text of this token.
-	pub fn text(&self, source:&str) -> String {
-		let mut text = String::new();
-		if source.len() > 0 {
-			text = source[self.begin as usize..=self.end as usize].to_string();
-		}
-		return text;
-	}
-
-} impl Clone for QuToken {
-	fn clone(&self) -> Self {
-		Self { 
-			begin:self.begin.clone(),
-			end:self.end.clone(),
-			row:self.row.clone(),
-			_col:self._col.clone(),
-			indent:self.indent.clone(),
-			text:self.text.clone(),
-			tk_type:self.tk_type.clone()
-		}
-	}
 } impl Display for QuToken {
 	
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		return write!(
-				f, "<'{}' row:{}  indent:{}>",
-				self.text,
-				self.row,
-				self.indent,);
+				f, "<row:{}  indent:{}>",
+				self.char_index.row,
+				self.char_index.indent,);
 	}
 
 } impl Debug for QuToken {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-		return write!(f, "QuToken(\"{}\")", self.text);
+		return write!(f, "QuToken(\"{}\")", self.slice);
 	}
 } impl PartialEq for QuToken {
 	fn eq(&self, other:&Self) -> bool {
 		if self.tk_type == u8::MAX {
 			return false;
 		}
-		return self.text == other.text;
+		return self.slice == other.slice;
 	}
 } impl PartialEq<str> for QuToken {
 	fn eq(&self, other:&str) -> bool {
 		if self.tk_type == u8::MAX {
 			return false;
 		}
-		return &self.text == other;
+		return self.slice == other;
 	}
-} impl<'a> PartialEq<&str> for QuToken {
+} impl PartialEq<&str> for QuToken {
 	fn eq(&self, other:&&str) -> bool {
 		if self.tk_type == u8::MAX {
 			return false;
 		}
-		return &self.text == *other;
+		return self.slice == *other;
 	}
 } impl PartialEq<String> for QuToken {
+
 	fn eq(&self, other:&String) -> bool {
 		if self.tk_type == u8::MAX {
 			return false;
 		}
-		return &self.text == other;
+		return &self.slice == other;
 	}
+}
+
+
+#[derive(Clone, Debug, Default)]
+/// Stores human readable information the location of a text character.
+pub struct QuCharIndex {
+	/// The row this chararacter is on.
+	pub row:u32,
+	/// The column this chararacter on.
+	pub column:u8,
+	/// The indentation of this chararacter.
+	pub indent:u8,
+} impl QuCharIndex {
+
+	fn new(row:u32, column:u8, indent:u8) -> Self {
+		return Self {
+			row,
+			column,
+			indent,
+		};
+	}
+
 }

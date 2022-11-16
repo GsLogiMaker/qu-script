@@ -146,7 +146,7 @@ pub struct Qu {
 	/// # return Ok(());
 	/// # }
 	/// ```
-	pub fn compile_to_asm(&mut self, code:&str, include_line_columns:bool
+	pub fn compile_to_asm(&self, code:&str, include_line_columns:bool
 	) -> Result<String, QuMsg> {
 		let code = self.compile(code)?;
 
@@ -315,20 +315,23 @@ struct QuVar {
 }
 
 #[cfg(test)]
-mod test_lib {
+mod lib {
     use crate::{Qu, QuMsg};
 
 	#[test]
-	// TODO: Actually check that the results are correct.
-	fn fn_call() -> Result<(), QuMsg>{
+	fn recursive_fn_addinate() -> Result<(), QuMsg>{
 		let mut qu = Qu::new();
 		let script = r#"
-			fn add(a, b):
-				print a + b
+			fn addinate(val):
+				if val < 100:
+					return addinate(val + val)
+				return val
 
-			print add(11, 20)
+			print addinate(1)
 		"#;
+		// TODO: Actually check that the results are correct.
 
+		println!("{}", qu.compile_to_asm(script, true)?);
 		qu.run(script)?;
 
 		return Ok(());
@@ -378,12 +381,11 @@ mod test_lib {
 
 
 	#[test]
-	#[should_panic]
 	fn run_qu_example_var_scoping2() {
 		let mut qu = Qu::new();
 		qu.run(r#"
 			var counter = 1
-			if count:
+			if counter:
 				var value = 25
 				print value
 			print counter
@@ -397,7 +399,7 @@ mod test_lib {
 		let mut qu = Qu::new();
 		qu.run(r#"
 			var counter = 1
-			if count:
+			if counter:
 				var value = 25
 				print value
 			print counter

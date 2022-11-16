@@ -368,11 +368,12 @@ pub struct QuVm {
 						format!("{}", u64::from_be_bytes(bytes))
 					}
 					QuAsmTypes::Str => {
-						let mut val = "\"".to_string();
-						for _ in 0..size+1 {
-							val.push(code[i+1] as char);
+						let mut val = "\"".to_owned();
+						for _ in 1..size+1 {
 							i += 1;
+							val.push(code[i+1] as char);
 						}
+						i += 1;
 						val.push('"');
 						val
 					}

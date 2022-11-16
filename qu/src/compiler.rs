@@ -94,8 +94,8 @@ pub struct QuCompiler {
 	}
 
 
-	fn add_variable(&mut self, name:String) {
-		self.contexts_get_top().var_refs.push(name);
+	fn add_variable(&mut self, name:&str) {
+		self.contexts_get_top().var_refs.push(name.to_owned());
 		self.context_get_top_frame().var_refs_added += 1;
 	}
 
@@ -107,7 +107,7 @@ pub struct QuCompiler {
 			QuLeafExpr::FnCall(
 				name,
 				params,
-			) => self.cmp_fn_call(name.text, params, output_reg),
+			) => self.cmp_fn_call(&name.slice, params, output_reg),
 			QuLeafExpr::Equation(
 				op,
 				left,
@@ -131,8 +131,17 @@ pub struct QuCompiler {
 		mut right:QuLeafExpr,
 		output_reg:u8
 	)-> Result<QuAsmBuilder, QuMsg> {
-		let left_reg = self.get_expr_reg(&mut left)?;
-		let right_reg = self.get_expr_reg(&mut right)?;
+		let left_reg = if let QuLeafExpr::Var(_) = left {
+			self.get_expr_reg(&mut left)?
+		} else { output_reg };
+
+		let right_reg = if let QuLeafExpr::Var(_) = right {
+			self.get_expr_reg(&mut right)?
+		} else {
+			if left_reg == output_reg {
+				self.get_expr_reg(&mut right)?
+			} else { output_reg }
+		};
 
 		let mut builder = QuAsmBuilder::new();
 		builder.add_builder(self.cmp_expr(left, left_reg)?);
@@ -151,8 +160,8 @@ pub struct QuCompiler {
 	fn cmp_expr_int(&mut self, val:QuToken, output_reg:u8) -> QuAsmBuilder {
 		// TODO: Support other int sizes
 		
-		let Ok(val) = val.text.parse::<u8>() else {
-			panic!("Could not convert text '{}' to number!", val.text);
+		let Ok(val) = val.slice.parse::<u8>() else {
+			panic!("Could not convert text '{}' to number!", val.slice);
 		};
 
 		let mut b = QuAsmBuilder::new();
@@ -184,11 +193,11 @@ pub struct QuCompiler {
 		
 		// The register to copy the variable value from
 		let Some(var_reg)
-			= self.get_var_register(token.text.as_str())
+			= self.get_var_register(&token.slice)
 			else {
 				let mut msg
-					= QuMsg::undefined_var_access(&token.text);
-				msg.token = token.clone();
+					= QuMsg::undefined_var_access(&token.slice);
+				msg.token = token.char_index;
 				return Err(msg);
 			};
 		// Copying to same register location, return nothing
@@ -291,7 +300,7 @@ pub struct QuCompiler {
 	}
 
 
-	fn cmp_fn_call(&mut self, name:String, params:Vec<QuLeafExpr>, store_to:u8
+	fn cmp_fn_call(&mut self, name:&str, params:Vec<QuLeafExpr>, store_to:u8
 	) -> Result<QuAsmBuilder, QuMsg> {
 		let mut builder = QuAsmBuilder::new();
 
@@ -314,7 +323,7 @@ pub struct QuCompiler {
 
 	fn cmp_fn_decl(
 		&mut self,
-		name:String,
+		name:&str,
 		params:Vec<QuParamNode>,
 		body:Vec<QuLeaf>
 	) -> Result<QuAsmBuilder, QuMsg> {
@@ -324,12 +333,12 @@ pub struct QuCompiler {
 			= with!(self.context_start, self.context_end {
 
 			// Add return value variable for padding.
-			self.add_variable("return value".to_owned());
+			self.add_variable("return value");
 			let _ = self.stack_reserve();
 
 			// Compile parameters
 			for p in params {
-				self.add_variable(p.0.text);
+				self.add_variable(&p.0.slice);
 				// Reserver space for parameter
 				let _ = self.stack_reserve();
 			}
@@ -393,7 +402,7 @@ pub struct QuCompiler {
 			) => {
 				// TODO: Compiler fn declaration parameters
 				return self.cmp_fn_decl(
-					name.text,
+					&name.slice,
 					parameters,
 					statements
 				);
@@ -460,11 +469,11 @@ pub struct QuCompiler {
 	) -> Result<QuAsmBuilder, QuMsg> {
 		// Get variable register
 		let var_reg
-			= self.get_var_register(&var_token.text)
+			= self.get_var_register(&var_token.slice)
 				.ok_or_else(||{
 					let mut msg = QuMsg::undefined_var_assign(
-						&var_token.text);
-					msg.token = var_token;
+						&var_token.slice);
+					msg.token = var_token.char_index;
 					return msg;
 				}
 			)?
@@ -482,22 +491,22 @@ pub struct QuCompiler {
 	) -> Result<QuAsmBuilder, QuMsg> {
 
 		// Check if the variable is already defined
-		if self.is_var_defined(&var_token.text) {
-			let mut msg = QuMsg::var_redefined(&var_token.text);
-			msg.token = var_token;
+		if self.is_var_defined(&var_token.slice) {
+			let mut msg = QuMsg::var_redefined(&var_token.slice);
+			msg.token = var_token.char_index;
 			return Err(msg);
 		}
 
 		// Get var type
 		let mut var_type:usize = 0;
 		if let Some(type_tk) = variable_type_token {
-			let var_type_str = type_tk.text.as_str();
+			let var_type_str = &type_tk.slice;
 			if var_type_str != "" {
 				var_type = *self.types_map.get(var_type_str)
 					.ok_or_else(|| {
 						let mut msg = QuMsg::undefined_type_access(
-							&type_tk.text);
-						msg.token = *type_tk;
+							&type_tk.slice);
+						msg.token = type_tk.char_index;
 						return msg;
 					}
 				)?;
@@ -506,7 +515,7 @@ pub struct QuCompiler {
 
 		// Create variable
 		let var_reg = self.stack_reserve();
-		self.add_variable(var_token.text);
+		self.add_variable(&var_token.slice);
 
 		// Compile variable assignment
 		return match assign_to {
@@ -617,11 +626,11 @@ pub struct QuCompiler {
 			QuLeafExpr::Number(_) => Ok(self.stack_reserve()),
 			QuLeafExpr::Tuple(_) => Ok(self.stack_reserve()),
 			QuLeafExpr::Var(name) => {
-				self.get_var_register(&name.text)
+				self.get_var_register(&name.slice)
 					.ok_or_else(||{
 						let mut msg
-							= QuMsg::undefined_var_access(&name.text);
-						msg.token = take(name);
+							= QuMsg::undefined_var_access(&name.slice);
+						msg.token = name.char_index.clone();
 						return msg;
 					}
 				)
@@ -658,7 +667,7 @@ pub struct QuCompiler {
 
 
 	/// Returns true if the given variable is already defined.
-	fn is_var_defined(&mut self, var_name:&String) -> bool {
+	fn is_var_defined(&mut self, var_name:&str) -> bool {
 		// TODO: Maybe use a faster algorithm?
 		for var_ref in &self.contexts_get_top().var_refs {
 			if var_ref == var_name {
@@ -806,31 +815,97 @@ struct QuAsmBuilder {
 
 #[cfg(test)]
 mod test {
-    use crate::{QuCompiler, QuVm, QuMsg, vm::OPLIB};
+    use std::fmt::format;
+
+    use crate::{QuCompiler, QuVm, QuMsg, vm::OPLIB, Qu};
 
 
 	#[test]
-	fn compile() -> Result<(), QuMsg>{
-		let mut c = QuCompiler::new();
-		let code = c.compile(r#"
+	fn recursive_fn_addinate() -> Result<(), QuMsg>{
+		let qu = Qu::new();
+		let script = r#"
+			fn addinate(val):
+				if val < 100:
+					addinate(val + val)
+				return val
+			
+			return addinate(1)
+		"#;
+
+		assert_eq!(
+			qu.compile_to_asm(script, false)?,
+			format!("{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
+				"\nDFFN \"addinate\" 27",
+				"\nLDU8 100 2",
+				"\nLES 1 2 2",
+				"\nJBIN 10",
+				"\nADD 1 1 3",
+				"\nCALL 0 2",
+				"\nCPY 1 0",
+				"\nEND",
+				// TODO: Remove redundent 'END' when using 'return' keyword.
+				"\nEND",
+				"\nLDU8 1 1",
+				"\nCALL 0 0",
+				"\nCPY 0 0",
+				"\nEND",
+				// TODO: Remove redundent 'END' when using 'return' keyword.
+				"\nEND",
+			)
+		);
+
+		return Ok(());
+	}
+
+
+	#[test]
+	fn while_count_down() -> Result<(), QuMsg>{
+		let qu = Qu::new();
+		let script = r#"
+			var counter = 10
+			while 0 > counter:
+				counter = counter - 1
+		"#;
+
+		assert_eq!(
+			qu.compile_to_asm(script, false)?,
+			format!("{}{}{}{}{}{}{}{}",
+				"\nLDU8 10 0",
+				"\nLDU8 0 1",
+				"\nGRT 1 0 1",
+				"\nJBIN 7",
+				"\nLDU8 1 1",
+				"\nSUB 0 1 0",
+				"\nJB 4294967275",
+				"\nEND",
+			)
+		);
+
+		return Ok(());
+	}
+
+
+	#[test]
+	fn while_count_up() -> Result<(), QuMsg>{
+		let qu = Qu::new();
+		let script = r#"
 			var counter = 0
 			while counter < 10:
 				counter = counter + 1
-		"#)?;
+		"#;
 
 		assert_eq!(
-			&code,
-			&vec![
-				OPLIB.load_val_u8, 0, 0,
-				OPLIB.copy_reg, 0, 1,
-				OPLIB.load_val_u8, 10, 2,
-				OPLIB.lesser, 1, 2, 1,
-				OPLIB.jump_by_if_not, 0, 0, 0, 7,
-				OPLIB.load_val_u8, 1, 1,
-				OPLIB.add, 0, 1, 0,
-				OPLIB.jump_by, 255, 255, 255, 232,
-				OPLIB.end,
-			],
+			qu.compile_to_asm(script, false)?,
+			format!("{}{}{}{}{}{}{}{}",
+				"\nLDU8 0 0",
+				"\nLDU8 10 1",
+				"\nLES 0 1 1",
+				"\nJBIN 7",
+				"\nLDU8 1 1",
+				"\nADD 0 1 0",
+				"\nJB 4294967275",
+				"\nEND",
+			)
 		);
 
 		return Ok(());

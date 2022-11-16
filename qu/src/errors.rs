@@ -1,5 +1,5 @@
 
-use crate::QuToken;
+use crate::{tokens::QuCharIndex};
 use std::{fmt::{self, Display, Debug}};
 
 
@@ -21,7 +21,7 @@ pub const ERR_TITLE_UNDEFINED_FN:&str = "UNDEFINED FUNCTION";
 pub struct QuMsg {
 	pub title:String,
 	pub description:String,
-	pub token:QuToken,
+	pub token:QuCharIndex,
 
 } impl QuMsg {
 
@@ -29,7 +29,7 @@ pub struct QuMsg {
 		Self {
 			title:String::default(),
 			description:String::default(),
-			token:QuToken::default()
+			token:QuCharIndex::default()
 		}
 	}
 
@@ -90,7 +90,7 @@ pub struct QuMsg {
 		// Build error message
 		let msg = format!(
 			"ERROR on line {row}, col {col}; {m0}:\"{m1}\"\n{script}",
-			row=self.token.row+1, col=self.token._col, m0=self.title,
+			row=self.token.row+1, col=self.token.column, m0=self.title,
 			m1=self.description, script=code_view
 		);
 		return msg;
@@ -258,10 +258,10 @@ pub struct QuMsg {
 
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		return write!(f, "ERROR on line {row}, col {col}; {title}:\"{descr}",
-			row=self.token.row+1,
-			col=self.token._col,
-			title=self.title,
-			descr=self.description,
+			row = self.token.row+1,
+			col = self.token.column,
+			title = self.title,
+			descr = self.description,
 		);
 	}
 	
