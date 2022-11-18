@@ -1,6 +1,15 @@
 
 //! Defines all types and objects used by Qu.
 
+use std::any::Any;
+
+use crate::{QuVm, Qu, QuMsg, vm::{QuRegisteredFunction, QuMemId}};
+
+
+pub type QuFunctionRegistration = (String, QuRegisteredFunction);
+type QuMethodRegistration = (String, &'static dyn Fn(&mut QuVm));
+
+
 /// Defines all the types supported by Qu.
 #[derive(Debug, Default, Clone)]
 pub enum QuType {
@@ -11,6 +20,16 @@ pub enum QuType {
 	Tuple(Vec<QuType>),
 	Array,
 	Dictionary,
+	Object(usize),
+}
+
+
+/// Defines all the types supported by Qu.
+#[derive(Debug, Default, Clone)]
+pub enum QuValue {
+	#[default] Void,
+	Int(isize),
+	Bool(bool),
 	Object(usize),
 }
 
@@ -39,7 +58,6 @@ pub struct QuCodeObject {
 	}
 
 }
-
 
 /// Defines a Qu function.
 #[derive(Debug, Default, Clone)]
@@ -77,16 +95,67 @@ pub struct QuFnObject {
 		}
 	}
 
+
+	fn change_type(&mut self, to:QuType) {
+		println!("old type: {:?}", self.return_type);
+		self.return_type = to;
+		println!("new type: {:?}", self.return_type);
+	}
+
+
+	fn quwrapper_change_type(
+		vm:&mut QuVm, obj_id:QuMemId, parameters:Vec<&dyn Any>
+	) -> Result<(), QuMsg>{
+		let obj = vm.get_mem_mut_by_id::<Self>(obj_id)?;
+		let to_type = parameters[0]
+			.downcast_ref::<QuType>().unwrap();
+
+		obj.change_type(to_type.clone());
+
+		return Ok(());
+	}
+
+
+	fn say_hello(vm:&mut QuVm) {
+		println!("hello")
+	}
+
+} impl QuRegister for QuFnObject {
+	
+	fn register_functions() -> Vec<QuFunctionRegistration> {
+		return vec![
+			("change_type".to_owned(), &Self::quwrapper_change_type)
+		];
+	}
+
+
+	fn register_methods() -> Vec<QuMethodRegistration> {
+		return vec![
+			("say_hello".to_owned(), &Self::say_hello)
+		];
+	}
+
+
+	fn get_name() -> String {
+		"FnObject".to_owned()	
+	}
+
 }
 
 
-/// Defines all the types supported by Qu.
-#[derive(Debug, Default, Clone)]
-pub enum QuValue {
-	#[default] Void,
-	Int(isize),
-	Bool(bool),
-	Object(usize),
+pub trait QuRegister {
+
+	/// Returns functions to be called by the [`QuVm`].
+	fn register_functions() -> Vec<QuFunctionRegistration>;
+
+
+	/// Returns functions to be called by the [`QuVm`].
+	fn register_methods() -> Vec<QuMethodRegistration>;
+
+
+	/// Returns the name that identifies the struct being registered.
+	fn get_name() -> String;
+
 }
 
 

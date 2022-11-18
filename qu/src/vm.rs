@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::mem::take;
 
 use crate::QuMsg;
+use crate::QuRegister;
 use crate::QuValue;
 use crate::objects::QuCodeObject;
 use crate::objects::QuFnObject;
@@ -149,6 +150,11 @@ lazy_static!{
 }
 
 
+pub type QuRegisteredFunction = &'static dyn Fn(
+	&mut QuVm,
+	QuMemId,
+	Vec<&dyn Any>
+	)->Result<(), QuMsg>;
 /// A tuple of for specifying arguments for a [QuOperation].
 type CommandArg = QuAsmTypes;
 /// The [QuVm] registers type.
@@ -239,11 +245,115 @@ pub struct QuOperation<'a> {
 }
 
 
+
+#[derive(Clone, Default)]
+pub struct QuStruct {
+	name:String,
+	functions:Vec<QuRegisteredFunction>,
+	functions_map:HashMap<String, QuFunctionId>,
+} impl QuStruct {
+
+	fn new(
+		name:String,
+	) -> Self {
+		return Self {
+			name,
+			functions: Vec::default(),
+			functions_map: HashMap::default(),
+		};
+	}
+
+
+	/// Returns a function reference by its name.
+	pub fn get_fn(&self, fn_name:&str
+	) -> Result<QuRegisteredFunction, QuMsg> {
+		let fn_id = self.get_fn_id(fn_name)?;
+		return Ok(self.get_fn_by_id(fn_id)?);
+	}
+
+
+	/// Returns a function reference by its ID.
+	pub fn get_fn_by_id(&self, fn_id:QuFunctionId
+	) -> Result<QuRegisteredFunction, QuMsg> {
+		return Ok(self.get_fn_by_index(fn_id.index)?);
+	}
+
+
+	/// Returns a function reference by its index.
+	pub fn get_fn_by_index(&self, fn_index:usize
+	) -> Result<QuRegisteredFunction, QuMsg> {
+		let Some(fn_ref)
+			= self.functions.get(fn_index) else {
+			return Err(QuMsg::general(
+				&format!("struct with name {} has no function with index {fn_index}", self.name)))
+		};
+		let fn_ref = *fn_ref;
+
+		return Ok(fn_ref);
+	}
+
+
+	/// Returns a function ID by its name.
+	pub fn get_fn_id(&self, fn_name:&str
+	) -> Result<QuFunctionId, QuMsg> {
+		let Some(id) = self.functions_map.get(fn_name) else {
+			return Err(QuMsg::general(
+				&format!("struct with name {} has no function with name {fn_name}", self.name)))
+		};
+		return Ok(id.clone());
+	}
+
+}
+
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct QuFunctionId {
+	struct_index:usize,
+	index:usize,
+} impl QuFunctionId {
+
+	fn new(struct_index:usize, index:usize) -> Self {
+		Self {
+			struct_index,
+			index,
+		}
+	}
+
+}
+
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct QuMemId {
+	index:usize,
+} impl QuMemId {
+
+	fn new(index:usize) -> Self {
+		return Self{
+			index
+		};
+	}
+
+}
+
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct QuStructId {
+	index:usize,
+} impl QuStructId {
+
+	fn new(index:usize) -> Self {
+		return Self{
+			index
+		};
+	}
+
+}
+
+
 /// The virtual machine that runs Qu code.
 /// 
 /// This struct is not meant to be accessed directly (in most cases). See
 /// [`qu::Qu`] for interfacing with Qu script.
-#[derive(Debug, Default)]
 pub struct QuVm {
 	/// Holds the outputed value of the last executed operation.
 	hold:usize,
@@ -255,9 +365,12 @@ pub struct QuVm {
 	/// Holds allocated data types.
 	memory:Vec<Box<dyn Any>>,
 	/// Maps variable names to their index in [`QuMemory::memory`].
-	memory_map:HashMap<String, usize>,
+	memory_map:HashMap<String, QuMemId>,
 	/// Holds the value returned from a Qu script.
 	return_value:Option<QuValue>,
+
+	registered_structs:Vec<QuStruct>,
+	registered_structs_map:HashMap<String, QuStructId>,
 
 	/// The memory registers. Holds all primatives of the VM.
 	registers:Vec<RegisterValue>,
@@ -286,6 +399,9 @@ pub struct QuVm {
 			memory: Vec::default(),
 			memory_map: HashMap::default(),
 			return_value: None,
+
+			registered_structs: Vec::default(),
+			registered_structs_map: HashMap::default(),
 
 			registers:Vec::with_capacity(u8::MAX as usize),
 			register_offset: 0,
@@ -450,7 +566,7 @@ pub struct QuVm {
 		let const_index = self.memory.len();
 
 		self.memory.push(value);
-		self.memory_map.insert(name.to_owned(), const_index);
+		self.memory_map.insert(name.to_owned(), QuMemId::new(const_index));
 	}
 
 
@@ -499,11 +615,9 @@ pub struct QuVm {
 	/// Defines a function from next bytes in the code.
 	fn exc_define_fn(&mut self, code:&[u8]) {
 		let name = self.next_ascii(code);
-		let fn_length = self.next_u32(code) as usize;
+		let fn_start = self.next_u32(code) as usize;
 
-		self.define_fn(&name, self.pc);
-
-		self.pc += fn_length;
+		self.define_fn(&name, fn_start);
 	}
 
 
@@ -618,6 +732,94 @@ pub struct QuVm {
 	}
 
 
+	pub fn external_call<S:'static+Default+QuRegister>(
+		&mut self,
+		obj_name:&str,
+		fn_name:&str,
+		parameters:Vec<&dyn Any>,
+	) -> Result<(), QuMsg> {
+
+		let struct_name = <S as QuRegister>::get_name();
+		let Some(struct_id)
+			= self.registered_structs_map.get(&struct_name) else {
+			return Err(QuMsg::general(
+				&format!("No struct registered with name '{struct_name}'")
+		))};
+
+		let Some(r_struct)
+		= self.registered_structs.get_mut(struct_id.index) else {
+			return Err(QuMsg::general(
+				&format!("No struct registered with id '{}'", struct_id.index)
+		))};
+
+		let fn_id = r_struct.get_fn_id(fn_name)?;
+		let mem_id = self.get_mem_id(obj_name)?.clone();
+
+		self.external_call_by_id::<S>(
+			mem_id,
+			fn_id,
+			parameters,
+		)?;
+		return Ok(());
+	}
+
+
+	fn external_call_by_id<S:'static+Default>(
+		&mut self,
+		obj_id:QuMemId,
+		fn_id:QuFunctionId,
+		parameters:Vec<&dyn Any>,
+	) -> Result<(), QuMsg> {
+		let Some(struct_fns)
+			= self.registered_structs.get(fn_id.struct_index)
+			else {return Err(QuMsg::general(
+				&format!("No struct registered with id '{}'", fn_id.struct_index)
+			))};
+
+		let fn_ref
+			= struct_fns.get_fn_by_id(fn_id)?;
+		fn_ref(self, obj_id, parameters)?;
+
+		return Ok(());
+	}
+
+
+	/// Registers an external struct.
+	pub fn external_struct_register<S:QuRegister>(&mut self) {
+		let mut r_struct = QuStruct::new(
+			<S as QuRegister>::get_name()
+		);
+
+		let fn_registrations
+			= <S as QuRegister>::register_functions();
+		for (fn_name, fn_ref) in fn_registrations {
+			if r_struct.functions_map.contains_key(&fn_name) {
+				panic!(
+					"qu function with name {} already defined in struct {}",
+					fn_name,
+					<S as QuRegister>::get_name(),
+				);
+			}
+			
+			r_struct.functions_map.insert(
+				fn_name,
+				QuFunctionId::new(
+					self.registered_structs.len(),
+					r_struct.functions.len()
+				),
+			);
+			r_struct.functions.push(fn_ref)
+		}
+		
+		self.registered_structs_map.insert(
+			<S as QuRegister>::get_name(),
+			QuStructId::new(self.registered_structs.len()),
+		);
+		self.registered_structs.push(r_struct);
+
+	}
+
+
 	/// Returns a reference to a Qu constant.
 	/// 
 	/// # Errors
@@ -693,6 +895,17 @@ pub struct QuVm {
 	}
 
 
+	pub fn get_mem_id(&mut self, name:&str) -> Result<QuMemId, QuMsg> {
+		let Some(id) = self.memory_map.get(name) else {
+			return Err(QuMsg::general(
+				&format!("qu has no memory location with name {name}")
+			));
+		};
+
+		Ok(id.clone())
+	}
+
+
 	/// Returns a mutable reference to a variable in Qu memory.
 	/// 
 	/// # Errors
@@ -726,13 +939,14 @@ pub struct QuVm {
 			else {return Err(QuMsg::general(
 				&format!("No variable by name {name} found. TODO: Better msg.")
 			))};
-		
-		let cast = self.get_mem_mut_by_index(*index)?
-			else {return Err(QuMsg::general(
-				&format!("Can't cast variable to specified T. TODO: Better msg.")
-			))};
 
-		return Ok(cast);
+		return Ok(self.get_mem_mut_by_id(index.clone())?);
+	}
+
+
+	pub fn get_mem_mut_by_id<'a, T:'a + 'static>(&'a mut self, id:QuMemId
+	) -> Result<&mut T, QuMsg> {
+		self.get_mem_mut_by_index(id.index)
 	}
 
 
@@ -742,28 +956,7 @@ pub struct QuVm {
 	/// 
 	/// If `index` is out of range or if the variable can't be cast to `T` then
 	/// an [`Err`] is returned.
-	/// 
-	/// # Examples
-	/// 
-	/// ```
-	/// use qu::QuVm;
-	/// use qu::QuMsg;
-	/// 
-	/// # fn main() {example().unwrap()}
-	/// # fn example() -> Result<(), QuMsg> {
-	/// let mut vm = QuVm::new();
-	/// vm.define_mem("apple_count".to_owned(), Box::new(25));
-	/// 
-	/// let apples = vm.get_mem_mut_by_index::<i32>(0)?;
-	/// assert_eq!(*apples, 25);
-	/// 
-	/// *apples += 5;
-	/// let altered_apples = vm.get_mem_mut_by_index::<i32>(0)?;
-	/// assert_eq!(*altered_apples, 30);
-	/// # return Ok(());
-	/// # }
-	/// ```
-	pub fn get_mem_mut_by_index<'a, T:'a + 'static>(&'a mut self, index:usize
+	fn get_mem_mut_by_index<'a, T:'a + 'static>(&'a mut self, index:usize
 	) -> Result<&mut T, QuMsg> {
 		let Some(any) = self.memory.get_mut(index)
 		else {return Err(QuMsg::general(
@@ -808,7 +1001,13 @@ pub struct QuVm {
 				&format!("No variable by name {name} found. TODO: Better msg.")
 			))};
 
-		return Ok(self.get_mem_by_index(*index)?);
+		self.get_mem_by_id(index.clone())
+	}
+
+
+	pub fn get_mem_by_id<'a, T:'a + 'static>(&'a self, id:QuMemId
+	) -> Result<&T, QuMsg> {
+		self.get_mem_by_index(id.index)
 	}
 
 
@@ -851,6 +1050,41 @@ pub struct QuVm {
 	}
 
 
+	pub fn get_struct(&self, struct_name:&str
+	) -> Result<&QuStruct, QuMsg> {
+		let id = self.get_struct_id(struct_name)?;
+		self.get_struct_by_id(id)
+	}
+
+
+	pub fn get_struct_by_id(&self, id:QuStructId
+	) -> Result<&QuStruct, QuMsg> {
+		self.get_struct_by_index(id.index)
+	}
+
+
+	fn get_struct_by_index(&self, index:usize
+	) -> Result<&QuStruct, QuMsg> {
+		let Some(s) = self.registered_structs.get(index) else {
+			return Err(QuMsg::general(
+				&format!("qu has no struct by index {index}")
+			))
+		};
+	
+		return Ok(s);
+	}
+
+
+	pub fn get_struct_id(&self, struct_name:&str) -> Result<QuStructId, QuMsg> {
+		let Some(st) = self.registered_structs_map.get(struct_name) else {
+			return Err(QuMsg::general(
+				&format!("qu has no struct by the name {struct_name}")
+			));
+		};
+		Ok(st.clone())
+	}
+
+
 	/// Ends the current frame.
 	fn frame_end(&mut self) -> Result<(), QuMsg>{
 		return Err(QuMsg::general("Done"));
@@ -867,6 +1101,18 @@ pub struct QuVm {
 	/// Returns *true* if *hold* is a *true* value.
 	fn is_hold_true(&mut self) -> bool {
 		return self.hold != 0;
+	}
+
+
+	/// Reads an array from the next bytes in the code.
+	fn next_array(&mut self, code:&[u8]) -> String {
+		let str_size = self.next_u8(code);
+		let mut str_vec = Vec::with_capacity(str_size as usize);
+		for _ in 0..str_size {
+			str_vec.push(self.next_u8(code));
+		}
+
+		return String::from_utf8(str_vec).expect("TODO: Handle this error");
 	}
 
 
@@ -933,6 +1179,42 @@ pub struct QuVm {
 	/// Sets a register value.
 	fn reg_set(&mut self, at_reg:usize, to:RegisterValue) {
 		return self.registers[self.register_offset+at_reg] = to;
+	}
+
+
+	pub fn set_mem<'a, T:'a + 'static>(&'a mut self, name:&str, value:T
+	) -> Result<(), QuMsg> {
+		let Some(id) = self.memory_map.get(&name.to_owned())
+			else {return Err(QuMsg::general(
+				&format!("No variable by name {name} found. TODO: Better msg.")
+			))};
+
+		self.set_mem_by_id(id.clone(), value)?;
+
+		return Ok(());
+	}
+
+
+	pub fn set_mem_by_id<'a, T:'a + 'static>(&'a mut self, id:QuMemId, value:T
+	) -> Result<(), QuMsg> {
+		self.set_mem_by_index(id.index, value)
+	}
+
+
+	fn set_mem_by_index<'a, T:'a + 'static>(&'a mut self, index:usize, value:T
+	) -> Result<(), QuMsg> {
+		let Some(any) = self.memory.get_mut(index)
+		else {return Err(QuMsg::general(
+			&format!("Can't get variable. Index {index} is out of range.")
+		))};
+		let Some(cast) = any.downcast_mut::<T>()
+			else {return Err(QuMsg::general(
+				&format!("Can't cast variable to specified T. TODO: Better msg.")
+			))};
+		
+		*cast = value;
+
+		return Ok(());
 	}
 
 
@@ -1038,7 +1320,7 @@ pub struct QuVm {
 mod test_vm {
     use std::any::Any;
 
-    use crate::{Qu, QuVm, QuMsg};
+    use crate::{Qu, QuVm, QuMsg, QuFnObject, QuType};
 
 	#[test]
 	fn define_and_get_const() -> Result<(), QuMsg> {
@@ -1083,6 +1365,46 @@ mod test_vm {
 		
 		assert!(bad_type.is_err());
 		assert!(not_defined.is_err());
+
+		return Ok(());
+	}
+
+
+	#[test]
+	fn register_external_structs() -> Result<(), QuMsg> {
+		let mut vm = QuVm::new();
+		vm.external_struct_register::<QuFnObject>();
+
+		let code = QuFnObject::new(
+			vec![],
+			crate::QuCodeObject {start_index:0},
+			crate::QuType::Void,
+		);
+
+		vm.define_mem("bob".to_owned(), Box::new(code));
+		
+		vm.external_call::<QuFnObject>(
+			"bob",
+			"change_type",
+			vec![&QuType::Bool],
+		)?;
+
+		vm.external_call::<QuFnObject>(
+			"bob",
+			"change_type",
+			vec![&QuType::Int],
+		)?;
+
+		let bob_id = vm.get_mem_id("bob")?;
+		let bob_change_type_id = vm
+			.get_struct("FnObject")?
+			.get_fn_id("change_type")?;
+
+		vm.external_call_by_id::<QuFnObject>(
+			bob_id,
+			bob_change_type_id,
+			vec![&QuType::Void],
+		)?;
 
 		return Ok(());
 	}

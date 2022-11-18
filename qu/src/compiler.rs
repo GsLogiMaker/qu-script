@@ -60,10 +60,12 @@ struct QuCmpFrame {
 
 }
 
+
 /// Compiles [QuLeaf]s into Qu bytecode.
 pub struct QuCompiler {
-	name_refs:HashMap<String, u32>,
 	contexts:Vec<QuCmpContext>,
+	constants_code:Vec<u8>,
+	name_refs:HashMap<String, u32>,
 	types:Vec<QuType2>,
 	types_map:HashMap<String, usize>,
 
@@ -73,8 +75,9 @@ pub struct QuCompiler {
 	/// Creates and returns a new [QuCompiler].
 	pub fn new() -> Self {
 		let mut inst = Self{
-			name_refs:HashMap::default(),
 			contexts:Vec::default(),
+			constants_code:Vec::default(),
+			name_refs:HashMap::default(),
 			types:vec![QuType2::int(), QuType2::uint(), QuType2::bool()],
 			types_map:HashMap::new(),
 		};
@@ -711,7 +714,9 @@ pub struct QuCompiler {
 
 #[derive(Debug, Clone)]
 enum QuBuilderPiece {
+	/// A [`Vec<u8>`] of code.
 	Code(Vec<u8>),
+	/// A [`String`] that gets converted to a [`u32`] ID later.
 	NameRefU32(String),
 } impl QuBuilderPiece {
 
