@@ -1,11 +1,16 @@
 
 use std::any::Any;
+use std::any::TypeId;
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::mem::take;
 
+use crate::QuExtFnData;
+use crate::QuInt;
 use crate::QuMsg;
-use crate::QuRegister;
+use crate::QuRegisterStruct;
 use crate::QuValue;
+use crate::QuVoid;
 use crate::objects::QuCodeObject;
 use crate::objects::QuFnObject;
 use crate::objects::QuType;
@@ -106,43 +111,6 @@ macro_rules! struct_QuOpLibrary {
 	};
 }
 
-/// Generates code for [QuVm] math operation functions.
-macro_rules! vm_exc_math_all {
-	( $(op $name:ident:$op:tt),* ) => {
-		$(
-			/// Excecutes a QuVm unsigned math operation
-			fn $name(&mut self, code:&[u8]) {
-				// TODO: Performance improvements by operating on value_hold
-				// rather than reading a register
-				let rg_left = self.next_u8(code) as usize;
-				let rg_right = self.next_u8(code) as usize;
-				let rg_output = self.next_u8(code) as usize;
-				self.hold = (
-					self.reg_get(rg_left)
-					$op self.reg_get(rg_right)
-				) as usize;
-				self.reg_set(rg_output, self.hold);
-			}
-		)*
-	};
-
-	( $(fn $name:ident:$func:path),* ) => {
-		$(
-			/// Excecutes a QuVm unsigned function call
-			fn $name(&mut self, code:&[u8]) {
-				let rg_left = self.next_u8(code) as usize;
-				let rg_right = self.next_u8(code) as usize;
-				let rg_output = self.next_u8(code) as usize;
-				self.hold = ($func(
-					self.reg_get(rg_left),
-					self.reg_get(rg_right) as u32)
-				) as usize;
-				self.reg_set(rg_output, self.hold);
-			}
-		)*
-	};
-}
-
 
 lazy_static!{
 	/// I don't know what this is documenting...
@@ -150,21 +118,26 @@ lazy_static!{
 }
 
 
-pub type QuRegisteredFunction = &'static dyn Fn(
+pub type QuExtFn = &'static dyn Fn(
 	&mut QuVm,
-	QuMemId,
-	Vec<&dyn Any>
+	QuRegId,
+	Vec<QuRegId>
+	)->Result<RegisterValue, QuMsg>;
+pub type QuVoidExtFn = &'static dyn Fn(
+	&mut QuVm,
+	QuRegId,
+	Vec<QuRegId>
 	)->Result<(), QuMsg>;
 /// A tuple of for specifying arguments for a [QuOperation].
 type CommandArg = QuAsmTypes;
 /// The [QuVm] registers type.
-type RegisterValue = usize;
+pub type RegisterValue = Box<dyn Any>;
 
 
 enum QuAsmTypes {
 	UInt8,
 	UInt16,
-	Uint32,
+	UInt32,
 	UInt64,
 	Str,
 } impl QuAsmTypes {
@@ -172,11 +145,21 @@ enum QuAsmTypes {
 		return match self {
 			Self::UInt8 => 1,
 			Self::UInt16 => 2,
-			Self::Uint32 => 4,
+			Self::UInt32 => 4,
 			Self::UInt64 => 8,
 			Self::Str => code[at] as usize,
 		};
 	}
+}
+
+
+pub enum QuRegisterValue {
+	Void,
+	Int(isize),
+	Bool(bool),
+	Tuple(Box<(usize, Vec<QuRegisterValue>)>),
+	/// Having a box point to a box is used to keep QuRegisterValue at 16 bytes
+	Object(Box<Box<dyn Any>>),
 }
 
 
@@ -186,11 +169,11 @@ struct_QuOpLibrary!{
 
 	[  1] load_val_u8:LDU8(QuAsmTypes::UInt8, QuAsmTypes::UInt8)
 	[  2] load_val_u16:LDU16(QuAsmTypes::UInt16, QuAsmTypes::UInt8)
-	[  3] load_val_u32:LDU32(QuAsmTypes::Uint32, QuAsmTypes::UInt8)
+	[  3] load_val_u32:LDU32(QuAsmTypes::UInt32, QuAsmTypes::UInt8)
 	[  4] load_val_u64:LDU64(QuAsmTypes::UInt64, QuAsmTypes::UInt8)
 
-	[  5] load_mem:LDM(QuAsmTypes::Uint32, QuAsmTypes::UInt8)
-	[  6] store_mem:STM(QuAsmTypes::UInt8, QuAsmTypes::Uint32)
+	[  5] load_mem:LDM(QuAsmTypes::UInt32, QuAsmTypes::UInt8)
+	[  6] store_mem:STM(QuAsmTypes::UInt8, QuAsmTypes::UInt32)
 	[  7] copy_reg:CPY(QuAsmTypes::UInt8, QuAsmTypes::UInt8)
 
 	[  8] add:ADD(QuAsmTypes::UInt8, QuAsmTypes::UInt8, QuAsmTypes::UInt8)
@@ -205,17 +188,19 @@ struct_QuOpLibrary!{
 	[ 17] not_equal:NEQ(QuAsmTypes::UInt8, QuAsmTypes::UInt8, QuAsmTypes::UInt8)
 	[ 18] not:NOT(QuAsmTypes::UInt8, QuAsmTypes::UInt8)
 
-	[ 19] jump_to:JP(QuAsmTypes::Uint32)
-	[ 20] jump_by:JB(QuAsmTypes::Uint32)
-	[ 21] jump_to_if_not:JPIN(QuAsmTypes::Uint32)
-	[ 22] jump_by_if_not:JBIN(QuAsmTypes::Uint32)
+	[ 19] jump_to:JP(QuAsmTypes::UInt32)
+	[ 20] jump_by:JB(QuAsmTypes::UInt32)
+	[ 21] jump_to_if_not:JPIN(QuAsmTypes::UInt32)
+	[ 22] jump_by_if_not:JBIN(QuAsmTypes::UInt32)
 
 	[ 23] print:PRT(QuAsmTypes::UInt8)
 
-	[ 24] call:CALL(QuAsmTypes::Uint32, QuAsmTypes::UInt8)
+	[ 24] call:CALL(QuAsmTypes::UInt32, QuAsmTypes::UInt8)
 
-	[ 25] define_fn:DFFN(QuAsmTypes::Str, QuAsmTypes::Uint32)
+	[ 25] define_fn:DFFN(QuAsmTypes::Str, QuAsmTypes::UInt32)
 	[ 26] define_const_str:DFCS(QuAsmTypes::Str)
+
+	[ 27] call_ext:CEXT(QuAsmTypes::UInt8, QuAsmTypes::UInt32, QuAsmTypes::UInt8 /* Any number of parameters */)
 
 }
 
@@ -249,7 +234,7 @@ pub struct QuOperation<'a> {
 #[derive(Clone, Default)]
 pub struct QuStruct {
 	name:String,
-	functions:Vec<QuRegisteredFunction>,
+	functions:Vec<QuExtFn>,
 	functions_map:HashMap<String, QuFunctionId>,
 } impl QuStruct {
 
@@ -263,58 +248,16 @@ pub struct QuStruct {
 		};
 	}
 
-
-	/// Returns a function reference by its name.
-	pub fn get_fn(&self, fn_name:&str
-	) -> Result<QuRegisteredFunction, QuMsg> {
-		let fn_id = self.get_fn_id(fn_name)?;
-		return Ok(self.get_fn_by_id(fn_id)?);
-	}
-
-
-	/// Returns a function reference by its ID.
-	pub fn get_fn_by_id(&self, fn_id:QuFunctionId
-	) -> Result<QuRegisteredFunction, QuMsg> {
-		return Ok(self.get_fn_by_index(fn_id.index)?);
-	}
-
-
-	/// Returns a function reference by its index.
-	pub fn get_fn_by_index(&self, fn_index:usize
-	) -> Result<QuRegisteredFunction, QuMsg> {
-		let Some(fn_ref)
-			= self.functions.get(fn_index) else {
-			return Err(QuMsg::general(
-				&format!("struct with name {} has no function with index {fn_index}", self.name)))
-		};
-		let fn_ref = *fn_ref;
-
-		return Ok(fn_ref);
-	}
-
-
-	/// Returns a function ID by its name.
-	pub fn get_fn_id(&self, fn_name:&str
-	) -> Result<QuFunctionId, QuMsg> {
-		let Some(id) = self.functions_map.get(fn_name) else {
-			return Err(QuMsg::general(
-				&format!("struct with name {} has no function with name {fn_name}", self.name)))
-		};
-		return Ok(id.clone());
-	}
-
 }
 
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct QuFunctionId {
-	struct_index:usize,
 	index:usize,
 } impl QuFunctionId {
 
-	fn new(struct_index:usize, index:usize) -> Self {
+	fn new(index:usize) -> Self {
 		Self {
-			struct_index,
 			index,
 		}
 	}
@@ -337,6 +280,10 @@ pub struct QuMemId {
 
 
 #[derive(Clone, Copy, Debug, Default)]
+pub struct QuRegId(pub usize);
+
+
+#[derive(Clone, Copy, Debug, Default)]
 pub struct QuStructId {
 	index:usize,
 } impl QuStructId {
@@ -356,7 +303,8 @@ pub struct QuStructId {
 /// [`qu::Qu`] for interfacing with Qu script.
 pub struct QuVm {
 	/// Holds the outputed value of the last executed operation.
-	hold:usize,
+	hold:RegisterValue,
+	pub is_zero:bool,
 
 	/// Holds defined constants.
 	constants:Vec<Box<dyn Any>>,
@@ -369,6 +317,7 @@ pub struct QuVm {
 	/// Holds the value returned from a Qu script.
 	return_value:Option<QuValue>,
 
+	registered_fns:Vec<QuExtFnData>,
 	registered_structs:Vec<QuStruct>,
 	registered_structs_map:HashMap<String, QuStructId>,
 
@@ -392,7 +341,8 @@ pub struct QuVm {
 	/// ```
 	pub fn new() -> Self {
 		let mut vm = QuVm { 
-			hold: usize::default(),
+			hold: Box::new(QuVoid()),
+			is_zero: false,
 
 			constants: Vec::default(),
 			constant_map: HashMap::default(),
@@ -400,6 +350,7 @@ pub struct QuVm {
 			memory_map: HashMap::default(),
 			return_value: None,
 
+			registered_fns: Vec::default(),
 			registered_structs: Vec::default(),
 			registered_structs_map: HashMap::default(),
 
@@ -408,7 +359,7 @@ pub struct QuVm {
 			pc: 0,
 		};
 
-		vm.registers.resize(u8::MAX as usize, 0);
+		vm.registers.resize_with(u8::MAX as usize, ||{Box::new(QuVoid())});
 
 		return vm;
 	}
@@ -470,7 +421,7 @@ pub struct QuVm {
 						i += 2;
 						format!("{}", u16::from_be_bytes(bytes))
 					}
-					QuAsmTypes::Uint32 => {
+					QuAsmTypes::UInt32 => {
 						let bytes = [
 							code[i+1], code[i+2], code[i+3], code[i+4]];
 						i += 4;
@@ -581,9 +532,11 @@ pub struct QuVm {
 
 
 	fn exc_copy_reg(&mut self, code:&[u8]) {
-		let from_reg = self.next_u8(code) as usize;
-		let to_reg = self.next_u8(code) as usize;
-		self.reg_set(to_reg, self.reg_get(from_reg));
+		unimplemented!();
+//		let from_reg = self.next_u8(code) as usize;
+//		let to_reg = self.next_u8(code) as usize;
+//		let to = (*self.reg_get(QuRegId(from_reg))).clone();
+//		self.reg_set(QuRegId(to_reg), *to);
 	}
 
 
@@ -597,8 +550,10 @@ pub struct QuVm {
 		self.register_offset += output_reg;
 		// Assure registers is big enought to fit u8::MAX more values
 		if (self.register_offset + u8::MAX as usize) > self.registers.len() {
-			self.registers.resize(
-				self.register_offset + u8::MAX as usize, 0);
+			self.registers.resize_with(
+				self.register_offset + u8::MAX as usize, 
+				||{Box::new(QuVoid())}
+			);
 		}
 		let return_pc = self.pc;
 
@@ -609,6 +564,37 @@ pub struct QuVm {
 		self.pc = return_pc;
 
 		return Ok(());
+	}
+
+
+	fn exc_call_fn_ext(&mut self, code:&[u8]) -> Result<(), QuMsg> {
+		let on_reg = QuRegId(self.next_u8(code) as usize);
+		let fn_id
+			= QuFunctionId::new(self.next_u32(code) as usize);
+
+		let Some(fn_data)
+			= self.registered_fns.get(fn_id.index) else {
+			return Err(QuMsg::general(
+				&format!("No function by index {}", fn_id.index)
+			))
+		};
+
+		let mut params = Vec::default();
+		for _ in 0..fn_data.2.len() {
+			params.push(QuRegId(self.next_u8(code) as usize));
+		}
+
+		let to_reg = QuRegId(self.next_u8(code) as usize);
+
+		let returned = self.external_call_by_id(
+			on_reg,
+			fn_id,
+			params,
+		)?;
+
+		self.reg_set(to_reg, returned);
+
+		Ok(())
 	}
 
 
@@ -662,30 +648,30 @@ pub struct QuVm {
 
 
 	fn exc_load_val_u8(&mut self, code:&[u8]) {
-		self.hold = self.next_u8(code) as RegisterValue;
+		let left = Box::new(QuInt(self.next_u8(code) as i32));
 		let rg_to = self.next_u8(code) as usize;
-		self.reg_set(rg_to, self.hold);
+		self.reg_set(QuRegId(rg_to), left);
 	}
 
 
 	fn exc_load_val_u16(&mut self, code:&[u8]) {
-		self.hold = self.next_u16(code) as RegisterValue;
+		let left = Box::new(QuInt(self.next_u16(code) as i32));
 		let rg_to = self.next_u8(code) as usize;
-		self.reg_set(rg_to, self.hold);
+		self.reg_set(QuRegId(rg_to), left);
 	}
 
 
 	fn exc_load_val_u32(&mut self, code:&[u8]) {
-		self.hold = self.next_u32(code) as RegisterValue;
+		let left = Box::new(QuInt(self.next_u32(code) as i32));
 		let rg_to = self.next_u8(code) as usize;
-		self.reg_set(rg_to, self.hold);
+		self.reg_set(QuRegId(rg_to), left);
 	}
 
 
 	fn exc_load_val_u64(&mut self, code:&[u8]) {
-		self.hold = self.next_u64(code) as RegisterValue;
+		let left = Box::new(QuInt(self.next_u64(code) as i32));
 		let rg_to = self.next_u8(code) as usize;
-		self.reg_set(rg_to, self.hold);
+		self.reg_set(QuRegId(rg_to), left);
 	}
 
 
@@ -696,8 +682,14 @@ pub struct QuVm {
 
 	fn exc_print(&mut self, code:&[u8]) {
 		let read_from_reg = self.next_u8(code) as usize;
-		let val = self.reg_get(read_from_reg);
-		println!("Qu Print: {}", val);
+		let val = self.reg_get(QuRegId(read_from_reg));
+
+		if (&**val).type_id() == TypeId::of::<QuInt>() {
+			let ival = val.downcast_ref::<QuInt>().unwrap();
+			println!("Qu Print: {:?}", ival.0);
+		} else {
+			println!("Qu Print: {:?}", val);
+		}
 	}
 
 
@@ -706,40 +698,14 @@ pub struct QuVm {
 	}
 
 
-	vm_exc_math_all!{
-		op exc_math_add: +,
-		op exc_math_sub: -,
-		op exc_math_mul: *,
-		op exc_math_div: /,
-		op exc_math_mod: %,
-		op exc_logi_equal: ==,
-		op exc_logi_greater: >,
-		op exc_logi_lesser: <,
-		op exc_logi_not_equal: !=
-	}
-
-	
-	vm_exc_math_all!{
-		fn exc_math_pow: usize::pow
-	}
-
-
-	fn exc_logi_not(&mut self, code:&[u8]) {
-		let rg_left = self.next_u8(code) as usize;
-		let rg_result = self.next_u8(code) as usize;
-		let x = self.reg_get(rg_left);
-		self.reg_set(rg_result,	(x*0 == x) as RegisterValue);
-	}
-
-
-	pub fn external_call<S:'static+Default+QuRegister>(
+	pub fn external_call<S:'static+Default+QuRegisterStruct>(
 		&mut self,
 		obj_name:&str,
 		fn_name:&str,
-		parameters:Vec<&dyn Any>,
+		parameters:Vec<QuMemId>,
 	) -> Result<(), QuMsg> {
 
-		let struct_name = <S as QuRegister>::get_name();
+		let struct_name = <S as QuRegisterStruct>::get_name();
 		let Some(struct_id)
 			= self.registered_structs_map.get(&struct_name) else {
 			return Err(QuMsg::general(
@@ -752,67 +718,56 @@ pub struct QuVm {
 				&format!("No struct registered with id '{}'", struct_id.index)
 		))};
 
-		let fn_id = r_struct.get_fn_id(fn_name)?;
+		let fn_id = self.get_fn_id(fn_name, &struct_name)?;
 		let mem_id = self.get_mem_id(obj_name)?.clone();
 
-		self.external_call_by_id::<S>(
-			mem_id,
-			fn_id,
-			parameters,
-		)?;
+		// TODO: Bring named memory addresses into registers to be used in fn
+
+//		self.external_call_by_id(
+//			mem_id,
+//			fn_id,
+//			parameters,
+//		)?;
 		return Ok(());
 	}
 
 
-	fn external_call_by_id<S:'static+Default>(
+	fn external_call_by_id(
 		&mut self,
-		obj_id:QuMemId,
+		obj_id:QuRegId,
 		fn_id:QuFunctionId,
-		parameters:Vec<&dyn Any>,
-	) -> Result<(), QuMsg> {
-		let Some(struct_fns)
-			= self.registered_structs.get(fn_id.struct_index)
-			else {return Err(QuMsg::general(
-				&format!("No struct registered with id '{}'", fn_id.struct_index)
-			))};
-
-		let fn_ref
-			= struct_fns.get_fn_by_id(fn_id)?;
-		fn_ref(self, obj_id, parameters)?;
-
-		return Ok(());
+		parameters:Vec<QuRegId>,
+	) -> Result<RegisterValue, QuMsg> {
+		Ok(self.get_fn_by_id(fn_id)?(self, obj_id, parameters)?)
 	}
 
 
 	/// Registers an external struct.
-	pub fn external_struct_register<S:QuRegister>(&mut self) {
+	pub fn external_struct_register<S:QuRegisterStruct>(&mut self) {
 		let mut r_struct = QuStruct::new(
-			<S as QuRegister>::get_name()
+			<S as QuRegisterStruct>::get_name()
 		);
 
 		let fn_registrations
-			= <S as QuRegister>::register_functions();
-		for (fn_name, fn_ref) in fn_registrations {
-			if r_struct.functions_map.contains_key(&fn_name) {
+			= <S as QuRegisterStruct>::register_fns();
+		for fn_data in fn_registrations {
+			if r_struct.functions_map.contains_key(&fn_data.0) {
 				panic!(
 					"qu function with name {} already defined in struct {}",
-					fn_name,
-					<S as QuRegister>::get_name(),
+					fn_data.0,
+					<S as QuRegisterStruct>::get_name(),
 				);
 			}
 			
 			r_struct.functions_map.insert(
-				fn_name,
-				QuFunctionId::new(
-					self.registered_structs.len(),
-					r_struct.functions.len()
-				),
+				fn_data.0.clone(),
+				QuFunctionId::new(self.registered_fns.len()),
 			);
-			r_struct.functions.push(fn_ref)
+			self.registered_fns.push(fn_data)
 		}
 		
 		self.registered_structs_map.insert(
-			<S as QuRegister>::get_name(),
+			<S as QuRegisterStruct>::get_name(),
 			QuStructId::new(self.registered_structs.len()),
 		);
 		self.registered_structs.push(r_struct);
@@ -892,6 +847,48 @@ pub struct QuVm {
 			))};
 
 		return Ok(cast);
+	}
+
+
+	/// Returns a function reference by its name.
+	pub fn get_fn(&self, fn_name:&str, struct_name:&str
+	) -> Result<QuExtFn, QuMsg> {
+		let fn_id = self.get_fn_id(fn_name, struct_name)?;
+		return Ok(self.get_fn_by_id(fn_id)?);
+	}
+
+
+	/// Returns a function reference by its ID.
+	pub fn get_fn_by_id(&self, fn_id:QuFunctionId
+	) -> Result<QuExtFn, QuMsg> {
+		return Ok(self.get_fn_by_index(fn_id.index)?);
+	}
+
+
+	/// Returns a function reference by its index.
+	fn get_fn_by_index(&self, fn_index:usize
+	) -> Result<QuExtFn, QuMsg> {
+		let Some(fn_ref)
+			= self.registered_fns.get(fn_index) else {
+			return Err(QuMsg::general(
+				&format!("qu vm has no function with index {fn_index}")))
+		};
+		let fn_ref = fn_ref.1;
+
+		return Ok(fn_ref);
+	}
+
+
+	/// Returns a function ID by its name.
+	pub fn get_fn_id(&self, fn_name:&str, struct_name:&str
+	) -> Result<QuFunctionId, QuMsg> {
+		let s = self.get_struct(struct_name)?;
+
+		let Some(id) = s.functions_map.get(fn_name) else {
+			return Err(QuMsg::general(
+				&format!("struct with name {} has no function with name {fn_name}", s.name)))
+		};
+		return Ok(id.clone());
 	}
 
 
@@ -1100,7 +1097,10 @@ pub struct QuVm {
 	#[inline]
 	/// Returns *true* if *hold* is a *true* value.
 	fn is_hold_true(&mut self) -> bool {
-		return self.hold != 0;
+		return self.is_zero;
+		// TODO: Implement register boolean evaluation
+		unimplemented!();
+		//return self.hold != 0;
 	}
 
 
@@ -1170,15 +1170,40 @@ pub struct QuVm {
 
 	#[inline]
 	/// Gets a register value.
-	fn reg_get(&self, at_reg:usize) -> RegisterValue {
-		return self.registers[self.register_offset+at_reg];
+	fn reg_get(&self, at_reg:QuRegId) -> &RegisterValue {
+		return &self.registers[self.register_offset+at_reg.0];
+	}
+
+
+	/// Gets a register value.
+	pub fn reg_get_as<'a, T:'a + 'static>(&self, at_reg:QuRegId
+	) -> Result<&T, QuMsg> {
+		let Some(r) = self.registers[self.register_offset+at_reg.0]
+			.downcast_ref::<T>() else {
+			return Err(QuMsg::general(
+				&format!("reg_get_as could not convert register at index {}", at_reg.0)
+			))
+		};
+		Ok(r)
+	}
+
+
+	pub fn reg_get_mut_as<'a, T:'a + 'static>(&mut self, at_reg:QuRegId
+	) -> Result<&mut T, QuMsg> {
+		let Some(r) = self.registers[self.register_offset+at_reg.0]
+			.downcast_mut::<T>() else {
+			return Err(QuMsg::general(
+				&format!("reg_get_mut_as could not convert register at index {}", at_reg.0)
+			))
+		};
+		Ok(r)
 	}
 
 
 	#[inline]
 	/// Sets a register value.
-	fn reg_set(&mut self, at_reg:usize, to:RegisterValue) {
-		return self.registers[self.register_offset+at_reg] = to;
+	pub fn reg_set(&mut self, at_reg:QuRegId, to:RegisterValue) {
+		return self.registers[self.register_offset+at_reg.0] = to;
 	}
 
 
@@ -1249,17 +1274,6 @@ pub struct QuVm {
 			x if x == OPLIB.load_mem => self.exc_load_mem(bytecode),
 			x if x == OPLIB.store_mem => self.exc_store_mem(bytecode),
 			x if x == OPLIB.copy_reg => self.exc_copy_reg(bytecode),
-			x if x == OPLIB.add => self.exc_math_add(bytecode),
-			x if x == OPLIB.sub => self.exc_math_sub(bytecode),
-			x if x == OPLIB.mul => self.exc_math_mul(bytecode),
-			x if x == OPLIB.div => self.exc_math_div(bytecode),
-			x if x == OPLIB.modulate => self.exc_math_mod(bytecode),
-			x if x == OPLIB.pow => self.exc_math_pow(bytecode),
-			x if x == OPLIB.lesser => self.exc_logi_lesser(bytecode),
-			x if x == OPLIB.greater => self.exc_logi_greater(bytecode),
-			x if x == OPLIB.equal => self.exc_logi_equal(bytecode),
-			x if x == OPLIB.not_equal => self.exc_logi_not_equal(bytecode),
-			x if x == OPLIB.not => self.exc_logi_not(bytecode),
 			x if x == OPLIB.jump_to => self.exc_jump_to(bytecode),
 			x if x == OPLIB.jump_by => self.exc_jump_by(bytecode),
 			x if x == OPLIB.jump_to_if_not => self.exc_jump_to_if_not(bytecode),
@@ -1267,6 +1281,8 @@ pub struct QuVm {
 			x if x == OPLIB.print => self.exc_print(bytecode),
 			x if x == OPLIB.call => self.exc_call_fn(bytecode)?,
 			x if x == OPLIB.define_fn => self.exc_define_fn(bytecode),
+
+			x if x == OPLIB.call_ext => self.exc_call_fn_ext(bytecode)?,
 
 			x => { println!("{x}"); todo!(); }
 		};
@@ -1316,11 +1332,69 @@ pub struct QuVm {
 }
 
 
+pub trait QuAny: Any+Debug+QuRegisterStruct {}
+
+
 #[cfg(test)]
 mod test_vm {
     use std::any::Any;
+    use std::any::TypeId;
 
-    use crate::{Qu, QuVm, QuMsg, QuFnObject, QuType};
+    use crate::vm::QuAny;
+    use crate::{Qu, QuVm, QuMsg, QuFnObject, QuType, QuCompiler, QuInt, vm::QuRegId};
+
+    use super::OPLIB;
+
+	#[test]
+	fn external_fn_calls() -> Result<(), QuMsg> {
+		let mut vm = QuVm::new();
+		vm.external_struct_register::<QuInt>();
+
+		let mut code = vec![];
+
+		// Defines a constant zero
+		code.append(&mut vec![OPLIB.load_val_u8, 0, 20]);
+			
+		// var nterms = 9
+		let p_nterms = 0;
+		code.append(&mut vec![OPLIB.load_val_u8, 9, p_nterms]);
+		// var n1 = 0
+		let p_n1 = 1;
+		code.append(&mut vec![OPLIB.load_val_u8, 0, p_n1]);
+		// var n2 = 1
+		let p_n2 = 2;
+		code.append(&mut vec![OPLIB.load_val_u8, 1, p_n2]);
+		// var count = 0
+		let p_count = 3;
+		code.append(&mut vec![OPLIB.load_val_u8, 0, p_count]);
+
+		// while count < nterms:
+		let while_body_len = (8*4)+3+5;
+		code.append(&mut vec![OPLIB.call_ext, p_count, 0,0,0,1, 4, p_nterms]);
+		code.append(&mut vec![OPLIB.jump_by_if_not, 0,0,0,while_body_len]);
+
+			// var nth = n1 + n2
+			code.append(&mut vec![OPLIB.call_ext, p_n1, 0,0,0,0, 4, p_n2]);
+			// n1 = n2
+			code.append(&mut vec![OPLIB.call_ext, p_n2, 0,0,0,0, p_n1, 20]);
+			// n2 = nth
+			code.append(&mut vec![OPLIB.call_ext, 4, 0,0,0,0, p_n2, 20]);
+			// count = count + 1
+			code.append(&mut vec![OPLIB.load_val_u8, 1, 5]);
+			code.append(&mut vec![OPLIB.call_ext, p_count, 0,0,0,0, p_count, 5]);
+
+		code.append(&mut vec![OPLIB.jump_by]);
+		code.append(&mut (-((8+5)+(while_body_len as i8)) as i32).to_be_bytes().to_vec());
+
+		vm.run_bytes(&code)?;
+
+		assert_eq!(*vm.reg_get_mut_as::<QuInt>(QuRegId(1))?, QuInt(34));
+		assert_eq!(*vm.reg_get_mut_as::<QuInt>(QuRegId(2))?, QuInt(55));
+		assert_eq!(*vm.reg_get_mut_as::<QuInt>(QuRegId(3))?, QuInt(9));
+
+		return Ok(());
+	}
+
 
 	#[test]
 	fn define_and_get_const() -> Result<(), QuMsg> {
@@ -1373,7 +1447,7 @@ mod test_vm {
 	#[test]
 	fn register_external_structs() -> Result<(), QuMsg> {
 		let mut vm = QuVm::new();
-		vm.external_struct_register::<QuFnObject>();
+		vm.external_struct_register::<QuInt>();
 
 		let code = QuFnObject::new(
 			vec![],
@@ -1383,28 +1457,21 @@ mod test_vm {
 
 		vm.define_mem("bob".to_owned(), Box::new(code));
 		
-		vm.external_call::<QuFnObject>(
+		vm.external_call::<QuInt>(
 			"bob",
 			"change_type",
-			vec![&QuType::Bool],
+			vec![],
 		)?;
 
-		vm.external_call::<QuFnObject>(
-			"bob",
-			"change_type",
-			vec![&QuType::Int],
-		)?;
-
-		let bob_id = vm.get_mem_id("bob")?;
-		let bob_change_type_id = vm
-			.get_struct("FnObject")?
-			.get_fn_id("change_type")?;
-
-		vm.external_call_by_id::<QuFnObject>(
-			bob_id,
-			bob_change_type_id,
-			vec![&QuType::Void],
-		)?;
+//		let bob_id = vm.get_mem_id("bob")?;
+//		let bob_change_type_id
+//			= vm.get_fn_id("change_type", "FnObject")?;
+//
+//		vm.external_call_by_id(
+//			bob_id,
+//			bob_change_type_id,
+//			vec![],
+//		)?;
 
 		return Ok(());
 	}

@@ -279,7 +279,10 @@ pub struct QuCompiler {
 				// Skip body if expression false
 				let mut skip_body_b = QuAsmBuilder::new();
 				skip_body_b.add_u8(OPLIB.jump_by_if_not);
-				skip_body_b.add_i32(block_code_len as i32);
+				skip_body_b.add_i32(
+					block_code_len as i32
+					+ 5 // Length of jump back instruction
+				);
 				let skip_body_b_len = skip_body_b.len();
 				b.add_builder(skip_body_b);
 
@@ -292,7 +295,8 @@ pub struct QuCompiler {
 					block_code_len
 					+ skip_body_b_len
 					+ expr_code_len
-					+ 2
+					+ 1
+					+ 4 // Length of self?
 				) as i32));
 
 				/*return*/ Ok(b)

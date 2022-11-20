@@ -31,10 +31,11 @@ edition = "2021"
 
 
 [dependencies]
-lazy_static = "1.4.0"
+lazy_static = { workspace = true }
 
 [dev-dependencies]
+criterion = "0.4.0"
 
-#[[bench]]
-#name = "qu_script"
-#harness = false
+[[bench]]
+name = "vm_benchmark"
+harness = false

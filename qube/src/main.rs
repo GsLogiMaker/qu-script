@@ -23,22 +23,15 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-use qu::Qu;
+use std::mem::size_of;
+
+use qu::{Qu, QuRegisterValue};
 
 fn main() {
-	println!("---START---\n");
-
-	let script = r##"
-	var num
-	"##;
-
-	let mut qu = Qu::new();
-
-//	println!("{}", qu.compile_to_asm(script).ok_or_else());
-	match qu.run(script) {
-		Ok(_) => {/*pass*/},
-		Err(msg) => {msg.print(script)},
-	};
+	println!("size of QuRegisterValue: {}", size_of::<QuRegisterValue>());
+	println!("size of u8: {}", size_of::<u8>());
+	println!("size of usize: {}", size_of::<usize>());
+	println!("size of u8 and usize: {}", size_of::<(u8, usize)>());
 
 }
 

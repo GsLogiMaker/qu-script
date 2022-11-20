@@ -47,6 +47,9 @@ pub use compiler::QuCompiler;
 pub use objects::*;
 pub use parser::{QuParser, QuLeaf, QuLeafExpr};
 pub use vm::QuVm;
+pub use vm::QuRegisterValue;
+pub use vm::OPLIB;
+pub use vm::QuRegId;
 
 
 /// The interface for the Qu programming language.
@@ -317,6 +320,30 @@ struct QuVar {
 #[cfg(test)]
 mod lib {
     use crate::{Qu, QuMsg};
+
+	#[test]
+	fn fibinachi() -> Result<(), QuMsg>{
+		let mut qu = Qu::new();
+		let script = r#"
+			var nterms = 9
+			var n1 = 0
+			var n2 = 1
+			var count = 0
+		
+			while count < nterms:
+				var nth = n1 + n2
+				n1 = n2
+				n2 = nth
+				count = count + 1
+				print count
+				print n1
+		"#;
+
+		qu.run(script)?;
+
+		return Ok(());
+	}
+
 
 	#[test]
 	fn recursive_fn_addinate() -> Result<(), QuMsg>{
