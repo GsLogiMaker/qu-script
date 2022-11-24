@@ -1,7 +1,11 @@
 
 //! Defines all types and objects used by Qu.
 
-use std::{any::Any, ops::{Add, AddAssign}};
+
+//use qu_derive::qu_methods;
+use std::{any::Any, ops::{Add, AddAssign}, fmt::Debug};
+
+use qu_derive::qu_methods;
 
 use crate::{
 	QuVm,
@@ -10,7 +14,7 @@ use crate::{
 	vm::{
 		QuExtFn,
 		QuMemId,
-		QuVoidExtFn,
+		QuExtVoidFn,
 		QuRegId,
 		QuAny,
 		RegisterValue,
@@ -19,9 +23,8 @@ use crate::{
 };
 
 
-pub type QuExtFnData = (String, QuExtFn, Vec<usize>, usize);
-pub type QuVoidFnForm = (String, QuVoidExtFn, Vec<usize>);
-type QuMethodRegistration = (String, &'static dyn Fn(&mut QuVm));
+pub type QuExtFnData = (String, QuFnPtr, Vec<&'static str>, &'static str);
+pub type QuExtVoidFnData = (String, QuFnVoidPtr, Vec<&'static str>);
 
 
 /// Defines all the types supported by Qu.
@@ -114,53 +117,45 @@ pub struct QuFnObject {
 }
 
 
+pub struct QuFnPtr(pub QuExtFn);
+impl Debug for QuFnPtr {
+
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("QuFnPtr").finish()
+    }
+
+}
+pub struct QuFnVoidPtr(pub QuExtVoidFn);
+impl Debug for QuFnVoidPtr {
+
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("QuFnVoidPtr").finish()
+    }
+
+}
+
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct QuInt(pub i32);
+#[qu_methods]
 impl QuInt {
 
-	fn new(value:i32) -> Self {Self(value)}
+	pub fn new(value:i32) -> Self {Self(value)}
 
 
-	fn quwrapper_add(vm:&mut QuVm, obj_id:QuRegId, parameters:Vec<QuRegId>
-	) -> Result<RegisterValue, QuMsg> {
-		if parameters.len() != 1 {
-			return Err(QuMsg::general("incorrect parameters quantity"));
-		}
-		let l = vm.reg_get_as::<QuInt>(obj_id)?;
-		let r = vm.reg_get_as::<QuInt>(parameters[0])?;
+	pub fn boing(&self, b:f32) {}
 
-		let output = *l+*r;
-		Ok(Box::new(output))
+
+	pub fn stats(&self, b:i32) -> i32 {self.0+b}
+
+	
+	fn test(&self) {
+		//Self::quwrappernew(vm, args);
+		//Self::quwrapperboing(vm, source_id, args);
+		//Self::quwrapperstats(vm, args);
+		
 	}
 
-
-	fn quwrapper_lesser(vm:&mut QuVm, obj_id:QuRegId, parameters:Vec<QuRegId>
-	) -> Result<RegisterValue, QuMsg> {
-		if parameters.len() != 1 {
-			return Err(QuMsg::general("incorrect parameters quantity"));
-		}
-		let l = vm.reg_get_as::<QuInt>(obj_id)?;
-		let r = vm.reg_get_as::<QuInt>(parameters[0])?;
-
-		let output = *l<*r;
-		vm.is_zero = output;
-		if output {
-			Ok(Box::new(QuInt(1)))
-		} else {
-			Ok(Box::new(QuInt(0)))
-		}
-	}
-
-
-//	fn quwrapper_to_string(vm:&mut QuVm, obj_id:QuRegId, parameters:Vec<QuRegId>
-//	) -> Result<RegisterValue, QuMsg> {
-//		if parameters.len() != 0 {
-//			return Err(QuMsg::general("incorrect parameters quantity"));
-//		}
-//		let s = vm.reg_get_as::<QuInt>(obj_id)?;
-//
-//		Ok(Box::new(Into::<String>::into(s)))
-//	}
 
 } impl Add for QuInt {
 
@@ -168,60 +163,36 @@ impl QuInt {
 
 	fn add(self, rhs: Self) -> Self::Output {QuInt(self.0 + rhs.0)}
 
-//} impl PartialOrd for QuInt {
-//
-//    fn partial_cmp(&self, other: &Self) -> Option<Self> {
-//        Some(self.cmp(other))
-//    }
-
 } impl AddAssign for QuInt {
 
 	fn add_assign(&mut self, rhs: Self) {*self += rhs}
 
-} impl QuRegisterStruct for QuInt {
-	
-	fn register_fns() -> Vec<QuExtFnData> {
-		return vec![
-			("__add__".to_owned(), &Self::quwrapper_add, vec![0], 0),
-			("__lesser__".to_owned(), &Self::quwrapper_lesser, vec![0], 0),
-//			("__to_string__".to_owned(), &Self::quwrapper_to_string, vec![0], 0),
-		];
-	}
-
-
-	fn register_void_fns() -> Vec<QuVoidFnForm> {
-		return vec![];
-	}
-
-
-	fn register_methods() -> Vec<QuMethodRegistration> {
-		return vec![];
-	}
-
-
-	fn get_name() -> String {
-		"Int".to_owned()	
-	}
-
-
-//	fn debug_string(a:&dyn Any) -> String {
-//		format!("{:?}", a.downcast_ref::<Self>())
-//	}
-
 } impl QuAny for QuInt {
 }
-
 
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct QuVoid();
 impl QuRegisterStruct for QuVoid {
 
-	fn get_name() -> String where Self: Sized {
-		"Void".to_owned()
+	fn get_name() -> &'static str where Self: Sized {
+		"Void"
 	}
 
-} impl QuAny for QuVoid {}
+} impl QuAny for QuVoid {
+} impl From<QuInt> for String {
+
+	fn from(quint:QuInt) -> Self {
+		format!("{}", quint.0)
+	}
+
+} impl From<&QuInt> for String {
+
+	fn from(quint:&QuInt) -> Self {
+		format!("{}", quint.0)
+	}
+
+}
 
 
 pub trait QuRegisterStruct {
@@ -233,47 +204,40 @@ pub trait QuRegisterStruct {
 
 
 	/// Returns functions to be called by the [`QuVm`].
-	fn register_void_fns() -> Vec<QuVoidFnForm> where Self: Sized {
+	fn register_void_fns() -> Vec<QuExtVoidFnData> where Self: Sized {
 		Vec::default()
 	}
 
 
 	/// Returns functions to be called by the [`QuVm`].
-	fn register_methods() -> Vec<QuMethodRegistration> where Self: Sized {
+	fn register_static_fns() -> Vec<QuExtFnData> where Self: Sized {
 		Vec::default()
 	}
 
 
 	/// Returns the name that identifies the struct being registered.
-	fn get_name() -> String where Self: Sized;
-
-
-//	fn debug_string(a:&dyn Any) -> String {
-//		format!("<debug_string not implemented>")
-//	}
-
-}
-
-
-impl From<QuInt> for String {
-
-	fn from(quint:QuInt) -> Self {
-		format!("{}", quint.0)
-	}
-
-}
-
-
-impl From<&QuInt> for String {
-
-	fn from(quint:&QuInt) -> Self {
-		format!("{}", quint.0)
-	}
+	fn get_name() -> &'static str where Self: Sized;
 
 }
 
 
 #[cfg(test)]
 mod test_objects {
+    use crate::{QuInt, QuRegisterStruct};
+
+
+	#[test]
+	fn register_fns() {
+		dbg!(QuInt::get_name());
+		let fns = QuInt::register_fns();
+		let static_fns = QuInt::register_static_fns();
+		let void_fns = QuInt::register_void_fns();
+		dbg!(fns);
+		dbg!(static_fns);
+		dbg!(void_fns);
+		//dbg!(QuInt::register_static_fns());
+		//dbg!(QuInt::register_void_fns());
+		//dbg!(QuInt::get_name());
+	}
 
 }

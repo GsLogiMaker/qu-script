@@ -265,4 +265,16 @@ pub struct QuMsg {
 		);
 	}
 	
+} impl From<&str> for QuMsg {
+
+    fn from(msg:&str) -> Self {
+        QuMsg::general(msg)
+    }
+
+} impl From<String> for QuMsg {
+
+    fn from(msg:String) -> Self {
+        QuMsg::general(&msg)
+    }
+
 }

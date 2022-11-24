@@ -41,15 +41,23 @@ mod tokens;
 mod vm;
 
 
-use tokens::{TOKEN_TYPE_NAME, QuToken};
 pub use errors::QuMsg;
 pub use compiler::QuCompiler;
 pub use objects::*;
-pub use parser::{QuParser, QuLeaf, QuLeafExpr};
+pub use parser::QuParser;
+pub use parser::QuLeaf;
+pub use parser::QuLeafExpr;
 pub use vm::QuVm;
 pub use vm::QuRegisterValue;
 pub use vm::OPLIB;
 pub use vm::QuRegId;
+
+use std::collections::HashMap;
+use vm::QuFunctionId;
+use vm::QuStruct;
+use vm::QuStructId;
+use tokens::TOKEN_TYPE_NAME;
+use tokens::QuToken;
 
 
 /// The interface for the Qu programming language.
@@ -75,6 +83,10 @@ pub use vm::QuRegId;
 /// ```
 pub struct Qu {
 	vm:QuVm,
+	ext_fns:Vec<QuExtFnData>,
+	ext_fns_map:HashMap<String, QuFunctionId>,
+	ext_structs:Vec<QuStruct>,
+	ext_structs_map:HashMap<String, QuStructId>,
 
 } impl Qu {
 
@@ -90,6 +102,10 @@ pub struct Qu {
 	pub fn new() -> Self {
 		Qu {
 			vm:QuVm::new(),
+			ext_fns: Vec::default(),
+			ext_fns_map: HashMap::default(),
+			ext_structs: Vec::default(),
+			ext_structs_map: HashMap::default(),
 		}
 	}
 
@@ -157,6 +173,93 @@ pub struct Qu {
 	}
 
 
+	/// Registers the functions of the previously registered structs to be used
+	/// in the Qu language.
+	/// 
+	/// # Note
+	/// 
+	/// A struct must be registered with [`Qu::register_struct`] before its
+	/// functions can be registered.
+	/// 
+	/// # Example
+	/// 
+	/// ```
+	/// use qu::Qu;
+	/// use qu::QuRegisterStruct;
+	/// 
+	/// struct MyStruct();
+	/// impl QuRegisterStruct for MyStruct {
+	/// 	fn get_name() -> &'static str {
+	/// 		"MyStruct"
+	/// 	}
+	/// }
+	/// 
+	/// let mut qu = Qu::new();
+	/// 
+	/// qu.register_struct::<MyStruct>();
+	/// qu.register_fns();
+	/// ```
+	pub fn register_fns(&mut self) {
+		let mut fn_datas = Vec::default();
+		for s in self.ext_structs.iter() {
+			fn_datas.append(&mut (s.register_fn)());
+		}
+
+		for fn_data in fn_datas {
+			self.register_fn(fn_data);
+		}
+	}
+
+
+	fn register_fn(&mut self, fn_data:QuExtFnData) {
+		self.ext_fns_map.insert(
+			fn_data.0.clone(),
+			QuFunctionId::new(self.ext_fns.len()),
+		);
+		self.ext_fns.push(fn_data);
+	}
+
+
+	/// Registers an external struct to be used within the Qu langauge.
+	/// 
+	/// # Note
+	/// 
+	/// Does not register the methods of the struct. Call
+	/// [`Qu::register_struct`] to register the methods of all registered
+	/// structs.
+	/// 
+	/// # Example
+	/// 
+	/// ```
+	/// use qu::Qu;
+	/// use qu::QuRegisterStruct;
+	/// 
+	/// struct MyStruct();
+	/// impl QuRegisterStruct for MyStruct {
+	/// 	fn get_name() -> &'static str {
+	/// 		"MyStruct"
+	/// 	}
+	/// }
+	/// 
+	/// let mut qu = Qu::new();
+	/// 
+	/// qu.register_struct::<MyStruct>();
+	/// ```
+	pub fn register_struct<S:QuRegisterStruct+'static>(&mut self) {
+		let r_struct = QuStruct::new(
+			<S as QuRegisterStruct>::get_name(),
+			&<S as QuRegisterStruct>::register_fns
+		);
+		
+		self.ext_structs_map.insert(
+			<S as QuRegisterStruct>::get_name().to_owned(),
+			QuStructId::new(self.ext_structs.len()),
+		);
+		self.ext_structs.push(r_struct);
+
+	}
+
+
 	/// Runs [`&str`] as Qu script.
 	/// 
 	/// # Errors
@@ -220,32 +323,6 @@ pub struct Qu {
 }
 
 
-/// A declared Qu function. Contains all the metadata for a defined function.
-#[derive(Debug, Default)]
-pub struct QuFunc {
-	/// The name of this funciton.
-	name:String,
-	/// The index that is function is stored at in the function list.
-	id:usize,
-	/// The arguments accepted by this function.
-	arg_list:Vec<u8>,
-	/// The start index of this function's code.
-	code_start:usize,
-
-} impl QuFunc {
-
-	fn new(name:&str, id:usize, code_start:usize) -> Self {
-		return Self{
-			name: name.to_owned(),
-			id: id,
-			arg_list: Vec::default(),
-			code_start: code_start,
-		}
-	}
-
-}
-
-
 /// TODO: Remove this struct, it is replaced with an enum.
 /// An object type (Ex: int, bool, String, Object).
 pub struct QuType2 {
@@ -285,41 +362,9 @@ pub struct QuType2 {
 }
 
 
-/// Metadata for a Qu variable.
-#[derive(Debug, Default, Clone)]
-struct QuVar {
-	/// The name of this variable.
-	name:String,
-	/// The static type of this variable.
-	static_type:Option<usize>,
-	/// The register to which this variable is saved to.
-	register:u8,
-} impl QuVar {
-	
-	/// Instantiate a [QuVar] struct.
-	fn new(name:&str, static_type:Option<usize>, register:u8) -> Self {
-		return Self{
-			name: name.to_owned(),
-			static_type: static_type,
-			register: register,
-		};
-	}
-
-
-	/// Instantiate a [QuVar] struct with default values.
-	fn default() -> Self {
-		return Self {
-			name: String::default(),
-			static_type: None,
-			register: u8::default(),
-		};
-	}
-
-}
-
 #[cfg(test)]
-mod lib {
-    use crate::{Qu, QuMsg};
+mod test {
+    use crate::{Qu, QuMsg, QuInt};
 
 	#[test]
 	fn fibinachi() -> Result<(), QuMsg>{
@@ -362,6 +407,17 @@ mod lib {
 		qu.run(script)?;
 
 		return Ok(());
+	}
+
+	
+	#[test]
+	fn register_structs() -> Result<(), QuMsg> {
+		let mut qu = Qu::new();
+
+		qu.register_struct::<QuInt>();
+		qu.register_fns();
+
+		Ok(())
 	}
 
 

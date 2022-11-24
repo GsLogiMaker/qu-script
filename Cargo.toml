@@ -25,6 +25,7 @@
 
 members = [
 	"qu",
+	"qu_derive",
 	"qube",
 ]
 

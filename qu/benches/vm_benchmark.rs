@@ -1,5 +1,4 @@
 
-#[macro_use]
 extern crate criterion;
 
 use criterion::black_box;
@@ -15,24 +14,13 @@ use qu::QuRegId;
 use qu::QuVm;
 
 
-fn speed(c: &mut Criterion) {
-	let script = black_box(r#"
-	var nterms = 9
-	var n1 = 0
-	var n2 = 1
-	var count = 0
+fn main() {}
 
-	while count < nterms:
-		var nth = n1 + n2
-		n1 = n2
-		n2 = nth
-		count = count + 1
-	"#);
-	let mut compiler = QuCompiler::new();
-	let bytes = black_box(compiler.compile(script).unwrap());
-	
+
+/*
+fn speed(c: &mut Criterion) {
 	let mut vm = QuVm::new();
-	vm.external_struct_register::<QuInt>();
+	vm.register_struct::<QuInt>();
 
 	let mut code = vec![];
 
@@ -41,7 +29,7 @@ fn speed(c: &mut Criterion) {
 		
 	// var nterms = 9
 	let p_nterms = 0;
-	code.append(&mut vec![OPLIB.load_val_u8, 9, p_nterms]);
+	code.append(&mut vec![OPLIB.load_val_u8, 75, p_nterms]);
 	// var n1 = 0
 	let p_n1 = 1;
 	code.append(&mut vec![OPLIB.load_val_u8, 0, p_n1]);
@@ -89,5 +77,7 @@ criterion_group!(
 	config = Criterion::default();
 	targets = speed
 );
-
 criterion_main!(bench);
+
+*/
+

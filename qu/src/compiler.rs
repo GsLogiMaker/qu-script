@@ -229,7 +229,7 @@ pub struct QuCompiler {
 		}?;
 
 		// New frame for the code in the 'if' body
-		let b = with!{
+		let b:Result<QuAsmBuilder, QuMsg> = with!{
 			self.stack_frame_start, self.stack_frame_end {
 				let body_code = self.cmp_scope(body)?;
 
@@ -244,9 +244,9 @@ pub struct QuCompiler {
 
 				/*return*/ Ok(b)
 			}
-		}?;
+		};
 
-		return Ok(b);
+		return Ok(b?);
 	}
 
 
@@ -299,7 +299,7 @@ pub struct QuCompiler {
 					+ 4 // Length of self?
 				) as i32));
 
-				/*return*/ Ok(b)
+				Ok::<QuAsmBuilder, QuMsg>(b)
 			}
 		}?;
 		
@@ -317,7 +317,7 @@ pub struct QuCompiler {
 				let parameter_expr = self.cmp_expr(p, reg)?;
 				builder.add_builder(parameter_expr);
 			}
-			Ok(())
+			Ok::<(), QuMsg>(())
 		})?;
 
 		builder.add_u8(OPLIB.call);
@@ -354,7 +354,7 @@ pub struct QuCompiler {
 			let mut b = QuAsmBuilder::new();
 			b.add_builder(self.cmp_leafs(body)?);
 			b.add_u8(OPLIB.end);
-			Ok(b)
+			Ok::<QuAsmBuilder, QuMsg>(b)
 		})?;
 
 		// Add fn declaration operation
@@ -572,7 +572,7 @@ pub struct QuCompiler {
 		let mut code = with!(self.context_start, self.context_end {
 			let mut code = self.cmp_scope(leafs)?;
 			code.add_u8(OPLIB.end);
-			Ok(code)
+			Ok::<QuAsmBuilder, QuMsg>(code)
 		})?;
 		
 

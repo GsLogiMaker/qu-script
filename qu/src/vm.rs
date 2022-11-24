@@ -120,12 +120,14 @@ lazy_static!{
 
 pub type QuExtFn = &'static dyn Fn(
 	&mut QuVm,
-	QuRegId,
 	Vec<QuRegId>
 	)->Result<RegisterValue, QuMsg>;
-pub type QuVoidExtFn = &'static dyn Fn(
+pub type QuExtStaticFn = &'static dyn Fn(
 	&mut QuVm,
-	QuRegId,
+	Vec<QuRegId>
+	)->Result<RegisterValue, QuMsg>;
+pub type QuExtVoidFn = &'static dyn Fn(
+	&mut QuVm,
 	Vec<QuRegId>
 	)->Result<(), QuMsg>;
 /// A tuple of for specifying arguments for a [QuOperation].
@@ -162,6 +164,25 @@ pub enum QuRegisterValue {
 	Object(Box<Box<dyn Any>>),
 }
 
+
+pub enum QuOp {
+	End,
+
+	LoadU8(u8, u8),
+	LoadU16(u16, u8),
+	LoadU32(u32, u8),
+	LoadU64(u64, u8),
+
+	CopyReg(u8, u8),
+
+	JumpTo(u32),
+	JumpBy(i32),
+	JumpToIfNot(u32),
+	JumpByIfNot(i32),
+
+	Call(u32, u8),
+	CallExt(u8, u32, u8),
+}
 
 // Define the [QuOpLibrary] struct
 struct_QuOpLibrary!{
@@ -231,21 +252,29 @@ pub struct QuOperation<'a> {
 
 
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct QuStruct {
 	name:String,
-	functions:Vec<QuExtFn>,
 	functions_map:HashMap<String, QuFunctionId>,
+	pub register_fn:&'static dyn Fn() -> Vec<QuExtFnData>,
+
 } impl QuStruct {
 
-	fn new(
-		name:String,
+	pub fn new(
+		name:impl Into<String>,
+		fn_registerer:&'static dyn Fn() -> Vec<QuExtFnData>,
 	) -> Self {
-		return Self {
+		let name = name.into();
+		Self {
 			name,
-			functions: Vec::default(),
 			functions_map: HashMap::default(),
-		};
+			register_fn: fn_registerer,
+		}
+	}
+
+
+	pub fn has_fn(&self, fn_name:&str) -> bool {
+		self.functions_map.contains_key(fn_name)
 	}
 
 }
@@ -256,7 +285,7 @@ pub struct QuFunctionId {
 	index:usize,
 } impl QuFunctionId {
 
-	fn new(index:usize) -> Self {
+	pub fn new(index:usize) -> Self {
 		Self {
 			index,
 		}
@@ -288,7 +317,7 @@ pub struct QuStructId {
 	index:usize,
 } impl QuStructId {
 
-	fn new(index:usize) -> Self {
+	pub fn new(index:usize) -> Self {
 		return Self{
 			index
 		};
@@ -579,7 +608,7 @@ pub struct QuVm {
 			))
 		};
 
-		let mut params = Vec::default();
+		let mut params = vec![on_reg];
 		for _ in 0..fn_data.2.len() {
 			params.push(QuRegId(self.next_u8(code) as usize));
 		}
@@ -587,7 +616,6 @@ pub struct QuVm {
 		let to_reg = QuRegId(self.next_u8(code) as usize);
 
 		let returned = self.external_call_by_id(
-			on_reg,
 			fn_id,
 			params,
 		)?;
@@ -707,7 +735,7 @@ pub struct QuVm {
 
 		let struct_name = <S as QuRegisterStruct>::get_name();
 		let Some(struct_id)
-			= self.registered_structs_map.get(&struct_name) else {
+			= self.registered_structs_map.get(struct_name) else {
 			return Err(QuMsg::general(
 				&format!("No struct registered with name '{struct_name}'")
 		))};
@@ -718,7 +746,7 @@ pub struct QuVm {
 				&format!("No struct registered with id '{}'", struct_id.index)
 		))};
 
-		let fn_id = self.get_fn_id(fn_name, &struct_name)?;
+		let fn_id = self.get_fn_id(fn_name, struct_name)?;
 		let mem_id = self.get_mem_id(obj_name)?.clone();
 
 		// TODO: Bring named memory addresses into registers to be used in fn
@@ -734,44 +762,10 @@ pub struct QuVm {
 
 	fn external_call_by_id(
 		&mut self,
-		obj_id:QuRegId,
 		fn_id:QuFunctionId,
 		parameters:Vec<QuRegId>,
 	) -> Result<RegisterValue, QuMsg> {
-		Ok(self.get_fn_by_id(fn_id)?(self, obj_id, parameters)?)
-	}
-
-
-	/// Registers an external struct.
-	pub fn external_struct_register<S:QuRegisterStruct>(&mut self) {
-		let mut r_struct = QuStruct::new(
-			<S as QuRegisterStruct>::get_name()
-		);
-
-		let fn_registrations
-			= <S as QuRegisterStruct>::register_fns();
-		for fn_data in fn_registrations {
-			if r_struct.functions_map.contains_key(&fn_data.0) {
-				panic!(
-					"qu function with name {} already defined in struct {}",
-					fn_data.0,
-					<S as QuRegisterStruct>::get_name(),
-				);
-			}
-			
-			r_struct.functions_map.insert(
-				fn_data.0.clone(),
-				QuFunctionId::new(self.registered_fns.len()),
-			);
-			self.registered_fns.push(fn_data)
-		}
-		
-		self.registered_structs_map.insert(
-			<S as QuRegisterStruct>::get_name(),
-			QuStructId::new(self.registered_structs.len()),
-		);
-		self.registered_structs.push(r_struct);
-
+		Ok(self.get_fn_by_id(fn_id)?(self, parameters)?)
 	}
 
 
@@ -873,7 +867,7 @@ pub struct QuVm {
 			return Err(QuMsg::general(
 				&format!("qu vm has no function with index {fn_index}")))
 		};
-		let fn_ref = fn_ref.1;
+		let fn_ref = (fn_ref.1).0;
 
 		return Ok(fn_ref);
 	}
@@ -1128,6 +1122,13 @@ pub struct QuVm {
 	}
 
 
+	fn next_op<'a>(&mut self, code:&'a [QuOp]) -> &'a QuOp {
+		let val = &code[self.pc];
+		self.pc += 1;
+		return val;
+	}
+
+
 	/// Gets the next byte in the source code as a [`u8`].
 	fn next_u8(&mut self, code:&[u8]) -> u8 {
 		let val = code[self.pc];
@@ -1290,6 +1291,37 @@ pub struct QuVm {
 	}
 
 
+	/// Runs the next command in the given bytecode.
+	/*fn do_next2(&mut self, instructions:&[QuOp]) -> Result<(), QuMsg> {
+		let op = self.next_op(instructions);
+		//println!("Doing op: {}", &OPLIB.ops[op as usize].name);
+		match op {
+			QuOp::End => {self.frame_end()?},
+			QuOp::Call(ouput_reg, fn_index) => {self.frame_end()?},
+
+			x if x == OPLIB.load_val_u8 => self.exc_load_val_u8(bytecode),
+			x if x == OPLIB.load_val_u16 => self.exc_load_val_u16(bytecode),
+			x if x == OPLIB.load_val_u32 => self.exc_load_val_u32(bytecode),
+			x if x == OPLIB.load_val_u64 => self.exc_load_val_u64(bytecode),
+			x if x == OPLIB.load_mem => self.exc_load_mem(bytecode),
+			x if x == OPLIB.store_mem => self.exc_store_mem(bytecode),
+			x if x == OPLIB.copy_reg => self.exc_copy_reg(bytecode),
+			x if x == OPLIB.jump_to => self.exc_jump_to(bytecode),
+			x if x == OPLIB.jump_by => self.exc_jump_by(bytecode),
+			x if x == OPLIB.jump_to_if_not => self.exc_jump_to_if_not(bytecode),
+			x if x == OPLIB.jump_by_if_not => self.exc_jump_by_if_not(bytecode),
+			x if x == OPLIB.print => self.exc_print(bytecode),
+			x if x == OPLIB.call => self.exc_call_fn(bytecode)?,
+			x if x == OPLIB.define_fn => self.exc_define_fn(bytecode),
+
+			x if x == OPLIB.call_ext => self.exc_call_fn_ext(bytecode)?,
+
+			x => { println!("{x}"); todo!(); }
+		};
+		return Ok(());
+	}*/
+
+
 	/// Runs `bytecode`.
 	/// 
 	/// # Errors
@@ -1346,57 +1378,6 @@ mod test_vm {
     use super::OPLIB;
 
 	#[test]
-	fn external_fn_calls() -> Result<(), QuMsg> {
-		let mut vm = QuVm::new();
-		vm.external_struct_register::<QuInt>();
-
-		let mut code = vec![];
-
-		// Defines a constant zero
-		code.append(&mut vec![OPLIB.load_val_u8, 0, 20]);
-			
-		// var nterms = 9
-		let p_nterms = 0;
-		code.append(&mut vec![OPLIB.load_val_u8, 9, p_nterms]);
-		// var n1 = 0
-		let p_n1 = 1;
-		code.append(&mut vec![OPLIB.load_val_u8, 0, p_n1]);
-		// var n2 = 1
-		let p_n2 = 2;
-		code.append(&mut vec![OPLIB.load_val_u8, 1, p_n2]);
-		// var count = 0
-		let p_count = 3;
-		code.append(&mut vec![OPLIB.load_val_u8, 0, p_count]);
-
-		// while count < nterms:
-		let while_body_len = (8*4)+3+5;
-		code.append(&mut vec![OPLIB.call_ext, p_count, 0,0,0,1, 4, p_nterms]);
-		code.append(&mut vec![OPLIB.jump_by_if_not, 0,0,0,while_body_len]);
-
-			// var nth = n1 + n2
-			code.append(&mut vec![OPLIB.call_ext, p_n1, 0,0,0,0, 4, p_n2]);
-			// n1 = n2
-			code.append(&mut vec![OPLIB.call_ext, p_n2, 0,0,0,0, p_n1, 20]);
-			// n2 = nth
-			code.append(&mut vec![OPLIB.call_ext, 4, 0,0,0,0, p_n2, 20]);
-			// count = count + 1
-			code.append(&mut vec![OPLIB.load_val_u8, 1, 5]);
-			code.append(&mut vec![OPLIB.call_ext, p_count, 0,0,0,0, p_count, 5]);
-
-		code.append(&mut vec![OPLIB.jump_by]);
-		code.append(&mut (-((8+5)+(while_body_len as i8)) as i32).to_be_bytes().to_vec());
-
-		vm.run_bytes(&code)?;
-
-		assert_eq!(*vm.reg_get_mut_as::<QuInt>(QuRegId(1))?, QuInt(34));
-		assert_eq!(*vm.reg_get_mut_as::<QuInt>(QuRegId(2))?, QuInt(55));
-		assert_eq!(*vm.reg_get_mut_as::<QuInt>(QuRegId(3))?, QuInt(9));
-
-		return Ok(());
-	}
-
-
-	#[test]
 	fn define_and_get_const() -> Result<(), QuMsg> {
 		let mut vm = QuVm::new();
 		vm.define_const("MEANING_OF_LIFE".to_owned(), Box::new(42));
@@ -1439,39 +1420,6 @@ mod test_vm {
 		
 		assert!(bad_type.is_err());
 		assert!(not_defined.is_err());
-
-		return Ok(());
-	}
-
-
-	#[test]
-	fn register_external_structs() -> Result<(), QuMsg> {
-		let mut vm = QuVm::new();
-		vm.external_struct_register::<QuInt>();
-
-		let code = QuFnObject::new(
-			vec![],
-			crate::QuCodeObject {start_index:0},
-			crate::QuType::Void,
-		);
-
-		vm.define_mem("bob".to_owned(), Box::new(code));
-		
-		vm.external_call::<QuInt>(
-			"bob",
-			"change_type",
-			vec![],
-		)?;
-
-//		let bob_id = vm.get_mem_id("bob")?;
-//		let bob_change_type_id
-//			= vm.get_fn_id("change_type", "FnObject")?;
-//
-//		vm.external_call_by_id(
-//			bob_id,
-//			bob_change_type_id,
-//			vec![],
-//		)?;
 
 		return Ok(());
 	}
