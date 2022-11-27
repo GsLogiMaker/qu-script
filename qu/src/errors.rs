@@ -17,14 +17,19 @@ pub const ERR_TITLE_UNDEFINED_TYPE:&str = "UNDEFINED TYPE";
 pub const ERR_TITLE_UNDEFINED_FN:&str = "UNDEFINED FUNCTION";
 
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
+/// A message describing an error.
 pub struct QuMsg {
+	/// The message title.
 	pub title:String,
+	/// The message description.
 	pub description:String,
+	/// The script position to highlight.
 	pub token:QuCharIndex,
 
 } impl QuMsg {
 
+	/// Constructs a new [`QuMsg`]
 	pub fn new() -> Self {
 		Self {
 			title:String::default(),
@@ -34,11 +39,12 @@ pub struct QuMsg {
 	}
 
 
+	/// Panics and displays the QuMsg prettily.
 	pub fn panic(&self, script:&str) {
 		panic!("{}", self.make_pretty_message(script));
 	}
 
-
+	/// Prints the QuMsg prettily.
 	pub fn print(&self, script:&str) {
 		println!("{}", self.make_pretty_message(script));
 	}
@@ -100,6 +106,7 @@ pub struct QuMsg {
 
 	// --- Messages ---
 
+	/// Constructs an `empty code block` message.
 	pub fn empty_code_block() -> Self{
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_EMPTY_CODE_BLOCK.to_string();
@@ -108,6 +115,7 @@ pub struct QuMsg {
 	}
 
 
+	/// Constructs a `flow statement lacks an expression` message.
 	pub fn flow_statement_lacks_expression() -> Self{
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_INVALID_FLOW_STATEMENT.to_string();
@@ -116,6 +124,7 @@ pub struct QuMsg {
 	}
 
 
+	/// Constructs a `failed parser match` message.
 	pub fn failed_parser_match() -> Self{
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_PARSER_MATCH_FAILED.to_string();
@@ -124,6 +133,7 @@ pub struct QuMsg {
 	}
 
 
+	/// Constructs a general message.
 	pub fn general(description:&str) -> Self{
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_GENERAL.to_string();
@@ -132,6 +142,7 @@ pub struct QuMsg {
 	}
 
 
+	/// Constructs a `missing token` message.
 	pub fn missing_token(expected_token:&str) -> Self{
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_MISSING_TOKEN.to_string();
@@ -140,6 +151,7 @@ pub struct QuMsg {
 	}
 
 
+	/// Constructs a `missing code block` message.
 	pub fn missing_code_block() -> Self{
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_MISSING_CODE_BLOCK.to_string();
@@ -148,6 +160,7 @@ pub struct QuMsg {
 	}
 
 
+	/// Constructs a `missing code block in flow` message.
 	pub fn missing_code_block_in_flow() -> Self{
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_MISSING_CODE_BLOCK.to_string();
@@ -156,6 +169,7 @@ pub struct QuMsg {
 	}
 
 
+	/// Constructs a `invalid indentation` message.
 	pub fn invalid_indent() -> Self{
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_INVALID_INDENTATION.to_string();
@@ -164,6 +178,7 @@ pub struct QuMsg {
 	}
 
 
+	/// Constructs a `invalid syntax` message.
 	pub fn invalid_syntax() -> Self{
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_INVALID_SYNTAX.to_string();
@@ -172,6 +187,7 @@ pub struct QuMsg {
 	}
 
 
+	/// Constructs a `invalid token` message.
 	pub fn invalid_token(invalid_tk:&str) -> Self{
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_INVALID_SYNTAX.to_string();
@@ -180,6 +196,7 @@ pub struct QuMsg {
 	}
 
 
+	/// Constructs a `one liner` message.
 	pub fn one_liner() -> Self{
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_INVALID_INDENTATION.to_string();
@@ -188,6 +205,7 @@ pub struct QuMsg {
 	}
 
 
+	/// Constructs a `unclosed parenthesis expression` message.
 	pub fn unclosed_paren_expr() -> Self{
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_INVALID_SYNTAX.to_string();
@@ -196,6 +214,7 @@ pub struct QuMsg {
 	}
 
 
+	/// Constructs a `undefined function access` message.
 	pub fn undefined_fn_access(the_fn:&str) -> Self{
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_UNDEFINED_FN.to_string();
@@ -204,6 +223,7 @@ pub struct QuMsg {
 	}
 
 
+	/// Constructs a `undefined type access` message.
 	pub fn undefined_type_access(the_type:&str) -> Self{
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_UNDEFINED_TYPE.to_string();
@@ -212,6 +232,7 @@ pub struct QuMsg {
 	}
 
 
+	/// Constructs a `undefined var access` message.
 	pub fn undefined_var_access(the_var:&str) -> Self{
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_INVALID_VARIABLE_ASSIGNMENT.to_string();
@@ -222,6 +243,7 @@ pub struct QuMsg {
 	}
 
 
+	/// Constructs a `undefined var assign` message.
 	pub fn undefined_var_assign(the_var:&str) -> Self{
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_INVALID_VARIABLE_ASSIGNMENT.to_string();
@@ -230,6 +252,7 @@ pub struct QuMsg {
 	}
 
 
+	/// Constructs a `assign invalid value` message.
 	pub fn var_assign_invalid_value(the_var:&str,
 	invalid_value:&str) -> Self{
 		let mut msg = Self::new();
@@ -239,6 +262,7 @@ pub struct QuMsg {
 	}
 
 
+	/// Constructs a `var assign lacks value` message.
 	pub fn var_assign_lacks_value(the_var:&str) -> Self{
 			let mut msg = Self::new();
 			msg.title = ERR_TITLE_INVALID_VARIABLE_ASSIGNMENT.to_string();
@@ -247,6 +271,7 @@ pub struct QuMsg {
 		}
 
 
+	/// Constructs a `var redefined` message.
 	pub fn var_redefined(the_var:&str) -> Self{
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_INVALID_VARIABLE_DEFINITION.to_string();

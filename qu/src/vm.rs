@@ -1,47 +1,54 @@
 
 use std::any::Any;
-use std::any::TypeId;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::mem::replace;
 use std::mem::take;
 
-use crate::QuExtFnData;
-use crate::QuInt;
 use crate::QuMsg;
-use crate::QuRegisterStruct;
-use crate::QuValue;
 use crate::QuVoid;
-use crate::import::QuFunctionId;
-use crate::import::QuRegistered;
-use crate::import::QuStruct;
-use crate::import::QuStructId;
+use crate::import::QuExtFnId;
+use crate::import::QuImports;
 use crate::objects::QuCodeObject;
 use crate::objects::QuFnObject;
-use crate::objects::QuType;
 
 pub type QuExtFn = &'static dyn Fn(
 	&mut QuVm,
 	&Vec<QuStackId>
 	)->Result<StackValue, QuMsg>;
+	
 pub type QuVoidExtFn = &'static dyn Fn(
 	&mut QuVm,
 	&Vec<QuStackId>
 	)->Result<(), QuMsg>;
+
 /// The [QuVm] registers type.
 pub type StackValue = Box<dyn Any>;
 
 
 #[derive(Clone, PartialEq)]
+/// The low level operations of [`QuVm`].
 pub enum QuOp {
+	/// Calls a Qu function. Takes a const ID to the function and a stack ID
+	/// for the return value.
 	Call(QuConstId, QuStackId),
-	CallExt(QuFunctionId, Vec<QuStackId>, QuStackId),
-	// Fn name, fn body length.
+	/// Calls an external function. Takes an external function Id, a [`Vec`] of
+	/// stack IDs for arguments, and a stack ID for the return value.
+	CallExt(QuExtFnId, Vec<QuStackId>, QuStackId),
+	/// Defines a Qu function. Takes the name of the function and the length of
+	/// the function in [`QuOp`]s.
 	DefineFn(String, usize),
+	/// Ends the current scope.
 	End,
+	/// Moves the program counter by the given [`isize`].
 	JumpBy(isize),
+	/// Moves the program counter by the given [`isize`] if the last expression
+	/// was false.
 	JumpByIfNot(isize),
+	/// Loads an [`isize`] into the stack. Takes the value being loaded and the
+	/// stack id where it will bestored.
 	Value(isize, QuStackId),
+	/// Moves the value at `0` in the stack to the return value hold.
 	Return,
 } impl Debug for QuOp {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -137,11 +144,31 @@ pub struct QuMemId {
 
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// The ID to a stack value. 
+/// 
+/// Used to index stack values in [`QuVm`].
+/// 
+/// # Example
+/// 
+/// ```
+/// use qu::Qu;
+/// use qu::QuStackId;
+/// 
+/// let mut qu = Qu::new();
+/// 
+/// qu.get_stack_value(QuStackId::from(0));
+/// ```
 pub struct QuStackId(pub usize);
 impl From<usize> for QuStackId {
 
 	fn from(v:usize) -> Self {
 		Self(v)
+	}
+
+} impl From<isize> for QuStackId {
+
+	fn from(v:isize) -> Self {
+		Self(v as usize)
 	}
 
 } impl From<u8> for QuStackId {
@@ -163,13 +190,15 @@ impl From<QuStackId> for u8 {
 	fn from(v:QuStackId) -> Self {
 		v.0 as u8
 	}
-}
-impl From<QuStackId> for usize {
+} impl From<QuStackId> for usize {
 	fn from(v:QuStackId) -> Self {
 		v.0 as usize
 	}
-}
-impl From<QuStackId> for i32 {
+} impl From<QuStackId> for isize {
+	fn from(v:QuStackId) -> Self {
+		v.0 as isize
+	}
+} impl From<QuStackId> for i32 {
 	fn from(v:QuStackId) -> Self {
 		v.0 as i32
 	}
@@ -182,8 +211,7 @@ impl From<QuStackId> for i32 {
 /// [`qu::Qu`] for interfacing with Qu script.
 pub struct QuVm {
 	/// Holds the outputed value of the last executed operation.
-	hold:StackValue,
-	pub hold_is_zero:bool,
+	pub hold_is_true:bool,
 
 	/// Holds defined constants.
 	constants:Vec<Box<dyn Any>>,
@@ -216,8 +244,7 @@ pub struct QuVm {
 	/// ```
 	pub fn new() -> Self {
 		let mut vm = QuVm { 
-			hold: Box::new(QuVoid()),
-			hold_is_zero: false,
+			hold_is_true: false,
 
 			constants: Vec::default(),
 			constant_map: HashMap::default(),
@@ -270,7 +297,7 @@ pub struct QuVm {
 			Box::new(QuFnObject::new(
 				vec![],
 				QuCodeObject::new(code_start),
-				QuType::Void,
+				"void".into(),
 			))
 		);
 	}
@@ -303,36 +330,12 @@ pub struct QuVm {
 	}
 
 
-	pub fn external_call<S:'static+Default+QuRegisterStruct>(
-		&mut self,
-		obj_name:&str,
-		fn_name:&str,
-		parameters:Vec<QuMemId>,
-		imports:&QuRegistered,
-	) -> Result<(), QuMsg> {
-
-		let struct_name = <S as QuRegisterStruct>::get_name();
-		let r_struct = imports.get_struct(&struct_name)?;
-
-		let fn_id = imports.get_fn_id(fn_name, &struct_name)?;
-		let mem_id = self.get_mem_id(obj_name)?.clone();
-
-		// TODO: Bring named memory addresses into registers to be used in fn
-
-//		self.external_call_by_id(
-//			mem_id,
-//			fn_id,
-//			parameters,
-//		)?;
-		return Ok(());
-	}
-
-
+	/// Calls an imported external function.
 	fn external_call_by_id(
 		&mut self,
-		fn_id:QuFunctionId,
+		fn_id:QuExtFnId,
 		parameters:&Vec<QuStackId>,
-		imports:&QuRegistered,
+		imports:&QuImports,
 	) -> Result<StackValue, QuMsg> {
 		Ok((imports.get_fn_data_by_id(fn_id)?).1(self, parameters)?)
 	}
@@ -413,6 +416,29 @@ pub struct QuVm {
 	}
 
 
+	/// Returns a memory location's ID from its name.
+	/// 
+	/// /// # Errors
+	/// 
+	/// If no memory location called `name` is found then an [`Err`] is
+	/// returned.
+	/// 
+	/// # Examples
+	/// 
+	/// ```
+	/// use qu::QuVm;
+	/// use qu::QuMsg;
+	/// 
+	/// # fn main() {example().unwrap()}
+	/// # fn example() -> Result<(), QuMsg> {
+	/// let mut vm = QuVm::new();
+	/// vm.define_mem("count".into(), Box::new(100isize));
+	/// 
+	/// let mem_id = vm.get_mem_id("count")?;
+	/// assert_eq!(vm.get_mem_by_id::<isize>(mem_id)?, &100isize);
+	/// # return Ok(());
+	/// # }
+	/// ```
 	pub fn get_mem_id(&mut self, name:&str) -> Result<QuMemId, QuMsg> {
 		let Some(id) = self.memory_map.get(name) else {
 			return Err(QuMsg::general(
@@ -462,6 +488,30 @@ pub struct QuVm {
 	}
 
 
+	/// Returns a mutable referance to a [`QuVm`] memory variable.
+	/// 
+	/// /// # Errors
+	/// 
+	/// If no variable by `id` is found or if the variable can't be cast
+	/// to `T` then an [`Err`] is returned.
+	/// 
+	/// # Examples
+	/// 
+	/// ```
+	/// use qu::QuVm;
+	/// use qu::QuMsg;
+	/// 
+	/// # fn main() {example().unwrap()}
+	/// # fn example() -> Result<(), QuMsg> {
+	/// let mut vm = QuVm::new();
+	/// vm.define_mem("count".into(), Box::new(100isize));
+	/// let count_id = vm.get_mem_id("count")?;
+	/// 
+	/// let count = vm.get_mem_mut_by_id::<isize>(count_id)?;
+	/// assert_eq!(count, &mut 100isize);
+	/// # return Ok(());
+	/// # }
+	/// ```
 	pub fn get_mem_mut_by_id<'a, T:'a + 'static>(&'a mut self, id:QuMemId
 	) -> Result<&mut T, QuMsg> {
 		self.get_mem_mut_by_index(id.index)
@@ -523,6 +573,30 @@ pub struct QuVm {
 	}
 
 
+	/// Returns a shared referance to a [`QuVm`] memory variable.
+	/// 
+	/// /// # Errors
+	/// 
+	/// If no variable by `id` is found or if the variable can't be cast
+	/// to `T` then an [`Err`] is returned.
+	/// 
+	/// # Examples
+	/// 
+	/// ```
+	/// use qu::QuVm;
+	/// use qu::QuMsg;
+	/// 
+	/// # fn main() {example().unwrap()}
+	/// # fn example() -> Result<(), QuMsg> {
+	/// let mut vm = QuVm::new();
+	/// vm.define_mem("count".into(), Box::new(100isize));
+	/// let count_id = vm.get_mem_id("count")?;
+	/// 
+	/// let count = vm.get_mem_mut_by_id::<isize>(count_id)?;
+	/// assert_eq!(count, &100isize);
+	/// # return Ok(());
+	/// # }
+	/// ```
 	pub fn get_mem_by_id<'a, T:'a + 'static>(&'a self, id:QuMemId
 	) -> Result<&T, QuMsg> {
 		self.get_mem_by_index(id.index)
@@ -542,7 +616,7 @@ pub struct QuVm {
 				&format!("Can't get variable. Index {index} is out of range.")
 			))};
 
-		let Some(cast) = self.memory[index].downcast_ref::<T>()
+		let Some(cast) = any.downcast_ref::<T>()
 			else {return Err(QuMsg::general(
 				&format!("Can't cast variable to specified T. TODO: Better msg.")
 			))};
@@ -576,10 +650,7 @@ pub struct QuVm {
 	#[inline]
 	/// Returns *true* if *hold* is a *true* value.
 	fn is_hold_true(&mut self) -> bool {
-		return self.hold_is_zero;
-		// TODO: Implement register boolean evaluation
-		unimplemented!();
-		//return self.hold != 0;
+		return self.hold_is_true;
 	}
 
 
@@ -595,7 +666,7 @@ pub struct QuVm {
 		fn_id:QuConstId,
 		ouput:QuStackId,
 		code:&[QuOp],
-		imports:&QuRegistered,
+		imports:&QuImports,
 	) -> Result<(), QuMsg> {
 		self.stack_offset += usize::from(ouput);
 		// Assure registers is big enought to fit u8::MAX more values
@@ -619,14 +690,11 @@ pub struct QuVm {
 
 	fn op_call_fn_ext(
 		&mut self,
-		func:QuFunctionId,
+		func:QuExtFnId,
 		args:&Vec<QuStackId>,
 		output:QuStackId,
-		imports:&QuRegistered,
+		imports:&QuImports,
 	) -> Result<(), QuMsg> {
-		let fn_data
-			= imports.get_fn_data_by_id(func)?;
-
 		let returned = self.external_call_by_id(
 			func,
 			args,
@@ -672,18 +740,18 @@ pub struct QuVm {
 
 
 	fn op_load_int(&mut self, value:isize, output:QuStackId) {
-		self.reg_set(output, Box::new(QuInt(value)));
+		self.reg_set(output, Box::new(value));
 	}
 
 
 	#[inline]
-	/// Gets a register value.
-	fn reg_get(&self, at_reg:QuStackId) -> &StackValue {
+	/// Returns a shared referance to a stack value.
+	pub fn reg_get(&self, at_reg:QuStackId) -> &StackValue {
 		return &self.stack[self.stack_offset+at_reg.0];
 	}
 
 
-	/// Gets a register value.
+	/// Returns a shared referance to a stack value cast to type `T`.
 	pub fn reg_get_as<'a, T:'a + 'static>(&self, at_reg:QuStackId
 	) -> Result<&T, QuMsg> {
 		let Some(r) = self.stack[self.stack_offset+at_reg.0]
@@ -697,12 +765,13 @@ pub struct QuVm {
 
 
 	#[inline]
-	/// Gets a register value.
-	fn reg_get_mut(&mut self, at_reg:QuStackId) -> &mut StackValue {
+	/// Returns a mutable referance to a stack value.
+	pub fn reg_get_mut(&mut self, at_reg:QuStackId) -> &mut StackValue {
 		return &mut self.stack[self.stack_offset+at_reg.0];
 	}
 
 
+	/// Returns a mutable referance to a stack value cast to type `T`.
 	pub fn reg_get_mut_as<'a, T:'a + 'static>(&mut self, at_reg:QuStackId
 	) -> Result<&mut T, QuMsg> {
 		let Some(r) = self.stack[self.stack_offset+at_reg.0]
@@ -722,6 +791,7 @@ pub struct QuVm {
 	}
 
 
+	/// Sets a memory location by its name.
 	pub fn set_mem<'a, T:'a + 'static>(&'a mut self, name:&str, value:T
 	) -> Result<(), QuMsg> {
 		let Some(id) = self.memory_map.get(&name.to_owned())
@@ -735,6 +805,7 @@ pub struct QuVm {
 	}
 
 
+	/// Sets a memory location by its ID.
 	pub fn set_mem_by_id<'a, T:'a + 'static>(&'a mut self, id:QuMemId, value:T
 	) -> Result<(), QuMsg> {
 		self.set_mem_by_index(id.index, value)
@@ -759,7 +830,7 @@ pub struct QuVm {
 
 
 	/// Runs inputed bytecode in a loop.
-	fn loop_ops(&mut self, code:&[QuOp], imports:&QuRegistered
+	fn loop_ops(&mut self, code:&[QuOp], imports:&QuImports
 	) -> Result<(), QuMsg>{
 		while self.pc != code.len() {
 			let result
@@ -779,7 +850,7 @@ pub struct QuVm {
 
 
 	/// Runs the next command in the given bytecode.
-	fn do_next_op(&mut self, instructions:&[QuOp], imports:&QuRegistered
+	fn do_next_op(&mut self, instructions:&[QuOp], imports:&QuImports
 	) -> Result<(), QuMsg> {
 		let op = self.next_op(instructions);
 		//println!("Doing op: {:?}", &op);
@@ -797,7 +868,8 @@ pub struct QuVm {
 	}
 
 
-	pub fn run_ops(&mut self, instructions:&[QuOp], imports:&QuRegistered
+	/// Runs a [`Vec`] of instructions.
+	pub fn run_ops(&mut self, instructions:&[QuOp], imports:&QuImports
 	) -> Result<(), QuMsg> {
 		self.pc = 0;
 		while self.pc != instructions.len() {
@@ -826,11 +898,8 @@ pub trait QuAny: Any+Clone {}
 
 #[cfg(test)]
 mod test_vm {
-	use std::any::Any;
-	use std::any::TypeId;
-
-	use crate::vm::QuAny;
-	use crate::{Qu, QuVm, QuMsg, QuFnObject, QuType, QuCompiler, QuInt, vm::QuStackId};
+	use crate::QuVm;
+	use crate::QuMsg;
 
 	#[test]
 	fn define_and_get_const() -> Result<(), QuMsg> {

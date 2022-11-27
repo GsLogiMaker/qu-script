@@ -23,15 +23,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-use std::mem::size_of;
 
-
-use qu::Qu;
-
-fn main() {
-	println!("size of u8: {}", size_of::<u8>());
-	println!("size of usize: {}", size_of::<usize>());
-	println!("size of u8 and usize: {}", size_of::<(u8, usize)>());
-
-}
+fn main() {}
 

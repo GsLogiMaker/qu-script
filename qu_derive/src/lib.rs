@@ -1,9 +1,7 @@
 
 
 extern crate proc_macro;
-#[macro_use]
 extern crate syn;
-#[macro_use]
 extern crate quote;
 
 
@@ -13,17 +11,12 @@ use proc_macro::TokenStream;
 use quote::ToTokens;
 use quote::format_ident;
 use quote::quote;
-use syn::Expr;
-use syn::ExprCall;
-use syn::ExprMethodCall;
-use syn::ExprReference;
 use syn::ExprTuple;
 use syn::FnArg;
 use syn::Ident;
 use syn::ImplItem;
 use syn::ImplItemMethod;
 use syn::ItemImpl;
-use syn::PatTuple;
 use syn::ReturnType;
 use syn::Visibility;
 use syn::parse;
@@ -36,7 +29,6 @@ use syn::__private::TokenStream2 as SynTokenStream;
 struct WrapperData {
 	stream:SynTokenStream,
 	name:Ident,
-	source_name:Ident,
 	arg_types:Vec<String>,
 	return_type:Option<String>,
 	fn_ptr:SynTokenStream,
@@ -219,10 +211,9 @@ fn define_fn_wrappers(
 			true => None,
 			false => Some(fn_return_ty.to_token_stream().to_string()),
 		};
-		let mut data = WrapperData{
+		let data = WrapperData{
 			stream,
 			name: wrapper_fn_name.clone(),
-			source_name: fn_name.clone(),
 			arg_types,
 			return_type,
 			fn_ptr,
@@ -353,7 +344,7 @@ pub fn qu_methods(_attr: TokenStream, item: TokenStream) -> TokenStream {
 
 	let (
 		mut wrappers,
-		mut impl_register,
+		impl_register,
 	) = define_fn_wrappers(
 		&impl_block,
 		&fns,

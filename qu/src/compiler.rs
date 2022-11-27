@@ -1,10 +1,9 @@
 
-use crate::QuFunctionId;
 use crate::QuOp;
 use crate::QuOp::*;
 use crate::QuParser;
 use crate::QuStackId;
-use crate::import::QuRegistered;
+use crate::import::QuImports;
 use crate::parser::FLOW_TYPE_IF;
 use crate::parser::FLOW_TYPE_WHILE;
 use crate::parser::QuOperator;
@@ -13,8 +12,6 @@ use crate::QuLeaf;
 use crate::QuLeafExpr;
 use crate::QuMsg;
 use crate::QuToken;
-use crate::QuType2;
-use crate::vm::QuConstId;
 
 use core::panic;
 use std::collections::HashMap;
@@ -28,10 +25,10 @@ macro_rules! with {
 	($($start:ident).+, $($end:ident).+ $code:block) => {
 		{
 			$($start).+();
-			let mut lmda = ||{$code};
+			let lmda = ||{$code};
 			let output = lmda();
 			$($end).+();
-			/*return*/ output
+			output
 		}
 	};
 }
@@ -70,29 +67,17 @@ struct QuCmpFrame {
 /// Compiles [QuLeaf]s into Qu bytecode.
 pub struct QuCompiler {
 	contexts:Vec<QuCmpContext>,
-	constants_code:Vec<u8>,
 	name_refs:HashMap<String, u32>,
-	types:Vec<QuType2>,
-	types_map:HashMap<String, usize>,
 
 
 } impl QuCompiler {
 
 	/// Creates and returns a new [QuCompiler].
 	pub fn new() -> Self {
-		let mut inst = Self{
+		let inst = Self{
 			contexts:Vec::default(),
-			constants_code:Vec::default(),
 			name_refs:HashMap::default(),
-			types:vec![QuType2::int(), QuType2::uint(), QuType2::bool()],
-			types_map:HashMap::new(),
 		};
-
-		let mut i:usize = 0;
-		for tp in &inst.types {
-			inst.types_map.insert(tp.name.clone(), i);
-			i += 1;
-		}
 
 		return inst;
 	}
@@ -261,7 +246,7 @@ pub struct QuCompiler {
 	fn cmp_flow_while(&mut self, mut condition:QuLeafExpr, body:Vec<QuLeaf>
 	) -> Result<QuAsmBuilder, QuMsg> {
 		// Get expression register
-		let mut expr_code = with!(
+		let expr_code = with!(
 			self.stack_frame_start, self.stack_frame_end {
 				let if_expr_reg = self.get_expr_reg(&mut condition)?;
 				// Expression code
@@ -274,7 +259,7 @@ pub struct QuCompiler {
 			self.stack_frame_start, self.stack_frame_end {
 				// --- Compile Pieces ---
 				// Code block
-				let mut block_code = self.cmp_scope(body)?;
+				let block_code = self.cmp_scope(body)?;
 				let block_code_len = block_code.len();
 
 				let mut b = QuAsmBuilder::new();
@@ -411,7 +396,7 @@ pub struct QuCompiler {
 				}
 			}
 			QuLeaf::FnDecl(
-				mut name,
+				name,
 				parameters,
 				statements,
 			) => {
@@ -510,20 +495,18 @@ pub struct QuCompiler {
 		}
 
 		// Get var type
-		let mut var_type:usize = 0;
-		if let Some(type_tk) = variable_type_token {
+		#[allow(unused_variables)] // TODO: implement typed expressions
+		let var_type:usize 
+			= if let Some(type_tk) = variable_type_token {
 			let var_type_str = &type_tk.slice;
 			if var_type_str != "" {
-				var_type = *self.types_map.get(var_type_str)
-					.ok_or_else(|| {
-						let mut msg = QuMsg::undefined_type_access(
-							&type_tk.slice);
-						msg.token = type_tk.char_index;
-						return msg;
-					}
-				)?;
+				0
+			} else {
+				0
 			}
-		}
+		} else {
+			0
+		};
 
 		// Create variable
 		let var_reg = self.stack_reserve();
@@ -531,13 +514,12 @@ pub struct QuCompiler {
 
 		// Compile variable assignment
 		return match assign_to {
-			// Compile variable value
-			Some(val_leaf)
-				=> self.cmp_expr(*val_leaf, var_reg),
-
-			// No default value, compile fallback to zero
+			Some(val_leaf) => {
+				// Compile variable value
+				self.cmp_expr(*val_leaf, var_reg)
+			},
 			None => {
-				// TODO: Support u64
+				// No default value, compile fallback to zero
 				let mut code = QuAsmBuilder::new();
 				code.add_op(Value(0, var_reg));
 				Ok(code)
@@ -558,7 +540,7 @@ pub struct QuCompiler {
 
 
 	/// Compiles Qu code from a [`&str`] into a [`Vec<u8>`].
-	pub fn compile(&mut self, code:&str, imports:&QuRegistered
+	pub fn compile(&mut self, code:&str, imports:&QuImports
 	) -> Result<Vec<QuOp>, QuMsg> {
 		let mut p = QuParser::new();
 		let leafs = p.parse(code)?;
@@ -568,7 +550,7 @@ pub struct QuCompiler {
 
 	/// Compiles Qu code from a [QuLeaf] into a [`Vec<u8>`].
 	pub fn compile_from_leafs(
-		&mut self, leafs:Vec<QuLeaf>, imports:&QuRegistered
+		&mut self, leafs:Vec<QuLeaf>, imports:&QuImports
 	) -> Result<Vec<QuOp>, QuMsg> {
 		// Main code
 		let mut code = with!(self.context_start, self.context_end {
@@ -646,12 +628,6 @@ pub struct QuCompiler {
 				)
 			}
 		};
-	}
-
-
-	/// Returns the current stack index.
-	fn get_stack_idx(&mut self) -> u8 {
-		return self.get_stack_idx_option().unwrap();
 	}
 
 
@@ -762,18 +738,13 @@ struct QuAsmBuilder {
 	}
 
 
-	fn add_ops(&mut self, ops:Vec<QuOp>) {
-		self.code_pieces.push(QuBuilderPiece::Ops(ops));
-	}
-
-
 	fn add_bp(&mut self, repr:QuBuilderPiece) {
 		self.code_pieces.push(repr);
 	}
 
 
 	fn compile(
-		&mut self, name_references:&HashMap<String, u32>, imports:&QuRegistered
+		&mut self, name_references:&HashMap<String, u32>, imports:&QuImports
 	) -> Result<Vec<QuOp>, QuMsg> {
 		let mut code = vec![];
 		
