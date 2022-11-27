@@ -174,7 +174,7 @@ pub struct QuImports {
 	/// 
 	/// let mut qu = Qu::new();
 	/// 
-	/// qu.register_struct::<MyStruct>();
+	/// qu.import_struct::<MyStruct>();
 	/// ```
 	pub fn register_struct<S:QuRegisterStruct+'static>(&mut self) {
 		let r_struct = QuStruct::new(

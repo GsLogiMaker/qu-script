@@ -16,7 +16,7 @@ pub type QuExtFn = &'static dyn Fn(
 	&mut QuVm,
 	&Vec<QuStackId>
 	)->Result<StackValue, QuMsg>;
-	
+
 pub type QuVoidExtFn = &'static dyn Fn(
 	&mut QuVm,
 	&Vec<QuStackId>
@@ -147,17 +147,6 @@ pub struct QuMemId {
 /// The ID to a stack value. 
 /// 
 /// Used to index stack values in [`QuVm`].
-/// 
-/// # Example
-/// 
-/// ```
-/// use qu::Qu;
-/// use qu::QuStackId;
-/// 
-/// let mut qu = Qu::new();
-/// 
-/// qu.get_stack_value(QuStackId::from(0));
-/// ```
 pub struct QuStackId(pub usize);
 impl From<usize> for QuStackId {
 
