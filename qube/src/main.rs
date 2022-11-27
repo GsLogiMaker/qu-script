@@ -25,10 +25,10 @@ SOFTWARE.
 
 use std::mem::size_of;
 
-use qu::{Qu, QuRegisterValue};
+
+use qu::Qu;
 
 fn main() {
-	println!("size of QuRegisterValue: {}", size_of::<QuRegisterValue>());
 	println!("size of u8: {}", size_of::<u8>());
 	println!("size of usize: {}", size_of::<usize>());
 	println!("size of u8 and usize: {}", size_of::<(u8, usize)>());

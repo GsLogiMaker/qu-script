@@ -6,7 +6,6 @@ use crate::TOKEN_TYPE_NAME;
 use crate::tokens::RULES;
 use crate::tokens::TOKEN_TYPE_NUMBER;
 use crate::tokens::tokenize;
-use crate::vm::OPLIB;
 use crate::QuToken;
 use crate::QuMsg;
 
@@ -52,8 +51,6 @@ pub enum QuLeaf {
 	/// A function declaration branch. Contains the function name,
 	/// parameters, and instructions.
 	FnDecl(Box<QuToken>, Vec<QuParamNode>, QuBlockNode),
-	/// Prints a register to the console.
-	Print(Box<QuLeafExpr>),
 	/// A return statement for a function
 	Return(Option<Box<QuLeafExpr>>),
 	/// A variable assignment. Contains a var name and a [`QuLeafExpr`].
@@ -71,13 +68,98 @@ pub enum QuLeafExpr {
 	/// Call function branch.
 	FnCall(Box<QuToken>, Vec<QuLeafExpr>), // TODO: Implement arguments
 	/// A calculable expression. Contains an operator and two [`QuLeafExpr`]s.
-	Equation(u8, Box<QuLeafExpr>, Box<QuLeafExpr>),
+	Equation(QuOperator, Box<QuLeafExpr>, Box<QuLeafExpr>),
 	/// A literal int value.
 	Number(Box<QuToken>),
 	/// A tuple.
 	Tuple(Vec<QuLeafExpr>),
 	/// A variable name.
 	Var(Box<QuToken>),
+}
+
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum QuOperator {
+	/// The `+` or add math operator.
+	Add,
+	/// The `-` or subtract math operator.
+	Sub,
+	/// The `*` math operator.
+	Mul,
+	/// The `/` math operator.
+	Div,
+	/// The `%` math operator.
+	Mod,
+	/// The `**` or power math operator.
+	Pow,
+	/// The `//` or square root math operator.
+	Sqrt,
+
+	/// The `<` logical operator.
+	Less,
+	/// The `<=` logical operator.
+	LessEq,
+	/// The `>` logical operator.
+	Great,
+	/// The `>=` logical operator.
+	GreatEq,
+	/// The `==` logical operator.
+	Eq,
+	/// The `!=` logical operator.
+	NotEq,
+	/// The `and` logical operator.
+	And,
+	/// The `or` logical operator.
+	Or,
+
+} impl QuOperator {
+
+	fn from_symbol(symbol:&str) -> Self {
+		use QuOperator::*;
+		match symbol {
+			"+" => Add,
+			"-" => Sub,
+			"*" => Mul,
+			"/" => Div,
+			"%" => Mod,
+			"**" => Pow,
+			"//" => Sqrt,
+
+			"<" => Less,
+			"<=" => LessEq,
+			">" => Great,
+			">=" => GreatEq,
+			"==" => Eq,
+			"!=" => NotEq,
+
+			"and" => And,
+			"or" => Or,
+
+			_ => unimplemented!(),
+		}
+	}
+
+
+	pub fn get_dunder(&self) -> &'static str {
+		match self {
+			QuOperator::Add => "__add__",
+			QuOperator::Sub => "__subtract__",
+			QuOperator::Mul => "__multiply__",
+			QuOperator::Div => "__divide__",
+			QuOperator::Mod => "__modular__",
+			QuOperator::Pow => "__power__",
+			QuOperator::Sqrt => "__sqareroot__",
+			QuOperator::Less => "__lesser__",
+			QuOperator::LessEq => "__lesserorequal__",
+			QuOperator::Great => "__greater__",
+			QuOperator::GreatEq => "__greaterorequal__",
+			QuOperator::Eq => "__equal__",
+			QuOperator::NotEq => "__notequal__",
+			QuOperator::And => "__and__",
+			QuOperator::Or => "__or__",
+		}
+	}
+
 }
 
 
@@ -134,9 +216,6 @@ pub struct QuParser {
 
 			// while Statement
 			ck_parse!(ck_flow_while);
-
-			// Print Statement
-			ck_parse!(ch_print);
 
 			// Return Statement
 			ck_parse!(ch_keyword_return);
@@ -211,9 +290,9 @@ pub struct QuParser {
 		}
 
 		// Check expression
-		let expr = self.ck_expr()?.ok_or(
+		let expr = self.ck_expr()?.ok_or_else(||{
 			QuMsg::flow_statement_lacks_expression()
-		)?;
+		})?;
 
 		// Check for code block
 		let scope_data = match self.ck_code_scope() {
@@ -514,7 +593,7 @@ pub struct QuParser {
 
 		return Ok(Some(
 			QuLeafExpr::Equation(
-				OPLIB.op_id_from_symbol(operator),
+				QuOperator::from_symbol(operator),
 				Box::new(data_l),
 				Box::new(data_r)
 			)
@@ -564,31 +643,6 @@ pub struct QuParser {
 			// Did not match an expression, return quietly
 			None => {return Ok(None)},
 		};
-	}
-
-
-	/// Attempts to parse a print statement.
-	fn ch_print(&mut self) -> Result<Option<QuLeaf>, QuMsg> {
-		if self.utl_statement_start()?.is_none() {
-			return Ok(None);
-		}
-
-		// Match keyword
-		let keyword_tk = self.tk_spy(0);
-		if keyword_tk != KEYWORD_PRINT {
-			return Ok(None);
-		}
-		self.tk_next().expect("Improper indentation TODO:Better msg");
-
-		// Match register
-		// Hack: Using unwrap and expect rather than properly handling errors.
-		// 	Probobly isn't an issue since the print keyword is a hack and will
-		// 	be removed anyway.
-		let reg_tk = self.ck_expr()
-			.unwrap() 
-			.expect("Print needs number TODO: Better msg");
-
-		return Ok(Some(QuLeaf::Print(Box::new(reg_tk))));
 	}
 
 
@@ -933,8 +987,8 @@ mod test_qu_matcher {
     use crate::parser::OP_MATH_SUB;
     use crate::QuParser;
 	use crate::QuMsg;
-	use crate::tokens::QuToken;
-	use crate::vm::OPLIB;
+	use crate::parser::QuOperator;
+use crate::tokens::QuToken;
 
 	use super::FLOW_TYPE_WHILE;
 
@@ -946,7 +1000,7 @@ mod test_qu_matcher {
 			fn add():
 				var left = 2
 				var right = 5
-				print left + right
+				return left + right
 		
 			add()
 		"#;
@@ -972,15 +1026,17 @@ mod test_qu_matcher {
 							Box::new(QuToken::from("5"))
 						))),
 					),
-					QuLeaf::Print(Box::new(QuLeafExpr::Equation(
-						8,
-						Box::new(QuLeafExpr::Var(
-							Box::new(QuToken::from("left"))
-						)),
-						Box::new(QuLeafExpr::Var(
-							Box::new(QuToken::from("right"))
-						)),
-					)))
+					QuLeaf::Return(
+						Some(Box::new(QuLeafExpr::Equation(
+							QuOperator::Add,
+							Box::new(QuLeafExpr::Var(
+								Box::new(QuToken::from("left"))
+							)),
+							Box::new(QuLeafExpr::Var(
+								Box::new(QuToken::from("right"))
+							)),
+						))),
+					),
 				]
 			),
 			QuLeaf::Expression(
@@ -1006,9 +1062,9 @@ mod test_qu_matcher {
 		let expc = vec![
 			QuLeaf::Expression(Box::new(
 				QuLeafExpr::Equation(
-					9,
+					QuOperator::Sub,
 					Box::new(QuLeafExpr::Equation(
-						8,
+						QuOperator::Add,
 						Box::new(QuLeafExpr::Number(Box::new(QuToken::from("2")))),
 						Box::new(QuLeafExpr::Number(Box::new(QuToken::from("3")))),
 					)),
@@ -1031,7 +1087,7 @@ mod test_qu_matcher {
 				let expc = vec![
 					QuLeaf::Expression(
 						Box::new(QuLeafExpr::Equation(
-							OPLIB.op_id_from_symbol($symbol),
+							QuOperator::from_symbol($symbol),
 							Box::new(QuLeafExpr::Number(
 								Box::new(QuToken::from("23")))
 							),
@@ -1050,16 +1106,16 @@ mod test_qu_matcher {
 	fn parse_expression_outputs() -> Result<(), QuMsg>{
 		let mut p = QuParser::new();
 		
-		test_equation!(OP_MATH_LES, p);
+		test_equation!("<", p);
 		//test_equation!("<=", p);
-		test_equation!(OP_MATH_GRT, p);
+		test_equation!(">", p);
 		//test_equation!(">=", p);
-		test_equation!(OP_MATH_EQL, p);
-		test_equation!(OP_MATH_NEQ, p);
-		test_equation!(OP_MATH_SUB, p);
-		test_equation!(OP_MATH_ADD, p);
-		test_equation!(OP_MATH_DIV, p);
-		test_equation!(OP_MATH_MUL, p);
+		test_equation!("==", p);
+		test_equation!("!=", p);
+		test_equation!("-", p);
+		test_equation!("+", p);
+		test_equation!("/", p);
+		test_equation!("*", p);
 
 		return Ok(());
 	}
@@ -1074,12 +1130,12 @@ mod test_qu_matcher {
 		let expt = vec![
 			QuLeaf::Expression(
 				Box::new(QuLeafExpr::Equation(
-					8,
+					QuOperator::Add,
 					Box::new(QuLeafExpr::Number(
 						Box::new(QuToken::from("2")),
 					)),
 					Box::new(QuLeafExpr::Equation(
-						10,
+						QuOperator::Mul,
 						Box::new(QuLeafExpr::Number(
 							Box::new(QuToken::from("3")),
 						)),
@@ -1093,9 +1149,9 @@ mod test_qu_matcher {
 		let expt2 = vec![
 			QuLeaf::Expression(
 				Box::new(QuLeafExpr::Equation(
-					10,
+					QuOperator::Mul,
 					Box::new(QuLeafExpr::Equation(
-						8,
+						QuOperator::Add,
 						Box::new(QuLeafExpr::Number(
 							Box::new(QuToken::from("2")),
 						)),
@@ -1179,7 +1235,7 @@ mod test_qu_matcher {
 		let expected = vec![
 			QuLeaf::Expression(
 				Box::new(QuLeafExpr::Equation(
-					OPLIB.op_id_from_symbol(OP_MATH_ADD),
+					QuOperator::Add,
 					Box::new(QuLeafExpr::FnCall(
 						Box::new(QuToken::from("add")),
 						vec![],
@@ -1266,7 +1322,7 @@ mod test_qu_matcher {
 			QuLeaf::VarAssign(
 				Box::new(QuToken::from("count")),
 				Box::new(QuLeafExpr::Equation(
-					OPLIB.op_id_from_symbol(OP_MATH_DIV),
+					QuOperator::Div,
 					Box::new(QuLeafExpr::Number(
 						Box::new(QuToken::from("3")),
 					)),
@@ -1288,12 +1344,13 @@ mod test_qu_matcher {
 		let mut p = QuParser::new();
 		let res = p.parse("var count int = 20 * 8")?;
 
+		dbg!(&res);
 		let expc = vec![
 			QuLeaf::VarDecl(
 				Box::new(QuToken::from("count")),
 				Some(Box::new(QuToken::from("int"))),
 				Some(Box::new(QuLeafExpr::Equation(
-					OPLIB.op_id_from_symbol(OP_MATH_MUL),
+					QuOperator::Mul,
 					Box::new(QuLeafExpr::Number(
 						Box::new(QuToken::from("20")),
 					)),

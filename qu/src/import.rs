@@ -7,7 +7,7 @@ use crate::QuExtFnData;
 use crate::QuRegisterStruct;
 
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct QuFunctionId(pub usize);
 impl QuFunctionId {
 
@@ -54,7 +54,7 @@ pub struct QuRegistered {
 		match self.fns.get(fn_id.0) {
 			Some(v) => Ok(v),
 			None => Err(format!(
-				"No external struct by id `{:?}` is registered.",
+				"No external function by id `{:?}` is registered.",
 				fn_id
 			).into()),
 		}
@@ -86,6 +86,18 @@ pub struct QuRegistered {
 	}
 
 
+	pub fn get_struct_by_id_mut(&mut self, id:QuStructId
+	) -> Result<&mut QuStruct, QuMsg>{
+		match self.structs.get_mut(id.0) {
+			Some(v) => Ok(v),
+			None => Err(format!(
+				"No external struct by id `{:?}` is registered.",
+				id
+			).into()),
+		}
+	}
+
+
 	pub fn get_struct_id(&self, name:&str
 	) -> Result<QuStructId, QuMsg>{
 		let Some(d) = self.structs_map.get(name)
@@ -105,34 +117,25 @@ pub struct QuRegistered {
 	/// 
 	/// A struct must be registered with [`Qu::register_struct`] before its
 	/// functions can be registered.
-	/// 
-	/// # Example
-	/// 
-	/// ```
-	/// use qu::Qu;
-	/// use qu::QuRegisterStruct;
-	/// 
-	/// struct MyStruct();
-	/// impl QuRegisterStruct for MyStruct {
-	/// 	fn get_name() -> &'static str {
-	/// 		"MyStruct"
-	/// 	}
-	/// }
-	/// 
-	/// let mut qu = Qu::new();
-	/// 
-	/// qu.register_struct::<MyStruct>();
-	/// qu.register_fns();
-	/// ```
 	pub fn register_fns(&mut self) {
-		let mut fn_datas = Vec::default();
-		for s in self.structs.iter() {
-			fn_datas.append(&mut (s.register_fn)());
+		let mut fn_datas
+			= Vec::default();
+		for s in self.structs.iter_mut() {
+			for data
+			in (s.register_fn)() {
+				let None = s.fns_map.insert(
+					data.0.clone(),
+					fn_datas.len().into(),
+				) else {
+					panic!(
+						"Can't define a function with name {} in struct {} because it already has a function with that name.",
+						data.0, s.name,
+					);
+				};
+				fn_datas.push(data);
+			}
 		}
-
-		for fn_data in fn_datas {
-			self.register_fn(fn_data);
-		}
+		self.fns = fn_datas;
 	}
 
 
@@ -161,8 +164,8 @@ pub struct QuRegistered {
 	/// 
 	/// struct MyStruct();
 	/// impl QuRegisterStruct for MyStruct {
-	/// 	fn get_name() -> &'static str {
-	/// 		"MyStruct"
+	/// 	fn get_name() -> String {
+	/// 		"MyStruct".into()
 	/// 	}
 	/// }
 	/// 
@@ -185,11 +188,23 @@ pub struct QuRegistered {
 	}
 
 
+	pub fn register_struct_fn(
+		&mut self, struct_id:QuStructId, fn_data:QuExtFnData
+	) -> Result<(), QuMsg> {
+		let new_idx = self.fns.len();
+		let s = self.get_struct_by_id_mut(struct_id)?;
+		s.fns_map.insert(
+			fn_data.0.clone(),
+			QuFunctionId::new(new_idx),
+		);
+		self.fns.push(fn_data);
+		Ok(())
+	}
 
 }
 
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct QuStructId(pub usize);
 impl QuStructId {
 

@@ -3,6 +3,7 @@ use std::any::Any;
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::mem::replace;
 use std::mem::take;
 
 use crate::QuExtFnData;
@@ -19,234 +20,105 @@ use crate::objects::QuCodeObject;
 use crate::objects::QuFnObject;
 use crate::objects::QuType;
 
-
-/// Defines a [QuOpLibrary] struct.
-/// 
-/// Example:
-/// ```
-/// //FIXME:
-/// //struct_QuOpLibrary!{
-/// //	[0] end:END()
-/// //	[1] add:ADD((1,), (1,), (1,))
-/// //}
-/// //let oplib = QuOpLibrary::new();
-/// //assert_eq(oplib.end, 0);
-/// //assert_eq(oplib.add, 1);
-/// ```
-/// 
-/// Expands into:
-/// ```
-/// //FIXME:
-/// //pub struct QuOpLibrary<'a> {
-/// //	ops: Vec<QuOperation<'a>>,
-/// //	end: u8,
-/// //	add: u8,
-/// //}
-/// //impl<'a> QuOpLibrary<'a> {
-/// //	fn new() -> Self {
-/// //		return Self {
-/// //			ops: vec![
-/// //				QuOperation::new("end", "END", &[(1,)]),
-/// //				QuOperation::new("add", "ADD", &[(1,), (1,), (1,)]),
-/// //			],
-/// //			end: 0,
-/// //			add: 1,
-/// //		};
-/// //	}
-/// //}
-/// ```
-macro_rules! struct_QuOpLibrary {
-
-	( $(  [$idx:expr] $name:ident:$asm_keyword:ident( $($args:expr),* )  )+ ) => {
-		/// A struct that holds all the metadata for [QuVm]'s operations. Meant
-		/// to be used as a static variable.
-		pub struct QuOpLibrary<'a> {
-			/// The [Vec] of [QuOperations]. It holds the metadata.
-			pub ops:Vec<QuOperation<'a>>,
-			$(
-				/// The index of &name in [ops].
-				pub $name:u8,
-			)+
-		} impl<'a> QuOpLibrary<'a> {
-			
-			fn new() -> Self {
-				return Self{
-					ops:vec![
-						$(
-							QuOperation::new(stringify!($name), stringify!($asm_keyword), $idx, &[   $( $args, )*   ]),
-						)+
-					],
-					
-					$(
-						$name:$idx,
-					)+
-				};
-			}
-
-
-			pub fn op_args_size(&self, op:u8) -> usize {
-				let mut size = 0;
-				for arg in self.ops[op as usize].args {
-					size += arg.size(&vec![0 as u8], 0);
-				}
-				return size;
-			}
-
-
-			/// Converts a math or logic symbol to the id of the [QuOperation] that will
-			/// perform it.
-			pub fn op_id_from_symbol(&self, symbol:&str) -> u8 {
-				return match symbol {
-					"+" => self.add,
-					"-" => self.sub,
-					"*" => self.mul,
-					"/" => self.div,
-					"**" => self.pow,
-					"%" => self.modulate,
-					">" => self.greater,
-					"<" => self.lesser,
-					"==" => self.equal,
-					"!=" => self.not_equal,
-					_ => panic!("Unknown Qu VM operation symbol: {}", symbol),
-				};
-			}
-
-		}
-	};
-}
-
-
-lazy_static!{
-	/// I don't know what this is documenting...
-	pub static ref OPLIB:QuOpLibrary<'static> = QuOpLibrary::new();
-}
-
-
 pub type QuExtFn = &'static dyn Fn(
 	&mut QuVm,
-	&Vec<QuRegId>
-	)->Result<RegisterValue, QuMsg>;
+	&Vec<QuStackId>
+	)->Result<StackValue, QuMsg>;
 pub type QuVoidExtFn = &'static dyn Fn(
 	&mut QuVm,
-	&Vec<QuRegId>
+	&Vec<QuStackId>
 	)->Result<(), QuMsg>;
-/// A tuple of for specifying arguments for a [QuOperation].
-type CommandArg = QuAsmTypes;
 /// The [QuVm] registers type.
-pub type RegisterValue = Box<dyn Any>;
+pub type StackValue = Box<dyn Any>;
 
 
-enum QuAsmTypes {
-	UInt8,
-	UInt16,
-	UInt32,
-	UInt64,
-	Str,
-} impl QuAsmTypes {
-	fn size(&self, code:&[u8], at:usize) -> usize {
-		return match self {
-			Self::UInt8 => 1,
-			Self::UInt16 => 2,
-			Self::UInt32 => 4,
-			Self::UInt64 => 8,
-			Self::Str => code[at] as usize,
-		};
-	}
-}
-
-
-#[derive(Debug)]
+#[derive(Clone, PartialEq)]
 pub enum QuOp {
+	Call(QuConstId, QuStackId),
+	CallExt(QuFunctionId, Vec<QuStackId>, QuStackId),
+	// Fn name, fn body length.
+	DefineFn(String, usize),
 	End,
-
-	Value(QuInt, QuRegId),
-
-	CopyReg(QuRegId, QuRegId),
-
-	JumpTo(u32),
-	JumpBy(i32),
-	JumpToIfNot(u32),
-	JumpByIfNot(i32),
-
-	Call(QuFunctionId, QuRegId),
-	CallExt(QuFunctionId, Vec<QuRegId>, QuRegId),
+	JumpBy(isize),
+	JumpByIfNot(isize),
+	Value(isize, QuStackId),
+	Return,
+} impl Debug for QuOp {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			Self::Call(arg0, arg1) =>
+				write!(f, "Call({:?}, {:?})", arg0, arg1),
+			Self::CallExt(
+				arg0,
+				arg1,
+				arg2
+			) =>
+				write!(f, "CallExt({:?}, {:?}, {:?})", arg0, arg1, arg2),
+			Self::DefineFn(arg0, arg1) => 
+				write!(f, "DefineFn({:?}, {:?})", arg0, arg1),
+			Self::End =>
+				write!(f, "End"),
+			Self::JumpBy(arg0) =>
+				write!(f, "JumpBy({:?})", arg0),
+			Self::JumpByIfNot(arg0) =>
+			write!(f, "JumpByIfNot({:?})", arg0),
+			Self::Value(arg0, arg1) =>
+				write!(f, "Value({:?}, {:?})", arg0, arg1),
+			Self::Return =>
+				write!(f, "Return"),
+		}
+	}
 }
 
 
-pub enum QuRegisterValue {
-	Void,
-	Int(isize),
-	Bool(bool),
-	Tuple(Box<(usize, Vec<QuRegisterValue>)>),
-	/// Having a box point to a box is used to keep QuRegisterValue at 16 bytes
-	Object(Box<Box<dyn Any>>),
-}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct QuConstId(pub usize);
+impl From<usize> for QuConstId {
 
-
-// Define the [QuOpLibrary] struct
-struct_QuOpLibrary!{
-	[  0] end:END()
-
-	[  1] load_val_u8:LDU8(QuAsmTypes::UInt8, QuAsmTypes::UInt8)
-	[  2] load_val_u16:LDU16(QuAsmTypes::UInt16, QuAsmTypes::UInt8)
-	[  3] load_val_u32:LDU32(QuAsmTypes::UInt32, QuAsmTypes::UInt8)
-	[  4] load_val_u64:LDU64(QuAsmTypes::UInt64, QuAsmTypes::UInt8)
-
-	[  5] load_mem:LDM(QuAsmTypes::UInt32, QuAsmTypes::UInt8)
-	[  6] store_mem:STM(QuAsmTypes::UInt8, QuAsmTypes::UInt32)
-	[  7] copy_reg:CPY(QuAsmTypes::UInt8, QuAsmTypes::UInt8)
-
-	[  8] add:ADD(QuAsmTypes::UInt8, QuAsmTypes::UInt8, QuAsmTypes::UInt8)
-	[  9] sub:SUB(QuAsmTypes::UInt8, QuAsmTypes::UInt8, QuAsmTypes::UInt8)
-	[ 10] mul:MUL(QuAsmTypes::UInt8, QuAsmTypes::UInt8, QuAsmTypes::UInt8)
-	[ 11] div:DIV(QuAsmTypes::UInt8, QuAsmTypes::UInt8, QuAsmTypes::UInt8)
-	[ 12] modulate:MOD(QuAsmTypes::UInt8, QuAsmTypes::UInt8, QuAsmTypes::UInt8)
-	[ 13] pow:POW(QuAsmTypes::UInt8, QuAsmTypes::UInt8, QuAsmTypes::UInt8)
-	[ 14] lesser:LES(QuAsmTypes::UInt8, QuAsmTypes::UInt8, QuAsmTypes::UInt8)
-	[ 15] greater:GRT(QuAsmTypes::UInt8, QuAsmTypes::UInt8, QuAsmTypes::UInt8)
-	[ 16] equal:EQ(QuAsmTypes::UInt8, QuAsmTypes::UInt8, QuAsmTypes::UInt8)
-	[ 17] not_equal:NEQ(QuAsmTypes::UInt8, QuAsmTypes::UInt8, QuAsmTypes::UInt8)
-	[ 18] not:NOT(QuAsmTypes::UInt8, QuAsmTypes::UInt8)
-
-	[ 19] jump_to:JP(QuAsmTypes::UInt32)
-	[ 20] jump_by:JB(QuAsmTypes::UInt32)
-	[ 21] jump_to_if_not:JPIN(QuAsmTypes::UInt32)
-	[ 22] jump_by_if_not:JBIN(QuAsmTypes::UInt32)
-
-	[ 23] print:PRT(QuAsmTypes::UInt8)
-
-	[ 24] call:CALL(QuAsmTypes::UInt32, QuAsmTypes::UInt8)
-
-	[ 25] define_fn:DFFN(QuAsmTypes::Str, QuAsmTypes::UInt32)
-	[ 26] define_const_str:DFCS(QuAsmTypes::Str)
-
-	[ 27] call_ext:CEXT(QuAsmTypes::UInt8, QuAsmTypes::UInt32, QuAsmTypes::UInt8 /* Any number of parameters */)
-
-}
-
-
-/// Contains metadata for a single Qu VM operation.
-pub struct QuOperation<'a> {
-	/// The name of this operation.
-	name:String,
-	/// The assembly keyword that represents this operation.
-	asm_keyword:String,
-	/// The arguments that this operation takes.
-	args:&'a [CommandArg],
-	/// The index that this operation is stored at in the op [Vec].
-	id:u8,
-
-} impl<'a> QuOperation<'a> {
-
-	fn new(name:&str, asm_keyword:&str, id:u8, args:&'a [CommandArg]) -> Self {
-		return Self{
-			name:name.to_string(),
-			asm_keyword:asm_keyword.to_string(),
-			args:args,
-			id:id,
-		};
+	fn from(v:usize) -> Self {
+		Self(v)
 	}
 
+} impl From<u8> for QuConstId {
+
+	fn from(v:u8) -> Self {
+		Self(v as usize)
+	}
+
+} impl From<i32> for QuConstId {
+
+	fn from(v:i32) -> Self {
+		Self(v as usize)
+	}
+
+} impl From<u32> for QuConstId {
+
+	fn from(v:u32) -> Self {
+		Self(v as usize)
+	}
+
+}
+
+
+impl From<QuConstId> for u8 {
+	fn from(v:QuConstId) -> Self {
+		v.0 as u8
+	}
+}
+impl From<QuConstId> for usize {
+	fn from(v:QuConstId) -> Self {
+		v.0 as usize
+	}
+}
+impl From<QuConstId> for i32 {
+	fn from(v:QuConstId) -> Self {
+		v.0 as i32
+	}
+}
+impl From<QuConstId> for u32 {
+	fn from(v:QuConstId) -> Self {
+		v.0 as u32
+	}
 }
 
 
@@ -264,20 +136,42 @@ pub struct QuMemId {
 }
 
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct QuRegId(pub usize);
-impl From<usize> for QuRegId {
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct QuStackId(pub usize);
+impl From<usize> for QuStackId {
 
 	fn from(v:usize) -> Self {
-		QuRegId(v)
+		Self(v)
+	}
+
+} impl From<u8> for QuStackId {
+
+	fn from(v:u8) -> Self {
+		Self(v as usize)
+	}
+
+} impl From<i32> for QuStackId {
+
+	fn from(v:i32) -> Self {
+		Self(v as usize)
 	}
 
 }
 
 
-impl From<QuRegId> for u8 {
-	fn from(v:QuRegId) -> Self {
+impl From<QuStackId> for u8 {
+	fn from(v:QuStackId) -> Self {
 		v.0 as u8
+	}
+}
+impl From<QuStackId> for usize {
+	fn from(v:QuStackId) -> Self {
+		v.0 as usize
+	}
+}
+impl From<QuStackId> for i32 {
+	fn from(v:QuStackId) -> Self {
+		v.0 as i32
 	}
 }
 
@@ -288,24 +182,24 @@ impl From<QuRegId> for u8 {
 /// [`qu::Qu`] for interfacing with Qu script.
 pub struct QuVm {
 	/// Holds the outputed value of the last executed operation.
-	hold:RegisterValue,
-	pub is_zero:bool,
+	hold:StackValue,
+	pub hold_is_zero:bool,
 
 	/// Holds defined constants.
 	constants:Vec<Box<dyn Any>>,
 	/// Maps constant names to their index in [`QuMemory::constants`].
-	constant_map:HashMap<String, usize>,
+	constant_map:HashMap<String, QuConstId>,
 	/// Holds allocated data types.
 	memory:Vec<Box<dyn Any>>,
 	/// Maps variable names to their index in [`QuMemory::memory`].
 	memory_map:HashMap<String, QuMemId>,
 	/// Holds the value returned from a Qu script.
-	return_value:Option<QuValue>,
+	return_value:Option<StackValue>,
 
 	/// The memory registers. Holds all primatives of the VM.
-	registers:Vec<RegisterValue>,
+	stack:Vec<StackValue>,
 	/// The offset of reading and writing to registers.
-	register_offset:usize,
+	stack_offset:usize,
 	/// The program counter.
 	pc:usize,
 
@@ -323,7 +217,7 @@ pub struct QuVm {
 	pub fn new() -> Self {
 		let mut vm = QuVm { 
 			hold: Box::new(QuVoid()),
-			is_zero: false,
+			hold_is_zero: false,
 
 			constants: Vec::default(),
 			constant_map: HashMap::default(),
@@ -331,103 +225,14 @@ pub struct QuVm {
 			memory_map: HashMap::default(),
 			return_value: None,
 
-			registers:Vec::with_capacity(u8::MAX as usize),
-			register_offset: 0,
+			stack:Vec::with_capacity(u8::MAX as usize),
+			stack_offset: 0,
 			pc: 0,
 		};
 
-		vm.registers.resize_with(u8::MAX as usize, ||{Box::new(QuVoid())});
+		vm.stack.resize_with(u8::MAX as usize, ||{Box::new(QuVoid())});
 
 		return vm;
-	}
-
-
-	/// Converts byte code to human readable Qu assembly instructions.
-	/// 
-	/// # Example
-	/// 
-	/// ```
-	/// use qu::QuVm;
-	/// 
-	/// let asm = QuVm::code_to_asm(&[8, 5, 6, 0], false);
-	/// assert_eq!(asm, "\nADD 5 6 0".to_owned());
-	/// ```
-	pub fn code_to_asm(code:&[u8], include_line_columns:bool
-	) -> String {
-		let mut asm = String::new();
-		
-		let mut i = 0;
-		while i < code.len() {
-			let op_code = code[i];
-			// HACK: Skip commands if they exceed the ops length.
-			if op_code as usize >= OPLIB.ops.len() {
-				i += 1;
-				// Add error text
-				asm.push_str(format!("\n{:.>8}-{:.<8} {}",
-					i, i, "INVALID OPERATION").as_str());
-				continue;
-			}
-			let op
-					= &OPLIB.ops[op_code as usize];
-			assert!(op.id == op_code);
-
-			asm.push_str("\n");
-			// Add line/index columns
-			if include_line_columns {
-				asm.push_str(
-					format!("{:.>8}-{:.<8} ",
-					i, i+op.args.len()).as_str()
-				);
-			}
-			// Add code text
-			asm.push_str(
-				format!("{}",op.asm_keyword).as_str());
-
-			// Add parameter text
-			for asm_type in op.args.iter() {
-				let size = asm_type.size(code, i+1);
-				// Get value
-				let val = match asm_type {
-					QuAsmTypes::UInt8 => {
-						let bytes = [code[i+1]];
-						i += 1;
-						format!("{}", u8::from_be_bytes(bytes))
-					}
-					QuAsmTypes::UInt16 => {
-						let bytes = [code[i+1], code[i+2]];
-						i += 2;
-						format!("{}", u16::from_be_bytes(bytes))
-					}
-					QuAsmTypes::UInt32 => {
-						let bytes = [
-							code[i+1], code[i+2], code[i+3], code[i+4]];
-						i += 4;
-						format!("{}", u32::from_be_bytes(bytes))
-					}
-					QuAsmTypes::UInt64 => {
-						let bytes = [
-							code[i+1], code[i+2], code[i+3], code[i+4],
-							code[i+5], code[i+6], code[i+7], code[i+8]];
-						i += 8;
-						format!("{}", u64::from_be_bytes(bytes))
-					}
-					QuAsmTypes::Str => {
-						let mut val = "\"".to_owned();
-						for _ in 1..size+1 {
-							i += 1;
-							val.push(code[i+1] as char);
-						}
-						i += 1;
-						val.push('"');
-						val
-					}
-				};
-				asm.push_str(format!(" {}{}", "", val).as_str());
-			}
-			i += 1;
-		}
-
-		return asm;
 	}
 
 
@@ -454,14 +259,14 @@ pub struct QuVm {
 		let const_index = self.constants.len();
 
 		self.constants.push(value);
-		self.constant_map.insert(name.to_owned(), const_index);
+		self.constant_map.insert(name.to_owned(), const_index.into());
 	}
 
 
 	/// Defines a Qu function.
-	fn define_fn(&mut self, name:&str, code_start:usize) {
+	fn define_fn(&mut self, name:String, code_start:usize) {
 		self.define_const(
-			name.to_owned(),
+			name,
 			Box::new(QuFnObject::new(
 				vec![],
 				QuCodeObject::new(code_start),
@@ -498,179 +303,6 @@ pub struct QuVm {
 	}
 
 
-	/// Returns the value returned by the last run Qu script.
-	/// 
-	/// # Examples
-	/// 
-	/// //TODO: Example
-	pub fn get_return_value(&mut self) -> Option<QuValue> {
-		return take(&mut self.return_value);
-	}
-
-
-	fn exc_copy_reg(&mut self, code:&[u8]) {
-		unimplemented!();
-//		let from_reg = self.next_u8(code) as usize;
-//		let to_reg = self.next_u8(code) as usize;
-//		let to = (*self.reg_get(QuRegId(from_reg))).clone();
-//		self.reg_set(QuRegId(to_reg), *to);
-	}
-
-
-	/// Reads the bytecode of a function call command and executes it.
-	fn exc_call_fn(&mut self, code:&[u8], imports:&QuRegistered
-	) -> Result<(), QuMsg> {
-		let fn_id = self.next_u32(code) as usize;
-		let output_reg = self.next_u8(code) as usize;
-		let fn_obj:&QuFnObject = self.get_const_by_index(fn_id)?;
-		let code_start = fn_obj.body.start_index;
-
-		self.register_offset += output_reg;
-		// Assure registers is big enought to fit u8::MAX more values
-		if (self.register_offset + u8::MAX as usize) > self.registers.len() {
-			self.registers.resize_with(
-				self.register_offset + u8::MAX as usize, 
-				||{Box::new(QuVoid())}
-			);
-		}
-		let return_pc = self.pc;
-
-		self.frame_start(code_start);
-		self.do_loop(code, imports)?;
-
-		self.register_offset -= output_reg;
-		self.pc = return_pc;
-
-		return Ok(());
-	}
-
-
-	fn exc_call_fn_ext(&mut self, code:&[u8], imports:&QuRegistered) -> Result<(), QuMsg> {
-		let fn_id
-			= QuFunctionId::new(self.next_u32(code) as usize);
-
-		let fn_data
-			= imports.get_fn_data_by_id(fn_id)?;
-
-		let mut params = Vec::default();
-		for _ in 0..fn_data.2.len() {
-			params.push(QuRegId(self.next_u8(code) as usize));
-		}
-
-		let to_reg = QuRegId(self.next_u8(code) as usize);
-
-		let returned = self.external_call_by_id(
-			fn_id,
-			&params,
-			imports,
-		)?;
-
-		self.reg_set(to_reg, returned);
-
-		Ok(())
-	}
-
-
-	/// Defines a function from next bytes in the code.
-	fn exc_define_fn(&mut self, code:&[u8]) {
-		let name = self.next_ascii(code);
-		let fn_start = self.next_u32(code) as usize;
-
-		self.define_fn(&name, fn_start);
-	}
-
-
-	fn exc_jump_by(&mut self, code:&[u8]) {
-		let val_by = self.next_u32(code) as i32;
-		// Add
-		if val_by > 0 {
-			self.pc += val_by as usize;
-		// Subtract
-		} else {
-			self.pc -= val_by.abs() as usize;
-		}
-		
-	}
-
-
-	fn exc_jump_by_if_not(&mut self, code:&[u8]) {
-		let val_by = self.next_u32(code) as i32;
-		if !self.is_hold_true() {
-			// Add
-			if val_by > 0 {
-				self.pc += val_by as usize;
-			// Subtract
-			} else {
-				self.pc -= val_by.abs() as usize;
-			}
-		}
-	}
-
-
-	fn exc_jump_to(&mut self, _:&[u8]) {
-		unimplemented!()
-	}
-
-
-	fn exc_jump_to_if_not(&mut self, code:&[u8]) {
-		let val_to = self.next_u32(code) as usize;
-		if !self.is_hold_true() {
-			self.pc = val_to as usize;
-		}
-	}
-
-
-	fn exc_load_val_u8(&mut self, code:&[u8]) {
-		let left = Box::new(QuInt(self.next_u8(code) as i32));
-		let rg_to = self.next_u8(code) as usize;
-		self.reg_set(QuRegId(rg_to), left);
-	}
-
-
-	fn exc_load_val_u16(&mut self, code:&[u8]) {
-		let left = Box::new(QuInt(self.next_u16(code) as i32));
-		let rg_to = self.next_u8(code) as usize;
-		self.reg_set(QuRegId(rg_to), left);
-	}
-
-
-	fn exc_load_val_u32(&mut self, code:&[u8]) {
-		let left = Box::new(QuInt(self.next_u32(code) as i32));
-		let rg_to = self.next_u8(code) as usize;
-		self.reg_set(QuRegId(rg_to), left);
-	}
-
-
-	fn exc_load_val_u64(&mut self, code:&[u8]) {
-		let left = Box::new(QuInt(self.next_u64(code) as i32));
-		let rg_to = self.next_u8(code) as usize;
-		self.reg_set(QuRegId(rg_to), left);
-	}
-
-
-	fn exc_load_mem(&mut self, _:&[u8]) {
-		unimplemented!();
-	}
-
-
-	fn exc_print(&mut self, code:&[u8]) {
-		let read_from_reg = self.next_u8(code) as usize;
-		let val = self.reg_get(QuRegId(read_from_reg));
-
-		if (&**val).type_id() == TypeId::of::<QuInt>() {
-			let ival = val.downcast_ref::<QuInt>().unwrap();
-			println!("Qu Print: {:?}", ival.0);
-		} else {
-			println!("Qu Print: {:?}", val);
-		}
-	}
-
-
-	fn exc_store_mem(&mut self, _:&[u8]) {
-		unimplemented!();
-	}
-
-
 	pub fn external_call<S:'static+Default+QuRegisterStruct>(
 		&mut self,
 		obj_name:&str,
@@ -699,9 +331,9 @@ pub struct QuVm {
 	fn external_call_by_id(
 		&mut self,
 		fn_id:QuFunctionId,
-		parameters:&Vec<QuRegId>,
+		parameters:&Vec<QuStackId>,
 		imports:&QuRegistered,
-	) -> Result<RegisterValue, QuMsg> {
+	) -> Result<StackValue, QuMsg> {
 		Ok((imports.get_fn_data_by_id(fn_id)?).1(self, parameters)?)
 	}
 
@@ -722,10 +354,10 @@ pub struct QuVm {
 	/// # fn main() {example().unwrap()}
 	/// # fn example() -> Result<(), QuMsg> {
 	/// let mut vm = QuVm::new();
-	/// vm.define_const("MEANING_OF_LIFE".to_owned(), Box::new(42));
+	/// vm.define_const("MEANING_OF_LIFE".into(), Box::new(42isize));
 	/// 
-	/// let constant = vm.get_const::<i32>("MEANING_OF_LIFE")?;
-	/// assert_eq!(*constant, 42);
+	/// let constant = vm.get_const::<isize>("MEANING_OF_LIFE")?;
+	/// assert_eq!(*constant, 42isize);
 	/// # return Ok(());
 	/// # }
 	/// ```
@@ -736,7 +368,7 @@ pub struct QuVm {
 				&format!("No constant by name {name} found. TODO: Better msg.")
 			))};
 		
-		let const_ref = self.get_const_by_index::<T>(*index)?;
+		let const_ref = self.get_const_by_id::<T>(*index)?;
 
 		return Ok(const_ref);
 	}
@@ -758,18 +390,18 @@ pub struct QuVm {
 	/// # fn main() {example().unwrap()}
 	/// # fn example() -> Result<(), QuMsg> {
 	/// let mut vm = QuVm::new();
-	/// vm.define_const("BITS".to_owned(), Box::new(128));
+	/// vm.define_const("BITS".into(), Box::new(128isize));
 	/// 
-	/// let BITS = vm.get_const_by_index::<i32>(0)?;
-	/// assert_eq!(*BITS, 128);
+	/// let BITS = vm.get_const_by_id::<isize>(0.into())?;
+	/// assert_eq!(*BITS, 128isize);
 	/// # return Ok(());
 	/// # }
 	/// ```
-	pub fn get_const_by_index<'a, T:'a + 'static>(&'a self, index:usize
+	pub fn get_const_by_id<'a, T:'a + 'static>(&'a self, id:QuConstId
 	) -> Result<&T, QuMsg> {
-		let Some(any) = self.constants.get(index)
+		let Some(any) = self.constants.get(id.0)
 			else {return Err(QuMsg::general(
-				"Can't acsess constant by index {index}. Index is out of range. TODO: Better msg"
+				"Can't acsess constant by id {id}. Index is out of range. TODO: Better msg"
 			))};
 
 		let Some(cast) = any.downcast_ref::<T>()
@@ -808,14 +440,14 @@ pub struct QuVm {
 	/// # fn main() {example().unwrap()}
 	/// # fn example() -> Result<(), QuMsg> {
 	/// let mut vm = QuVm::new();
-	/// vm.define_mem("count".to_owned(), Box::new(100));
+	/// vm.define_mem("count".into(), Box::new(100isize));
 	/// 
-	/// let count = vm.get_mem_mut::<i32>("count")?;
-	/// assert_eq!(*count, 100);
+	/// let count = vm.get_mem_mut::<isize>("count")?;
+	/// assert_eq!(*count, 100isize);
 	/// 
 	/// *count += 5;
-	/// let altered_count = vm.get_mem_mut::<i32>("count")?;
-	/// assert_eq!(*altered_count, 105);
+	/// let altered_count = vm.get_mem_mut::<isize>("count")?;
+	/// assert_eq!(*altered_count, 105isize);
 	/// # return Ok(());
 	/// # }
 	/// ```
@@ -873,10 +505,10 @@ pub struct QuVm {
 	/// # fn main() {example().unwrap()}
 	/// # fn example() -> Result<(), QuMsg> {
 	/// let mut vm = QuVm::new();
-	/// vm.define_mem("count".to_owned(), Box::new(100));
+	/// vm.define_mem("count".into(), Box::new(100isize));
 	/// 
-	/// let count = vm.get_mem::<i32>("count")?;
-	/// assert_eq!(*count, 100);
+	/// let count = vm.get_mem::<isize>("count")?;
+	/// assert_eq!(*count, 100isize);
 	/// # return Ok(());
 	/// # }
 	/// ```
@@ -903,24 +535,7 @@ pub struct QuVm {
 	/// 
 	/// If `index` is out of range or if the variable can't be
 	/// cast to `T` then an [`Err`] is returned.
-	/// 
-	/// # Examples
-	/// 
-	/// ```
-	/// use qu::QuVm;
-	/// use qu::QuMsg;
-	/// 
-	/// # fn main() {example().unwrap()}
-	/// # fn example() -> Result<(), QuMsg> {
-	/// let mut vm = QuVm::new();
-	/// vm.define_mem("count".to_owned(), Box::new(100));
-	/// 
-	/// let count = vm.get_mem_by_index::<i32>(0)?;
-	/// assert_eq!(*count, 100);
-	/// # return Ok(());
-	/// # }
-	/// ```
-	pub fn get_mem_by_index<'a, T:'a + 'static>(&'a self, index:usize
+	fn get_mem_by_index<'a, T:'a + 'static>(&'a self, index:usize
 	) -> Result<&T, QuMsg> {
 		let Some(any) = self.memory.get(index)
 			else {return Err(QuMsg::general(
@@ -933,6 +548,16 @@ pub struct QuVm {
 			))};
 
 		return Ok(cast);
+	}
+
+
+	/// Returns the value returned by the last run Qu script.
+	/// 
+	/// # Examples
+	/// 
+	/// //TODO: Example
+	pub fn get_return_value(&mut self) -> Option<StackValue> {
+		return take(&mut self.return_value);
 	}
 
 
@@ -951,34 +576,10 @@ pub struct QuVm {
 	#[inline]
 	/// Returns *true* if *hold* is a *true* value.
 	fn is_hold_true(&mut self) -> bool {
-		return self.is_zero;
+		return self.hold_is_zero;
 		// TODO: Implement register boolean evaluation
 		unimplemented!();
 		//return self.hold != 0;
-	}
-
-
-	/// Reads an array from the next bytes in the code.
-	fn next_array(&mut self, code:&[u8]) -> String {
-		let str_size = self.next_u8(code);
-		let mut str_vec = Vec::with_capacity(str_size as usize);
-		for _ in 0..str_size {
-			str_vec.push(self.next_u8(code));
-		}
-
-		return String::from_utf8(str_vec).expect("TODO: Handle this error");
-	}
-
-
-	/// Reads a [String] from the next bytes in the code.
-	fn next_ascii(&mut self, code:&[u8]) -> String {
-		let str_size = self.next_u8(code);
-		let mut str_vec = Vec::with_capacity(str_size as usize);
-		for _ in 0..str_size {
-			str_vec.push(self.next_u8(code));
-		}
-
-		return String::from_utf8(str_vec).expect("TODO: Handle this error");
 	}
 
 
@@ -989,51 +590,38 @@ pub struct QuVm {
 	}
 
 
-	/// Gets the next byte in the source code as a [`u8`].
-	fn next_u8(&mut self, code:&[u8]) -> u8 {
-		let val = code[self.pc];
-		self.pc += 1;
-		return val;
-	}
+	fn op_call_fn(
+		&mut self,
+		fn_id:QuConstId,
+		ouput:QuStackId,
+		code:&[QuOp],
+		imports:&QuRegistered,
+	) -> Result<(), QuMsg> {
+		self.stack_offset += usize::from(ouput);
+		// Assure registers is big enought to fit u8::MAX more values
+		if (self.stack_offset + u8::MAX as usize) > self.stack.len() {
+			self.stack.resize_with(
+				self.stack_offset + u8::MAX as usize, 
+				||{Box::new(QuVoid())}
+			);
+		}
 
+		let return_pc = self.pc;
+		let fn_obj:&QuFnObject = self.get_const_by_id(fn_id)?;
+		self.frame_start(fn_obj.body.start_index);
+		self.loop_ops(code, imports)?;
+		self.stack_offset -= usize::from(ouput);
+		self.pc = return_pc;
 
-	/// Gets the next 2 byte in the source code as a [`u16`].
-	fn next_u16(&mut self, code:&[u8]) -> u16 {
-		let bytes = [code[self.pc], code[self.pc+1]];
-		self.pc += 2;
-		return u16::from_be_bytes(bytes);
-	}
-
-
-	/// Gets the next 4 byte in the source code as a [`u32`].
-	fn next_u32(&mut self, code:&[u8]) -> u32 {
-		let bytes = [
-			code[self.pc], code[self.pc+1],
-			code[self.pc+2], code[self.pc+3],
-		];
-		self.pc += 4;
-		return u32::from_be_bytes(bytes);
-	}
-
-
-	// Gets the next 8 byte in the source code as a [`u64`].
-	fn next_u64(&mut self, code:&[u8]) -> u64 {
-		let bytes = [
-			code[self.pc], code[self.pc+1],
-			code[self.pc+2], code[self.pc+3],
-			code[self.pc+4], code[self.pc+5],
-			code[self.pc+6], code[self.pc+7],
-		];
-		self.pc += 8;
-		return u64::from_be_bytes(bytes);
+		return Ok(());
 	}
 
 
 	fn op_call_fn_ext(
 		&mut self,
 		func:QuFunctionId,
-		args:&Vec<QuRegId>,
-		output:QuRegId,
+		args:&Vec<QuStackId>,
+		output:QuStackId,
 		imports:&QuRegistered,
 	) -> Result<(), QuMsg> {
 		let fn_data
@@ -1051,7 +639,14 @@ pub struct QuVm {
 	}
 
 
-	fn op_jump_by(&mut self, by:i32) {
+	/// Defines a function from next bytes in the code.
+	fn op_define_fn(&mut self, name:String, length:usize) {
+		self.define_fn(name, self.pc);
+		self.pc += length;
+	}
+
+
+	fn op_jump_by(&mut self, by:isize) {
 		// Add
 		if by > 0 {
 			self.pc += by as usize;
@@ -1063,7 +658,7 @@ pub struct QuVm {
 	}
 
 
-	fn op_jump_by_if_not(&mut self, by:i32) {
+	fn op_jump_by_if_not(&mut self, by:isize) {
 		if !self.is_hold_true() {
 			// Add
 			if by > 0 {
@@ -1076,22 +671,22 @@ pub struct QuVm {
 	}
 
 
-	fn op_load_val_u8(&mut self, value:QuInt, output:QuRegId) {
-		self.reg_set(output, Box::new(value));
+	fn op_load_int(&mut self, value:isize, output:QuStackId) {
+		self.reg_set(output, Box::new(QuInt(value)));
 	}
 
 
 	#[inline]
 	/// Gets a register value.
-	fn reg_get(&self, at_reg:QuRegId) -> &RegisterValue {
-		return &self.registers[self.register_offset+at_reg.0];
+	fn reg_get(&self, at_reg:QuStackId) -> &StackValue {
+		return &self.stack[self.stack_offset+at_reg.0];
 	}
 
 
 	/// Gets a register value.
-	pub fn reg_get_as<'a, T:'a + 'static>(&self, at_reg:QuRegId
+	pub fn reg_get_as<'a, T:'a + 'static>(&self, at_reg:QuStackId
 	) -> Result<&T, QuMsg> {
-		let Some(r) = self.registers[self.register_offset+at_reg.0]
+		let Some(r) = self.stack[self.stack_offset+at_reg.0]
 			.downcast_ref::<T>() else {
 			return Err(QuMsg::general(
 				&format!("reg_get_as could not convert register at index {}", at_reg.0)
@@ -1101,9 +696,16 @@ pub struct QuVm {
 	}
 
 
-	pub fn reg_get_mut_as<'a, T:'a + 'static>(&mut self, at_reg:QuRegId
+	#[inline]
+	/// Gets a register value.
+	fn reg_get_mut(&mut self, at_reg:QuStackId) -> &mut StackValue {
+		return &mut self.stack[self.stack_offset+at_reg.0];
+	}
+
+
+	pub fn reg_get_mut_as<'a, T:'a + 'static>(&mut self, at_reg:QuStackId
 	) -> Result<&mut T, QuMsg> {
-		let Some(r) = self.registers[self.register_offset+at_reg.0]
+		let Some(r) = self.stack[self.stack_offset+at_reg.0]
 			.downcast_mut::<T>() else {
 			return Err(QuMsg::general(
 				&format!("reg_get_mut_as could not convert register at index {}", at_reg.0)
@@ -1115,8 +717,8 @@ pub struct QuVm {
 
 	#[inline]
 	/// Sets a register value.
-	pub fn reg_set(&mut self, at_reg:QuRegId, to:RegisterValue) {
-		return self.registers[self.register_offset+at_reg.0] = to;
+	pub fn reg_set(&mut self, at_reg:QuStackId, to:StackValue) {
+		return self.stack[self.stack_offset+at_reg.0] = to;
 	}
 
 
@@ -1157,10 +759,11 @@ pub struct QuVm {
 
 
 	/// Runs inputed bytecode in a loop.
-	fn do_loop(&mut self, bytecode:&[u8], imports:&QuRegistered
+	fn loop_ops(&mut self, code:&[QuOp], imports:&QuRegistered
 	) -> Result<(), QuMsg>{
-		while self.pc != bytecode.len() {
-			let result = self.do_next(bytecode, imports);
+		while self.pc != code.len() {
+			let result
+				= self.do_next_op(code, imports);
 			if let Err(e) = result {
 				if e.description == "Done" {
 					return Ok(())
@@ -1173,35 +776,6 @@ pub struct QuVm {
 	}
 
 
-	/// Runs the next command in the given bytecode.
-	fn do_next(&mut self, bytecode:&[u8], imports:&QuRegistered
-	) -> Result<(), QuMsg> {
-		let op = self.next_u8(bytecode);
-		//println!("Doing op: {}", &OPLIB.ops[op as usize].name);
-		match op {
-			x if x == OPLIB.end as u8 => {self.frame_end()?},
-
-			x if x == OPLIB.load_val_u8 => self.exc_load_val_u8(bytecode),
-			x if x == OPLIB.load_val_u16 => self.exc_load_val_u16(bytecode),
-			x if x == OPLIB.load_val_u32 => self.exc_load_val_u32(bytecode),
-			x if x == OPLIB.load_val_u64 => self.exc_load_val_u64(bytecode),
-			x if x == OPLIB.load_mem => self.exc_load_mem(bytecode),
-			x if x == OPLIB.store_mem => self.exc_store_mem(bytecode),
-			x if x == OPLIB.copy_reg => self.exc_copy_reg(bytecode),
-			x if x == OPLIB.jump_to => self.exc_jump_to(bytecode),
-			x if x == OPLIB.jump_by => self.exc_jump_by(bytecode),
-			x if x == OPLIB.jump_to_if_not => self.exc_jump_to_if_not(bytecode),
-			x if x == OPLIB.jump_by_if_not => self.exc_jump_by_if_not(bytecode),
-			x if x == OPLIB.print => self.exc_print(bytecode),
-			x if x == OPLIB.call => self.exc_call_fn(bytecode, imports)?,
-			x if x == OPLIB.define_fn => self.exc_define_fn(bytecode),
-
-			x if x == OPLIB.call_ext => self.exc_call_fn_ext(bytecode, imports)?,
-
-			x => { println!("{x}"); todo!(); }
-		};
-		return Ok(());
-	}
 
 
 	/// Runs the next command in the given bytecode.
@@ -1210,56 +784,15 @@ pub struct QuVm {
 		let op = self.next_op(instructions);
 		//println!("Doing op: {:?}", &op);
 		match op {
-			QuOp::End => self.frame_end()?,
-			QuOp::Call(ouput_reg, fn_index) => unimplemented!(),
+			QuOp::Call(fn_id, ouput) => self.op_call_fn(*fn_id, *ouput, instructions, imports)?,
 			QuOp::CallExt(fn_id, args, output) => self.op_call_fn_ext(*fn_id, args, *output, imports)?,
-			QuOp::Value(value, output) => self.op_load_val_u8(*value, *output),
+			QuOp::End => self.frame_end()?,
+			QuOp::DefineFn(name, length) => self.op_define_fn(name.clone(), *length),
 			QuOp::JumpByIfNot(by) => self.op_jump_by_if_not(*by),
 			QuOp::JumpBy(by) => self.op_jump_by(*by),
-			_ => unimplemented!(),
+			QuOp::Value(value, output) => self.op_load_int(*value, *output),
+			QuOp::Return => self.return_value = Some(replace(self.reg_get_mut(0.into()), Box::new(QuVoid()))),
 		};
-		return Ok(());
-	}
-
-
-	/// Runs `bytecode`.
-	/// 
-	/// # Errors
-	/// 
-	/// If `bytecode` does not pass the sanity checks or there is a runtime
-	/// error then an [`Err`] is returend.
-	/// 
-	/// # Examples
-	/// 
-	/// ```
-	/// use qu::QuVm;
-	/// use qu::QuMsg;
-	/// 
-	/// # fn main() {example().unwrap()}
-	/// # fn example() -> Result<(), QuMsg> {
-	/// let mut vm = QuVm::new();
-	/// vm.run_bytes(&vec![1, 5, 0])?;
-	/// # return Ok(());
-	/// # }
-	/// ```
-	pub fn run_bytes(&mut self, bytecode:&[u8], imports:&QuRegistered
-	) -> Result<(), QuMsg> {
-		self.pc = 0;
-		while self.pc != bytecode.len() {
-			match self.do_next(&bytecode, imports) {
-				// No errors, continue running
-				Ok(_) => {/*pass*/},
-				// Encountered error; check if done and finish, otherwise
-				// propogate error
-				Err(msg) => {
-					if msg.description == "Done" {
-						break;
-					}
-					return Err(msg);
-				},
-			};
-		}
-
 		return Ok(());
 	}
 
@@ -1288,85 +821,38 @@ pub struct QuVm {
 }
 
 
-pub trait QuAny: Any+Debug+QuRegisterStruct {}
+pub trait QuAny: Any+Clone {}
 
 
 #[cfg(test)]
 mod test_vm {
-    use std::any::Any;
-    use std::any::TypeId;
+	use std::any::Any;
+	use std::any::TypeId;
 
-    use crate::vm::QuAny;
-    use crate::{Qu, QuVm, QuMsg, QuFnObject, QuType, QuCompiler, QuInt, vm::QuRegId};
-
-    use super::OPLIB;
-
-	#[test]
-	fn external_fn_calls() -> Result<(), QuMsg> {
-		/*let mut vm = QuVm::new();
-		vm.external_struct_register::<QuInt>();
-
-		let mut code = vec![];
-
-		// Defines a constant zero
-		code.append(&mut vec![OPLIB.load_val_u8, 0, 20]);
-			
-		// var nterms = 9
-		let p_nterms = 0;
-		code.append(&mut vec![OPLIB.load_val_u8, 9, p_nterms]);
-		// var n1 = 0
-		let p_n1 = 1;
-		code.append(&mut vec![OPLIB.load_val_u8, 0, p_n1]);
-		// var n2 = 1
-		let p_n2 = 2;
-		code.append(&mut vec![OPLIB.load_val_u8, 1, p_n2]);
-		// var count = 0
-		let p_count = 3;
-		code.append(&mut vec![OPLIB.load_val_u8, 0, p_count]);
-
-		// while count < nterms:
-		let while_body_len = (8*4)+3+5;
-		code.append(&mut vec![OPLIB.call_ext, p_count, 0,0,0,1, p_nterms, 4]);
-		code.append(&mut vec![OPLIB.jump_by_if_not, 0,0,0,while_body_len]);
-
-			// var nth = n1 + n2
-			code.append(&mut vec![OPLIB.call_ext, p_n1, 0,0,0,0, p_n2, 4]);
-			// n1 = n2
-			code.append(&mut vec![OPLIB.call_ext, p_n2, 0,0,0,0, 20, p_n1]);
-			// n2 = nth
-			code.append(&mut vec![OPLIB.call_ext, 4, 0,0,0,0, 20, p_n2]);
-			// count = count + 1
-			code.append(&mut vec![OPLIB.load_val_u8, 1, 5]);
-			code.append(&mut vec![OPLIB.call_ext, p_count, 0,0,0,0, 5, p_count]);
-
-		code.append(&mut vec![OPLIB.jump_by]);
-		code.append(&mut (-((8+5)+(while_body_len as i8)) as i32).to_be_bytes().to_vec());
-
-		vm.run_bytes(&code)?;
-
-		assert_eq!(*vm.reg_get_mut_as::<QuInt>(QuRegId(1))?, QuInt(34));
-		assert_eq!(*vm.reg_get_mut_as::<QuInt>(QuRegId(2))?, QuInt(55));
-		assert_eq!(*vm.reg_get_mut_as::<QuInt>(QuRegId(3))?, QuInt(9));
-		*/
-		panic!();
-		return Ok(());
-	}
-
+	use crate::vm::QuAny;
+	use crate::{Qu, QuVm, QuMsg, QuFnObject, QuType, QuCompiler, QuInt, vm::QuStackId};
 
 	#[test]
 	fn define_and_get_const() -> Result<(), QuMsg> {
 		let mut vm = QuVm::new();
-		vm.define_const("MEANING_OF_LIFE".to_owned(), Box::new(42));
-		vm.define_const("NAME".to_owned(), Box::new("Qu"));
 
-		let meaning = vm.get_const::<i32>("MEANING_OF_LIFE")?;
+		vm.define_const(
+			"MEANING_OF_LIFE".into(), Box::new(42isize));
+		vm.define_const(
+			"NAME".into(), Box::new("Qu"));
+
+		let meaning = vm.get_const::<isize>("MEANING_OF_LIFE")?;
+		assert_eq!(*meaning, 42isize);
+
 		let name = vm.get_const::<&str>("NAME")?;
-		let bad_type = vm.get_const::<&str>("MEANING_OF_LIFE");
-		let not_defined = vm.get_const::<i32>("DIVIDE_BY_INF");
-		
-		assert_eq!(*meaning, 42);
 		assert_eq!(*name, "Qu");
-		assert!(bad_type.is_err());
+
+		let wrong_type
+			= vm.get_const::<&str>("MEANING_OF_LIFE");
+		assert!(wrong_type.is_err());
+
+		let not_defined
+			= vm.get_const::<isize>("DIVIDE_BY_INF");
 		assert!(not_defined.is_err());
 
 		return Ok(());
@@ -1376,82 +862,28 @@ mod test_vm {
 	#[test]
 	fn define_and_get_mem() -> Result<(), QuMsg> {
 		let mut vm = QuVm::new();
-		vm.define_mem("health".to_owned(), Box::new(10.0f32));
-		vm.define_mem("lives".to_owned(), Box::new(3));
 
-		assert_eq!(*vm.get_mem::<f32>("health")?, 10.0);
-		assert_eq!(*vm.get_mem::<i32>("lives")?, 3);
+		vm.define_mem("health".to_owned(), Box::new(10.0f32));
+		assert_eq!(*vm.get_mem::<f32>("health")?, 10.0f32);
+
+		vm.define_mem("lives".to_owned(), Box::new(3isize));
+		assert_eq!(*vm.get_mem::<isize>("lives")?, 3isize);
 
 		let health = vm.get_mem_mut::<f32>("health")?;
 		*health = 5.0;
+		assert_eq!(*vm.get_mem::<f32>("health")?, 5.0f32);
 
-		let lives = vm.get_mem_mut::<i32>("lives")?;
+		let lives = vm.get_mem_mut::<isize>("lives")?;
 		*lives = 2;
+		assert_eq!(*vm.get_mem::<isize>("lives")?, 2isize);
 
-		assert_eq!(*vm.get_mem::<f32>("health")?, 5.0);
-		assert_eq!(*vm.get_mem::<i32>("lives")?, 2);
-
-		let bad_type = vm.get_const::<&str>("health");
-		let not_defined = vm.get_const::<i32>("i_dont_exist");
-		
+		let bad_type
+			= vm.get_const::<&str>("health");
 		assert!(bad_type.is_err());
+		
+		let not_defined
+			= vm.get_const::<isize>("i_dont_exist");
 		assert!(not_defined.is_err());
-
-		return Ok(());
-	}
-
-
-	#[test]
-	fn register_external_structs() -> Result<(), QuMsg> {
-		panic!();
-		/*
-		let mut vm = QuVm::new();
-		vm.external_struct_register::<QuInt>();
-
-		let code = QuFnObject::new(
-			vec![],
-			crate::QuCodeObject {start_index:0},
-			crate::QuType::Void,
-		);
-
-		vm.define_mem("bob".to_owned(), Box::new(code));
-		
-		vm.external_call::<QuInt>(
-			"bob",
-			"change_type",
-			vec![],
-		)?;
-
-//		let bob_id = vm.get_mem_id("bob")?;
-//		let bob_change_type_id
-//			= vm.get_fn_id("change_type", "FnObject")?;
-//
-//		vm.external_call_by_id(
-//			bob_id,
-//			bob_change_type_id,
-//			vec![],
-//		)?;
-		*/
-		return Ok(());
-	}
-
-
-	#[test]
-	fn test_runtime_object_storage() -> Result<(), QuMsg>{
-		let mut v:Vec<Box<dyn Any>> = vec![];
-		v.push(Box::new(5u8));
-		v.push(Box::new("hello wolrd!"));
-
-		let a = &v[0];
-		let b = &v[1];
-
-		let Some(a_int) = a.downcast_ref::<u8>()
-			else {return Err(QuMsg::general("First is not int"))};
-		let Some(b_str) = b.downcast_ref::<&str>()
-			else {return Err(QuMsg::general("Second is not str"))};
-		
-		assert_eq!(a_int, &5u8);
-		assert_eq!(b_str, &"hello wolrd!");
 
 		return Ok(());
 	}

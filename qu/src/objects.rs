@@ -1,22 +1,17 @@
 
 //! Defines all types and objects used by Qu.
 
-use std::{any::Any, ops::{Add, AddAssign}};
+use std::{any::Any, ops::{Add, AddAssign, Sub, SubAssign}};
 
-use crate::{
-	QuVm,
-	Qu,
-	QuMsg,
-	vm::{
-		QuExtFn,
-		QuMemId,
-		QuVoidExtFn,
-		QuRegId,
-		QuAny,
-		RegisterValue,
-	},
-	QuRegisterValue,
-};
+use crate::QuVm;
+use crate::Qu;
+use crate::QuMsg;
+use crate::vm::QuExtFn;
+use crate::vm::QuMemId;
+use crate::vm::QuVoidExtFn;
+use crate::vm::QuStackId;
+use crate::vm::QuAny;
+use crate::vm::StackValue;
 
 
 pub type QuExtFnData = (String, QuExtFn, Vec<usize>, usize);
@@ -115,14 +110,14 @@ pub struct QuFnObject {
 
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct QuInt(pub i32);
+pub struct QuInt(pub isize);
 impl QuInt {
 
-	fn new(value:i32) -> Self {Self(value)}
+	fn new(value:isize) -> Self {Self(value)}
 
 
-	fn quwrapper__add__(vm:&mut QuVm, parameters:&Vec<QuRegId>
-	) -> Result<RegisterValue, QuMsg> {
+	fn quwrapper__add__(vm:&mut QuVm, parameters:&Vec<QuStackId>
+	) -> Result<StackValue, QuMsg> {
 		if parameters.len() != 2 {
 			return Err(QuMsg::general("incorrect parameters quantity"));
 		}
@@ -134,8 +129,36 @@ impl QuInt {
 	}
 
 
-	fn quwrapper__lesser__(vm:&mut QuVm, parameters:&Vec<QuRegId>
-	) -> Result<RegisterValue, QuMsg> {
+	fn quwrapper__copy__(vm:&mut QuVm, parameters:&Vec<QuStackId>
+	) -> Result<StackValue, QuMsg> {
+		if parameters.len() != 1 {
+			return Err(QuMsg::general("incorrect parameters quantity"));
+		}
+		let s = vm.reg_get_as::<QuInt>(parameters[0])?;
+		Ok(Box::new(*s))
+	}
+
+
+	fn quwrapper__greater__(vm:&mut QuVm, parameters:&Vec<QuStackId>
+	) -> Result<StackValue, QuMsg> {
+		if parameters.len() != 2 {
+			return Err(QuMsg::general("incorrect parameters quantity"));
+		}
+		let l = vm.reg_get_as::<QuInt>(parameters[0])?;
+		let r = vm.reg_get_as::<QuInt>(parameters[1])?;
+
+		let output = *l>*r;
+		vm.hold_is_zero = output;
+		if output {
+			Ok(Box::new(QuInt(1)))
+		} else {
+			Ok(Box::new(QuInt(0)))
+		}
+	}
+
+
+	fn quwrapper__lesser__(vm:&mut QuVm, parameters:&Vec<QuStackId>
+	) -> Result<StackValue, QuMsg> {
 		if parameters.len() != 2 {
 			return Err(QuMsg::general("incorrect parameters quantity"));
 		}
@@ -143,12 +166,25 @@ impl QuInt {
 		let r = vm.reg_get_as::<QuInt>(parameters[1])?;
 
 		let output = *l<*r;
-		vm.is_zero = output;
+		vm.hold_is_zero = output;
 		if output {
 			Ok(Box::new(QuInt(1)))
 		} else {
 			Ok(Box::new(QuInt(0)))
 		}
+	}
+
+
+	fn quwrapper__subtract__(vm:&mut QuVm, parameters:&Vec<QuStackId>
+	) -> Result<StackValue, QuMsg> {
+		if parameters.len() != 2 {
+			return Err(QuMsg::general("incorrect parameters quantity"));
+		}
+		let l = vm.reg_get_as::<QuInt>(parameters[0])?;
+		let r = vm.reg_get_as::<QuInt>(parameters[1])?;
+
+		let output = *l-*r;
+		Ok(Box::new(output))
 	}
 
 
@@ -168,22 +204,29 @@ impl QuInt {
 
 	fn add(self, rhs: Self) -> Self::Output {QuInt(self.0 + rhs.0)}
 
-//} impl PartialOrd for QuInt {
-//
-//    fn partial_cmp(&self, other: &Self) -> Option<Self> {
-//        Some(self.cmp(other))
-//    }
-
 } impl AddAssign for QuInt {
 
 	fn add_assign(&mut self, rhs: Self) {*self += rhs}
+
+} impl Sub for QuInt {
+
+	type Output = Self;
+
+	fn sub(self, rhs: Self) -> Self::Output {QuInt(self.0 - rhs.0)}
+
+} impl SubAssign for QuInt {
+
+	fn sub_assign(&mut self, rhs: Self) {*self -= rhs}
 
 } impl QuRegisterStruct for QuInt {
 	
 	fn register_fns() -> Vec<QuExtFnData> {
 		return vec![
 			("__add__".to_owned(), &Self::quwrapper__add__, vec![0, 0], 0),
+			("__subtract__".to_owned(), &Self::quwrapper__subtract__, vec![0, 0], 0),
 			("__lesser__".to_owned(), &Self::quwrapper__lesser__, vec![0, 0], 0),
+			("__greater__".to_owned(), &Self::quwrapper__greater__, vec![0, 0], 0),
+			("__copy__".to_owned(), &Self::quwrapper__copy__, vec![0, 0], 0),
 		];
 	}
 
@@ -199,7 +242,7 @@ impl QuInt {
 
 
 	fn get_name() -> String {
-		"Int".to_owned()	
+		"int".to_owned()	
 	}
 
 

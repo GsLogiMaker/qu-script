@@ -1,14 +1,20 @@
 
+use crate::QuFunctionId;
+use crate::QuOp;
+use crate::QuOp::*;
 use crate::QuParser;
+use crate::QuStackId;
+use crate::import::QuRegistered;
 use crate::parser::FLOW_TYPE_IF;
 use crate::parser::FLOW_TYPE_WHILE;
+use crate::parser::QuOperator;
 use crate::parser::QuParamNode;
-use crate::vm::OPLIB;
 use crate::QuLeaf;
 use crate::QuLeafExpr;
 use crate::QuMsg;
 use crate::QuToken;
 use crate::QuType2;
+use crate::vm::QuConstId;
 
 use core::panic;
 use std::collections::HashMap;
@@ -104,7 +110,7 @@ pub struct QuCompiler {
 
 
 	/// Compiles an expression into bytecode.
-	fn cmp_expr(&mut self, leaf:QuLeafExpr, output_reg:u8)
+	fn cmp_expr(&mut self, leaf:QuLeafExpr, output_reg:QuStackId)
 			-> Result<QuAsmBuilder, QuMsg> {
 		return match leaf {
 			QuLeafExpr::FnCall(
@@ -129,10 +135,10 @@ pub struct QuCompiler {
 	/// Compiles a math or logic expression into bytecode.
 	fn cmp_expr_math(
 		&mut self,
-		op:u8,
+		op:QuOperator,
 		mut left:QuLeafExpr,
 		mut right:QuLeafExpr,
-		output_reg:u8
+		output_reg:QuStackId
 	)-> Result<QuAsmBuilder, QuMsg> {
 		let left_reg = if let QuLeafExpr::Var(_) = left {
 			self.get_expr_reg(&mut left)?
@@ -149,7 +155,11 @@ pub struct QuCompiler {
 		let mut builder = QuAsmBuilder::new();
 		builder.add_builder(self.cmp_expr(left, left_reg)?);
 		builder.add_builder(self.cmp_expr(right, right_reg)?);
-		builder.add_code(vec![op, left_reg, right_reg, output_reg]);
+		builder.add_bp(QuBuilderPiece::ReprCallExt(
+			op.get_dunder().into(),
+			vec![left_reg, right_reg],
+			output_reg
+		));
 
 		return Ok(builder);
 	}
@@ -160,29 +170,27 @@ pub struct QuCompiler {
 	/// # Panics
 	/// 
 	/// Panics if `val` can't be parsed to a number.
-	fn cmp_expr_int(&mut self, val:QuToken, output_reg:u8) -> QuAsmBuilder {
+	fn cmp_expr_int(&mut self, val:QuToken, output_reg:QuStackId) -> QuAsmBuilder {
 		// TODO: Support other int sizes
 		
-		let Ok(val) = val.slice.parse::<u8>() else {
+		let Ok(val) = val.slice.parse::<isize>() else {
 			panic!("Could not convert text '{}' to number!", val.slice);
 		};
 
 		let mut b = QuAsmBuilder::new();
-		b.add_u8(OPLIB.load_val_u8);
-		b.add_code((val as u8).to_be_bytes().to_vec());
-		b.add_u8(output_reg);
+		b.add_op(Value(val, output_reg));
 
 		return b;
 	}
 
 
 	/// Compiles a tuple construction into bytecode.
-	fn cmp_expr_tuple(&mut self, items:Vec<QuLeafExpr>, to_reg:u8
+	fn cmp_expr_tuple(&mut self, items:Vec<QuLeafExpr>, to_reg:QuStackId
 	) -> Result<QuAsmBuilder, QuMsg> {
 		let mut b = QuAsmBuilder::new();
-		let mut i = to_reg;
+		let mut i:u8 = to_reg.into();
 		for item in items {
-			b.add_builder(self.cmp_expr(item, i)?);
+			b.add_builder(self.cmp_expr(item, i.into())?);
 			i += 1;
 		}
 
@@ -191,7 +199,7 @@ pub struct QuCompiler {
 
 
 	/// Compiles a variable-expression into bytecode.
-	fn cmp_expr_val(&mut self, token:QuToken, output_reg:u8)
+	fn cmp_expr_val(&mut self, token:QuToken, output_reg:QuStackId)
 			-> Result<QuAsmBuilder, QuMsg> {
 		
 		// The register to copy the variable value from
@@ -209,9 +217,11 @@ pub struct QuCompiler {
 		}
 
 		let mut b = QuAsmBuilder::new();
-		b.add_u8(OPLIB.copy_reg);
-		b.add_code((var_reg as u8).to_be_bytes().to_vec());
-		b.add_u8(output_reg);
+		b.add_bp(QuBuilderPiece::ReprCallExt(
+			"__copy__".into(),
+			vec![var_reg],
+			output_reg,
+		));
 
 		return Ok(b);
 	}
@@ -234,19 +244,16 @@ pub struct QuCompiler {
 				let body_code = self.cmp_scope(body)?;
 
 				let mut b = QuAsmBuilder::new();
-				// Conditional brancher
-				b.add_builder(expr_b);
-				b.add_u8(OPLIB.jump_by_if_not);
-				b.add_i32(body_code.len() as i32);
-
-				// If body
+				b.add_op(JumpByIfNot(body_code.len() as isize));
 				b.add_builder(body_code);
 
 				/*return*/ Ok(b)
 			}
 		};
 
-		return Ok(b?);
+		expr_b.add_builder(b?);
+
+		return Ok(expr_b);
 	}
 
 
@@ -278,11 +285,7 @@ pub struct QuCompiler {
 
 				// Skip body if expression false
 				let mut skip_body_b = QuAsmBuilder::new();
-				skip_body_b.add_u8(OPLIB.jump_by_if_not);
-				skip_body_b.add_i32(
-					block_code_len as i32
-					+ 5 // Length of jump back instruction
-				);
+				skip_body_b.add_op(JumpByIfNot(block_code_len as isize + 1));
 				let skip_body_b_len = skip_body_b.len();
 				b.add_builder(skip_body_b);
 
@@ -290,14 +293,12 @@ pub struct QuCompiler {
 				b.add_builder(block_code);
 
 				// Jump back to expression
-				b.add_u8(OPLIB.jump_by);
-				b.add_i32(-((
+				b.add_op(JumpBy(-((
 					block_code_len
 					+ skip_body_b_len
 					+ expr_code_len
 					+ 1
-					+ 4 // Length of self?
-				) as i32));
+				) as isize)));
 
 				Ok::<QuAsmBuilder, QuMsg>(b)
 			}
@@ -307,7 +308,8 @@ pub struct QuCompiler {
 	}
 
 
-	fn cmp_fn_call(&mut self, name:&str, params:Vec<QuLeafExpr>, store_to:u8
+	fn cmp_fn_call(
+		&mut self, name:&str, params:Vec<QuLeafExpr>, store_to:QuStackId
 	) -> Result<QuAsmBuilder, QuMsg> {
 		let mut builder = QuAsmBuilder::new();
 
@@ -320,9 +322,9 @@ pub struct QuCompiler {
 			Ok::<(), QuMsg>(())
 		})?;
 
-		builder.add_u8(OPLIB.call);
-		builder.add_name_ref(name.to_owned());
-		builder.add_u8(store_to);
+		builder.add_bp(
+			QuBuilderPiece::ReprCall(name.to_owned(), store_to)
+		);
 
 		return Ok(builder);
 	}
@@ -335,6 +337,12 @@ pub struct QuCompiler {
 		body:Vec<QuLeaf>
 	) -> Result<QuAsmBuilder, QuMsg> {
 		self.add_name_ref(name.to_owned());
+
+		use QuLeaf::Return;
+		let needs_added_end_op = match body.last() {
+			Some(Return(_)) => false,
+			_ => true,
+		};
 
 		let body_code
 			= with!(self.context_start, self.context_end {
@@ -353,15 +361,15 @@ pub struct QuCompiler {
 			// Compile code block
 			let mut b = QuAsmBuilder::new();
 			b.add_builder(self.cmp_leafs(body)?);
-			b.add_u8(OPLIB.end);
+			if needs_added_end_op {
+				b.add_op(End);
+			}
 			Ok::<QuAsmBuilder, QuMsg>(b)
 		})?;
 
 		// Add fn declaration operation
 		let mut code = QuAsmBuilder::new();
-		code.add_u8(OPLIB.define_fn);
-		code.add_short_str(name.to_owned())?;
-		code.add_u32(body_code.len() as u32);
+		code.add_op(DefineFn(name.to_owned(), body_code.len() as usize));
 
 		// Add body
 		code.add_builder(body_code);
@@ -414,28 +422,25 @@ pub struct QuCompiler {
 					statements
 				);
 			}
-			QuLeaf::Print(mut leaf_expr) => {
-				// TODO Handle errors for compiling Print
-				let print_reg = self.get_expr_reg(&mut leaf_expr)?;
-				let mut code = self.cmp_expr(
-					*leaf_expr,
-					print_reg
-				)?;
-				code.add_u8(OPLIB.print);
-				code.add_u8(print_reg);
-				return Ok(code);
-			},
 			QuLeaf::Return(expr) => {
 				let mut code = QuAsmBuilder::new();
 				match expr {
 					Some(mut l) => {
 						let reg = self.get_expr_reg(&mut l)?;
 						code.add_builder(self.cmp_expr(*l, reg)?);
-						code.add_code(vec![OPLIB.copy_reg, reg, 0]);
+						code.add_bp(QuBuilderPiece::ReprCallExt(
+							"__copy__".into(),
+							vec![reg],
+							0.into()
+						));
+						if self.contexts.len() == 1 {
+							code.add_op(Return);
+						} else {
+							code.add_op(End);
+						}
 					},
 					None => {},
 				}
-				code.add_u8(OPLIB.end);
 				return Ok(code);
 			}
 			QuLeaf::VarDecl(
@@ -534,11 +539,7 @@ pub struct QuCompiler {
 			None => {
 				// TODO: Support u64
 				let mut code = QuAsmBuilder::new();
-				code.add_code(vec![
-					OPLIB.load_val_u8,
-					0,
-					var_reg,
-				]); 
+				code.add_op(Value(0, var_reg));
 				Ok(code)
 			},
 		};
@@ -557,26 +558,27 @@ pub struct QuCompiler {
 
 
 	/// Compiles Qu code from a [`&str`] into a [`Vec<u8>`].
-	pub fn compile(&mut self, code:&str
-	) -> Result<Vec<u8>, QuMsg> {
+	pub fn compile(&mut self, code:&str, imports:&QuRegistered
+	) -> Result<Vec<QuOp>, QuMsg> {
 		let mut p = QuParser::new();
 		let leafs = p.parse(code)?;
-		return Ok(self.compile_from_leafs(leafs)?);
+		return Ok(self.compile_from_leafs(leafs, imports)?);
 	}
 
 
 	/// Compiles Qu code from a [QuLeaf] into a [`Vec<u8>`].
-	pub fn compile_from_leafs(&mut self, leafs:Vec<QuLeaf>
-	) -> Result<Vec<u8>, QuMsg> {
+	pub fn compile_from_leafs(
+		&mut self, leafs:Vec<QuLeaf>, imports:&QuRegistered
+	) -> Result<Vec<QuOp>, QuMsg> {
 		// Main code
 		let mut code = with!(self.context_start, self.context_end {
 			let mut code = self.cmp_scope(leafs)?;
-			code.add_u8(OPLIB.end);
+			code.add_op(End);
 			Ok::<QuAsmBuilder, QuMsg>(code)
 		})?;
 		
 
-		return Ok(code.compile(&self.name_refs)?);
+		return Ok(code.compile(&self.name_refs, imports)?);
 	}
 
 
@@ -626,7 +628,8 @@ pub struct QuCompiler {
 	/// 
 	/// Most expressions require a new memory location, but variables
 	/// should just return the register of the variable.
-	fn get_expr_reg(&mut self, expr_leaf:&mut QuLeafExpr) -> Result<u8, QuMsg> {
+	fn get_expr_reg(&mut self, expr_leaf:&mut QuLeafExpr
+	) -> Result<QuStackId, QuMsg> {
 		return  match expr_leaf {
 			QuLeafExpr::Equation(_, _, _) => Ok(self.stack_reserve()),
 			QuLeafExpr::FnCall(_, _) => Ok(self.stack_reserve()),
@@ -661,11 +664,11 @@ pub struct QuCompiler {
 
 
 	/// Gets the pointer to a variable by the variable's name.
-	fn get_var_register(&mut self, var_name:&str) -> Option<u8> {
-		let mut i = 0;
+	fn get_var_register(&mut self, var_name:&str) -> Option<QuStackId> {
+		let mut i = 0usize;
 		for var_ref in &self.contexts_get_top().var_refs {
 			if var_ref == var_name {
-				return Some(i);
+				return Some(i.into());
 			}
 			i += 1;
 		}
@@ -706,11 +709,11 @@ pub struct QuCompiler {
 	}
 
 	/// Returns the current stack pointer and increments it.
-	fn stack_reserve(&mut self) -> u8 {
+	fn stack_reserve(&mut self) -> QuStackId {
 		let mut top_frame = self.context_get_top_frame();
 		let x = top_frame.stack_idx;
 		top_frame.stack_idx += 1;
-		return x;
+		return x.into();
 	}
 
 }
@@ -718,16 +721,18 @@ pub struct QuCompiler {
 
 #[derive(Debug, Clone)]
 enum QuBuilderPiece {
+	ReprCall(String, QuStackId),
+	// Struct name, fn name, args, output
+	ReprCallExt(String, Vec<QuStackId>, QuStackId),
 	/// A [`Vec<u8>`] of code.
-	Code(Vec<u8>),
-	/// A [`String`] that gets converted to a [`u32`] ID later.
-	NameRefU32(String),
+	Ops(Vec<QuOp>),
 } impl QuBuilderPiece {
 
 	fn len(&self) -> usize{
 		match self {
-			QuBuilderPiece::Code(v) => v.len(),
-			QuBuilderPiece::NameRefU32(_) => 4,
+			QuBuilderPiece::ReprCall(_, _) => 1,
+			QuBuilderPiece::ReprCallExt(_, _, _) => 1,
+			QuBuilderPiece::Ops(v) => v.len(),
 		}
 	}
 
@@ -752,61 +757,51 @@ struct QuAsmBuilder {
 	}
 
 
-	fn add_code(&mut self, code:Vec<u8>) {
-		self.code_pieces.push(QuBuilderPiece::Code(code));
+	fn add_op(&mut self, op:QuOp) {
+		self.code_pieces.push(QuBuilderPiece::Ops(vec![op]));
 	}
 
 
-	fn add_name_ref(&mut self, name:String) {
-		self.code_pieces.push(
-			QuBuilderPiece::NameRefU32(name)
-		);
+	fn add_ops(&mut self, ops:Vec<QuOp>) {
+		self.code_pieces.push(QuBuilderPiece::Ops(ops));
 	}
 
 
-	fn add_i32(&mut self, num:i32) {
-		self.code_pieces.push(QuBuilderPiece::Code(num.to_be_bytes().to_vec()));
+	fn add_bp(&mut self, repr:QuBuilderPiece) {
+		self.code_pieces.push(repr);
 	}
 
 
-	fn add_short_str(&mut self, string:String) -> Result<(), QuMsg>{
-		if string.len() > 255 {
-			return Err(QuMsg::general(
-				"The string is too long. TODO: Better msg"
-			));
-		}
-		let mut string_vec = string.as_bytes().to_vec();
-		let mut code = vec![(string_vec.len() as u8)];
-		code.append(&mut string_vec);
-		self.code_pieces.push(QuBuilderPiece::Code(code));
-
-		return Ok(());
-	}
-
-
-	fn add_u8(&mut self, num:u8) {
-		self.code_pieces.push(QuBuilderPiece::Code(vec![num]));
-	}
-
-
-	fn add_u32(&mut self, num:u32) {
-		self.code_pieces.push(QuBuilderPiece::Code(num.to_be_bytes().to_vec()));
-	}
-
-
-	fn compile(&mut self, name_references:&HashMap<String, u32>
-	) -> Result<Vec<u8>, QuMsg> {
+	fn compile(
+		&mut self, name_references:&HashMap<String, u32>, imports:&QuRegistered
+	) -> Result<Vec<QuOp>, QuMsg> {
 		let mut code = vec![];
+		
 		for x in &mut self.code_pieces {
 			match x {
-				QuBuilderPiece::Code(c) => {code.append(c);},
-				QuBuilderPiece::NameRefU32(name) => {
-					let Some(c) = name_references.get(name)
-						else {return Err(QuMsg::general("Could not find variable. TODO: Better msg"))};
-					code.append(&mut c.to_be_bytes().to_vec());
+				QuBuilderPiece::Ops(ops) => code.append(ops),
+				QuBuilderPiece::ReprCall(
+					name,
+					output,
+				) => {
+					let Some(fn_index) = name_references.get(name) else {
+						panic!("Compiler could not find a function by name {name}.");
+					};
+					code.push(Call((*fn_index).into(), *output));
+				}
+    			QuBuilderPiece::ReprCallExt(
+					fn_name,
+					args,
+					output
+				) => {
+					// TODO: Implement static typing
+					let id
+						= imports.get_fn_id(fn_name, "int")?;
+					code.push(CallExt(id, take(args), *output));
 				},
 			};
 		}
+		
 
 		return Ok(code);
 	}
@@ -824,100 +819,4 @@ struct QuAsmBuilder {
 
 #[cfg(test)]
 mod test {
-    use std::fmt::format;
-
-    use crate::{QuCompiler, QuVm, QuMsg, vm::OPLIB, Qu};
-
-
-	#[test]
-	fn recursive_fn_addinate() -> Result<(), QuMsg>{
-		let qu = Qu::new();
-		let script = r#"
-			fn addinate(val):
-				if val < 100:
-					addinate(val + val)
-				return val
-			
-			return addinate(1)
-		"#;
-
-		assert_eq!(
-			qu.compile_to_asm(script, false)?,
-			format!("{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
-				"\nDFFN \"addinate\" 27",
-				"\nLDU8 100 2",
-				"\nLES 1 2 2",
-				"\nJBIN 10",
-				"\nADD 1 1 3",
-				"\nCALL 0 2",
-				"\nCPY 1 0",
-				"\nEND",
-				// TODO: Remove redundent 'END' when using 'return' keyword.
-				"\nEND",
-				"\nLDU8 1 1",
-				"\nCALL 0 0",
-				"\nCPY 0 0",
-				"\nEND",
-				// TODO: Remove redundent 'END' when using 'return' keyword.
-				"\nEND",
-			)
-		);
-
-		return Ok(());
-	}
-
-
-	#[test]
-	fn while_count_down() -> Result<(), QuMsg>{
-		let qu = Qu::new();
-		let script = r#"
-			var counter = 10
-			while 0 > counter:
-				counter = counter - 1
-		"#;
-
-		assert_eq!(
-			qu.compile_to_asm(script, false)?,
-			format!("{}{}{}{}{}{}{}{}",
-				"\nLDU8 10 0",
-				"\nLDU8 0 1",
-				"\nGRT 1 0 1",
-				"\nJBIN 7",
-				"\nLDU8 1 1",
-				"\nSUB 0 1 0",
-				"\nJB 4294967275",
-				"\nEND",
-			)
-		);
-
-		return Ok(());
-	}
-
-
-	#[test]
-	fn while_count_up() -> Result<(), QuMsg>{
-		let qu = Qu::new();
-		let script = r#"
-			var counter = 0
-			while counter < 10:
-				counter = counter + 1
-		"#;
-
-		assert_eq!(
-			qu.compile_to_asm(script, false)?,
-			format!("{}{}{}{}{}{}{}{}",
-				"\nLDU8 0 0",
-				"\nLDU8 10 1",
-				"\nLES 0 1 1",
-				"\nJBIN 7",
-				"\nLDU8 1 1",
-				"\nADD 0 1 0",
-				"\nJB 4294967275",
-				"\nEND",
-			)
-		);
-
-		return Ok(());
-	}
-
 }

@@ -51,9 +51,8 @@ pub use objects::*;
 pub use parser::{QuParser, QuLeaf, QuLeafExpr};
 pub use vm::QuOp;
 pub use vm::QuVm;
-pub use vm::QuRegisterValue;
-pub use vm::OPLIB;
-pub use vm::QuRegId;
+pub use vm::QuStackId;
+use vm::StackValue;
 
 
 /// The interface for the Qu programming language.
@@ -70,7 +69,7 @@ pub use vm::QuRegId;
 /// 	fn add():
 /// 		var left = 2
 /// 		var right = 5
-/// 		print left + right
+/// 		return left + right
 /// 
 /// 	add()
 /// "#)?;
@@ -93,10 +92,13 @@ pub struct Qu {
 	/// let qu = Qu::new();
 	/// ```
 	pub fn new() -> Self {
-		Qu {
+		let mut qu = Qu {
 			vm: QuVm::new(),
 			imports: QuRegistered::default(),
-		}
+		};
+		qu.register_struct::<QuInt>();
+		qu.register_fns();
+		qu
 	}
 
 
@@ -119,47 +121,10 @@ pub struct Qu {
 	/// # return Ok(());
 	/// # }
 	/// ```
-	pub fn compile(&self, code:&str) -> Result<Vec<u8>, QuMsg> {
+	pub fn compile(&self, code:&str) -> Result<Vec<QuOp>, QuMsg> {
 		// Compile
 		let mut c = QuCompiler::new();
-		return Ok(c.compile(code)?);
-	}
-
-
-	/// Compiles Qu code to a [`String`] representing Qu assembly.
-	/// 
-	/// # Errors
-	/// 
-	/// If `code` contains improper Qu syntax then an [`Err`] is returned.
-	/// 
-	/// # Example
-	/// 
-	/// ```
-	/// use qu::Qu;
-	/// use qu::QuMsg;
-	/// 
-	/// # fn main() {example().unwrap()}
-	/// # fn example() -> Result<(), QuMsg> {
-	/// let mut qu = Qu::new();
-	/// 
-	/// let asm = qu.compile_to_asm("var added = 5 + 6", false)?;
-	/// assert_eq!(
-	/// 	asm,
-	/// 	format!("{}{}{}{}",
-	/// 		"\nLDU8 5 0",
-	/// 		"\nLDU8 6 1",
-	/// 		"\nADD 0 1 0",
-	/// 		"\nEND",
-	///	 	)
-	/// );
-	/// # return Ok(());
-	/// # }
-	/// ```
-	pub fn compile_to_asm(&self, code:&str, include_line_columns:bool
-	) -> Result<String, QuMsg> {
-		let code = self.compile(code)?;
-
-		return Ok(QuVm::code_to_asm(&code, include_line_columns));
+		return Ok(c.compile(code, &self.imports)?);
 	}
 
 
@@ -178,7 +143,7 @@ pub struct Qu {
 	}
 
 
-	pub fn reg_get_as<'a, T:'a + 'static>(&self, at_reg:QuRegId
+	pub fn reg_get_as<'a, T:'a + 'static>(&self, at_reg:QuStackId
 	) -> Result<&T, QuMsg> {
 		self.vm.reg_get_as::<T>(at_reg)
 	}
@@ -204,44 +169,26 @@ pub struct Qu {
 	/// # return Ok(());
 	/// # }
 	/// ```
-	pub fn run(&mut self, script:&str) -> Result<(), QuMsg> {
-		let code_res = self.compile(script);
-		match code_res{
-			Ok(code) => {
-				let run_res = self.run_bytes(&code);
-				return run_res;
-			}
-			Err(msg) => {
-				return Err(msg);
-			}
-		}
+	pub fn run(&mut self, script:&str) -> Result<Option<StackValue>, QuMsg> {
+		let code = self.compile(script)?;
+		self.run_ops(&code)?;
+		Ok(self.vm.get_return_value())
 	}
 
 
-	/// Runs `&[u8]` as Qu bytecode.
-	/// 
-	/// # Errors
-	/// 
-	/// If `bytes` does not pass the sanity checks or a Qu runtime error
-	/// occurs then an [`Err`] is returned.
-	/// 
-	/// # Examples
-	/// 
-	/// ```
-	/// use qu::Qu;
-	/// use qu::QuMsg;
-	/// 
-	/// # fn main(){example().unwrap()}
-	/// # fn example() -> Result<(), QuMsg> {
-	/// let mut qu = Qu::new();
-	/// 
-	/// let bytecode = qu.compile("var count = 5 + 6")?;
-	/// qu.run_bytes(&bytecode)?;
-	/// # return Ok(());
-	/// # }
-	/// ```
-	pub fn run_bytes(&mut self, bytes:&[u8]) -> Result<(), QuMsg> {
-		return self.vm.run_bytes(bytes, &self.imports);
+	pub fn run_and_get<T:'static>(&mut self, script:&str
+	) -> Result<Box<T>, QuMsg> {
+		let code = self.compile(script)?;
+		self.run_ops(&code)?;
+
+		let Some(r) = self.vm.get_return_value() else {
+			return Err("Nothing was returned".into())
+		};
+		let Ok(r) = r.downcast::<T>() else {
+			return Err("Could not convert return type to `T`".into())
+		};
+
+		Ok(r)
 	}
 
 
@@ -351,10 +298,10 @@ struct QuVar {
 
 #[cfg(test)]
 mod lib {
-    use crate::{Qu, QuMsg};
+    use crate::{Qu, QuMsg, QuInt};
 
 	#[test]
-	fn fibinachi() -> Result<(), QuMsg>{
+	fn fibinachi() {
 		let mut qu = Qu::new();
 		let script = r#"
 			var nterms = 9
@@ -367,18 +314,34 @@ mod lib {
 				n1 = n2
 				n2 = nth
 				count = count + 1
-				print count
-				print n1
+			
+			return n1
 		"#;
 
-		qu.run(script)?;
+		let n1 = *qu.run_and_get::<QuInt>(script).unwrap();
 
-		return Ok(());
+		assert_eq!(n1, QuInt(34));
 	}
 
 
 	#[test]
-	fn recursive_fn_addinate() -> Result<(), QuMsg>{
+	fn non_returning_fn() {
+		let mut qu = Qu::new();
+		let script = r#"
+			fn count(to):
+				var i = 0
+				while i < to:
+					i = i + 1
+			
+			count(10)
+		"#;
+
+		qu.run(script).unwrap();
+	}
+
+
+	#[test]
+	fn recursive_fn_addinate() {
 		let mut qu = Qu::new();
 		let script = r#"
 			fn addinate(val):
@@ -386,84 +349,97 @@ mod lib {
 					return addinate(val + val)
 				return val
 
-			print addinate(1)
+			return addinate(1)
 		"#;
-		// TODO: Actually check that the results are correct.
 
-		println!("{}", qu.compile_to_asm(script, true)?);
-		qu.run(script)?;
-
-		return Ok(());
+		dbg!(qu.compile(script).unwrap());
+		let value:QuInt = *qu.run_and_get(script).unwrap();
+		assert_eq!(value, QuInt(128));
 	}
 
 
 	#[test]
-	fn run_qu_example() -> Result<(), QuMsg>{
-		let mut qu = Qu::new();
-		qu.run(r#"
-			fn add():
-				var left = 2
-				var right = 5
-				print left + right
-		
-			add()
-		"#)?;
-		return Ok(());
-	}
-
-
-	#[test]
-	fn run_qu_example_var_scoping1() -> Result<(), QuMsg>{
-		let mut qu = Qu::new();
-		qu.run(r#"
+	fn scoping1(){
+		let script = r#"
+			var l = 1
+			var r = 2
 			fn add(a, b):
-				print a + b
-			print add(1, 2)
-		"#)?;
-		return Ok(());
+				return a + b
+			return add(l, r)
+		"#;
+		let mut qu = Qu::new();
+
+		let val = *qu.run_and_get::<QuInt>(script).unwrap();
+		assert_eq!(val, QuInt(3));
 	}
 
 
 	#[test]
 	#[should_panic]
-	fn run_qu_example_var_scoping1_panic() {
+	fn scoping1_panic() {
 		let mut qu = Qu::new();
 		qu.run(r#"
-			fn add():
-				var left = 2
-				var right = 5
-				print left + right
-			print left
-			add()
+			var l = 1
+			var r = 2
+			fn add(a, b):
+				return a + b
+			return a
 		"#).unwrap();
 	}
 
 
 	#[test]
-	fn run_qu_example_var_scoping2() {
+	fn scoping2() {
 		let mut qu = Qu::new();
 		qu.run(r#"
 			var counter = 1
 			if counter:
 				var value = 25
-				print value
-			print counter
+			return counter
 		"#).unwrap();
 	}
 
 
 	#[test]
 	#[should_panic]
-	fn run_qu_example_var_scoping2_panic() {
+	fn scoping2_panic() {
 		let mut qu = Qu::new();
 		qu.run(r#"
 			var counter = 1
 			if counter:
 				var value = 25
-				print value
-			print counter
-			print value
+			return value
 		"#).unwrap();
+	}
+
+
+	#[test]
+	fn while_count_down() {
+		let mut qu = Qu::new();
+		let script = r#"
+			var counter = 10
+			while 0 < counter:
+				counter = counter - 1
+			return counter
+		"#;
+
+		let res:QuInt = *qu.run_and_get(script).unwrap();
+		assert_eq!(res, QuInt(0));
+	}
+
+
+	#[test]
+	fn while_count_up() {
+		let mut qu = Qu::new();
+		let script = r#"
+			var counter = 0
+			while 10 > counter:
+				counter = counter + 1
+			return counter
+		"#;
+
+		let res:QuInt = *qu.run_and_get(script).unwrap();
+		assert_eq!(res, QuInt(10));
 	}
 
 }
