@@ -38,13 +38,13 @@ macro_rules! with {
 
 
 struct QuCmpContext {
-	var_refs:Vec<String>,
+	var_identities:Vec<QuVarIdentity>,
 	stack_frames:Vec<QuCmpFrame>,
 } impl QuCmpContext {
 
 	fn new() -> Self {
 		return Self{
-			var_refs: Vec::default(),
+			var_identities: Vec::default(),
 			stack_frames: Vec::default(),
 		};
 	}
@@ -103,8 +103,8 @@ pub struct QuCompiler {
 	}
 
 
-	fn add_variable(&mut self, name:&str) {
-		self.contexts_get_top().var_refs.push(name.to_owned());
+	fn add_variable(&mut self, var_identity:QuVarIdentity) {
+		self.contexts_get_top().var_identities.push(var_identity);
 		self.context_get_top_frame().var_refs_added += 1;
 	}
 
@@ -348,12 +348,22 @@ pub struct QuCompiler {
 			= with!(self.context_start, self.context_end {
 
 			// Add return value variable for padding.
-			self.add_variable("return value");
+			self.add_variable(QuVarIdentity::new(
+				"return value".to_owned(),
+				"Variant".to_owned(),
+			));
 			let _ = self.stack_reserve();
 
 			// Compile parameters
 			for p in params {
-				self.add_variable(&p.0.slice);
+				let static_type = match p.1 {
+					Some(token) => token.slice,
+					None => "Variant".to_owned(),
+				};
+				self.add_variable(QuVarIdentity::new(
+					p.0.slice.to_owned(),
+					static_type.to_owned(),
+				));
 				// Reserver space for parameter
 				let _ = self.stack_reserve();
 			}
@@ -510,24 +520,17 @@ pub struct QuCompiler {
 		}
 
 		// Get var type
-		let mut var_type:usize = 0;
-		if let Some(type_tk) = variable_type_token {
-			let var_type_str = &type_tk.slice;
-			if var_type_str != "" {
-				var_type = *self.types_map.get(var_type_str)
-					.ok_or_else(|| {
-						let mut msg = QuMsg::undefined_type_access(
-							&type_tk.slice);
-						msg.token = type_tk.char_index;
-						return msg;
-					}
-				)?;
-			}
-		}
+		let var_type = if let Some(type_tk) = variable_type_token {
+			type_tk.slice
+		} else {
+			"Variant".to_owned()
+		};
 
 		// Create variable
 		let var_reg = self.stack_reserve();
-		self.add_variable(&var_token.slice);
+		self.add_variable(
+			QuVarIdentity{name:var_token.slice.to_owned(), static_type:var_type}
+		);
 
 		// Compile variable assignment
 		return match assign_to {
@@ -666,7 +669,7 @@ pub struct QuCompiler {
 	/// Gets the pointer to a variable by the variable's name.
 	fn get_var_register(&mut self, var_name:&str) -> Option<QuStackId> {
 		let mut i = 0usize;
-		for var_ref in &self.contexts_get_top().var_refs {
+		for var_ref in &self.contexts_get_top().var_identities {
 			if var_ref == var_name {
 				return Some(i.into());
 			}
@@ -679,7 +682,7 @@ pub struct QuCompiler {
 	/// Returns true if the given variable is already defined.
 	fn is_var_defined(&mut self, var_name:&str) -> bool {
 		// TODO: Maybe use a faster algorithm?
-		for var_ref in &self.contexts_get_top().var_refs {
+		for var_ref in &self.contexts_get_top().var_identities {
 			if var_ref == var_name {
 				return true;
 			}
@@ -693,9 +696,9 @@ pub struct QuCompiler {
 	fn stack_frame_end(&mut self) {
 		let context = self.contexts_get_top();
 		let frame = context.stack_frames.pop().unwrap();
-		context.var_refs.resize(
-			context.var_refs.len()-(frame.var_refs_added as usize),
-			"".to_owned(),
+		context.var_identities.resize(
+			context.var_identities.len()-(frame.var_refs_added as usize),
+			QuVarIdentity::default(),
 		);
 	}
 
@@ -707,6 +710,7 @@ pub struct QuCompiler {
 		);
 		self.contexts_get_top().stack_frames.push(f);
 	}
+
 
 	/// Returns the current stack pointer and increments it.
 	fn stack_reserve(&mut self) -> QuStackId {
@@ -814,6 +818,25 @@ struct QuAsmBuilder {
 		}
 		return l;
 	}
+
+}
+
+
+#[derive(Debug, Default, Clone)]
+struct QuVarIdentity {
+	name: String,
+	static_type: String,
+} impl QuVarIdentity {
+
+	fn new(name:String, static_type:String) -> Self {
+		QuVarIdentity{name, static_type}
+	}
+
+} impl PartialEq<str> for QuVarIdentity {
+
+	fn eq(&self, other:&str) -> bool {
+		&self.name == other
+	} 
 
 }
 
