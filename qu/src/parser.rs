@@ -39,43 +39,148 @@ pub const OP_MATH_SUB:&str = "-";
 pub type QuBlockNode = Vec<QuLeaf>;
 pub type QuParamNode = (QuToken, Option<QuToken>);
 
+mod parsed {
+	use crate::tokens::QuToken;
 
-#[derive(Debug, Clone, PartialEq)]
-/// A Qu instruction.
-pub enum QuLeaf {
-	/// A floating expression
-	Expression(Box<QuLeafExpr>),
-	/// An if statement. Contains an assertion statement and a [`Vec`] of
-	/// instructions.
-	FlowStatement(u8, Box<QuLeafExpr>, QuBlockNode),
-	/// A function declaration branch. Contains the function name,
-	/// parameters, and instructions.
-	FnDecl(Box<QuToken>, Vec<QuParamNode>, QuBlockNode),
-	/// A return statement for a function
-	Return(Option<Box<QuLeafExpr>>),
-	/// A variable assignment. Contains a var name and a [`QuLeafExpr`].
-	VarAssign(Box<QuToken>, Box<QuLeafExpr>),
-	/// A variable declaration. Contains a var name, type(TODO), and
-	/// [`QuLeafExpr`].
-	VarDecl(Box<QuToken>, Option<Box<QuToken>>, Option<Box<QuLeafExpr>>),
+	#[derive(Debug, Clone, PartialEq)]
+	/// Defines an expression in a Qu program tree.
+	pub enum Expression {
+		/// Call function branch.
+		Call(Box<CallExpression>), // TODO: Implement arguments
+		/// A calculable expression. Contains an operator and two [`QuLeafExpr`]s.
+		Operation(Box<OperationExpression>),
+		/// A literal int value.
+		Number(Box<QuToken>),
+		/// A tuple.
+		Tuple(Box<TupleExpression>),
+		/// A variable name.
+		Var(Box<VarExpression>),
+	}
 
+
+	#[derive(Debug, Clone, PartialEq)]
+	/// Defines an expression in a Qu program tree.
+	pub enum Statement {
+		/// A floating expression
+		Expression(Box<Expression>),
+		/// An if statement. Contains an assertion statement and a [`Vec`] of
+		/// instructions.
+		FlowStatement(Box<FlowStatement>),
+		/// A function declaration branch. Contains the function name,
+		/// parameters, and instructions.
+		FunctionDeclaration(Box<FunctionDeclaration>),
+		/// A return statement for a function
+		Return(Box<ReturnStatement>),
+		/// A variable assignment. Contains a var name and a [`QuLeafExpr`].
+		VarAssign(Box<VarAssignment>),
+		/// A variable declaration. Contains a var name, type(TODO), and
+		/// [`QuLeafExpr`].
+		VarDeclaration(Box<VarDeclaration>),
+	}
+
+
+	#[derive(Debug, Default, Clone, PartialEq)]
+	pub struct CallExpression {
+		pub function_name: QuToken,
+		pub parameters: TupleExpression,
+		pub open_parenthesy: QuToken,
+		pub close_parenthesy: QuToken,
+	}
+
+
+	#[derive(Debug, Default, Clone, PartialEq)]
+	pub struct CodeScope {
+		pub statements: Vec<Statement>,
+	}
+
+
+	#[derive(Debug, Clone, PartialEq)]
+	pub struct FlowStatement {
+		pub flow_keyword: QuToken,
+		pub expression: Expression,
+		pub code_scope: CodeScope,
+	}
+
+
+	#[derive(Debug, Clone, PartialEq)]
+	pub struct FunctionDeclaration {
+		pub fn_keyword: QuToken,
+		pub function_identity: QuToken,
+		pub open_parenthesy: QuToken,
+		pub close_parenthesy: QuToken,
+		pub colon: QuToken,
+		pub body: CodeScope,
+	}
+
+
+	#[derive(Debug, Default, Clone, PartialEq)]
+	pub struct FunctionIdentity {
+		pub name: QuToken,
+		pub parameters: Vec<FunctionParameterElement>,
+		pub return_type: Option<QuToken>,
+	}
+
+
+	#[derive(Debug, Default, Clone, PartialEq)]
+	pub struct FunctionParameterElement {
+		pub name: QuToken,
+		pub static_type: Option<QuToken>,
+		pub comma: Option<QuToken>,
+	}
+
+
+	#[derive(Debug, Clone, PartialEq)]
+	pub struct OperationExpression {
+		pub left: Expression,
+		pub operator: QuToken,
+		pub right: Expression,
+	}
+
+
+	#[derive(Debug, Default, Clone, PartialEq)]
+	pub struct ReturnStatement {
+		pub value: Option<Expression>,
+	}
+
+
+	#[derive(Debug, Default, Clone, PartialEq)]
+	pub struct TupleExpression {
+		pub elements:Vec<TupleElement>,
+	}
+
+	#[derive(Debug, Clone, PartialEq)]
+	pub struct TupleElement {
+		pub expressions: Expression,
+		pub comma: Option<QuToken>
+	}
+
+
+	#[derive(Debug, Clone, PartialEq)]
+	pub struct VarAssignment {
+		pub name: QuToken,
+		pub equals_sign: QuToken,
+		pub value: Expression,
+	}
+
+
+	#[derive(Debug, Clone, PartialEq)]
+	pub struct VarDeclaration {
+		pub var_keyword: QuToken,
+		pub name: QuToken,
+		pub static_type: Option<QuToken>,
+		pub equals_sign: Option<QuToken>,
+		pub value: Option<Expression>,
+	}
+
+
+	#[derive(Debug, Default, Clone, PartialEq)]
+	pub struct VarExpression {
+		pub variable_name: QuToken,
+	}
 }
 
 
-#[derive(Debug, Clone, PartialEq)]
-/// Defines an expression in a Qu program tree.
-pub enum QuLeafExpr {
-	/// Call function branch.
-	FnCall(Box<QuToken>, Vec<QuLeafExpr>), // TODO: Implement arguments
-	/// A calculable expression. Contains an operator and two [`QuLeafExpr`]s.
-	Equation(QuOperator, Box<QuLeafExpr>, Box<QuLeafExpr>),
-	/// A literal int value.
-	Number(Box<QuToken>),
-	/// A tuple.
-	Tuple(Vec<QuLeafExpr>),
-	/// A variable name.
-	Var(Box<QuToken>),
-}
+use parsed::*;
 
 
 #[derive(Debug, Clone, PartialEq)]
@@ -192,7 +297,7 @@ pub struct QuParser {
 
 
 	/// Attempts to parse a code block.
-	fn ck_code_block(&mut self) -> Result<Option<Vec<QuLeaf>>, QuMsg> {
+	fn ck_code_block(&mut self) -> Result<Option<CodeScope>, QuMsg> {
 		let mut leafs = vec![];
 
 		macro_rules! ck_parse {
@@ -245,7 +350,7 @@ pub struct QuParser {
 
 
 	/// Attempts to pasrse a code scope.
-	fn ck_code_scope(&mut self) -> Result<Option<Vec<QuLeaf>>, QuMsg> {
+	fn ck_code_scope(&mut self) -> Result<Option<CodeScope>, QuMsg> {
 		self.tk_state_save();
 
 		// Check operator
@@ -263,13 +368,15 @@ pub struct QuParser {
 
 
 	/// Attempts to parse an expression
-	fn ck_expr(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
+	fn ck_expr(&mut self) -> Result<Option<Expression>, QuMsg> {
 		return self.ck_tuple();
 	}
 
 
 	/// Attempts to parse a flow statement (Exp: if, while, for, etc).
-	fn ck_flow(&mut self, token_type:u8) -> Result<Option<QuLeaf>, QuMsg> {
+	fn ck_flow(
+		&mut self, token_type:u8
+	) -> Result<Option<FlowStatement>, QuMsg> {
 		if self.utl_statement_start()?.is_none() {
 			return Ok(None);
 		}
@@ -282,20 +389,20 @@ pub struct QuParser {
 			FLOW_TYPE_WHILE => KEYWORD_WHILE,
 			_ => unimplemented!(),
 		};
-		let keyword_tk = self.tk_next()
+		let flow_keyword = self.tk_next()
 				.expect("Improper indentation TODO: Bette message");
-		if keyword_tk != keyword {
+		if flow_keyword != keyword {
 			self.tk_state_pop();
 			return Ok(None);
 		}
 
 		// Check expression
-		let expr = self.ck_expr()?.ok_or_else(||{
+		let expression = self.ck_expr()?.ok_or_else(||{
 			QuMsg::flow_statement_lacks_expression()
 		})?;
 
 		// Check for code block
-		let scope_data = match self.ck_code_scope() {
+		let code_scope = match self.ck_code_scope() {
 			Ok(leaf) => leaf.ok_or(
 				QuMsg::missing_code_block()
 			)?,
@@ -311,13 +418,13 @@ pub struct QuParser {
 			}
 		};
 
-		return Ok(Some(
-			QuLeaf::FlowStatement(
-				token_type,
-				Box::new(expr),
-				scope_data,
-			)
-		));
+		let flow_keyword = *flow_keyword;
+
+		return Ok(Some(FlowStatement {
+			flow_keyword,
+			expression,
+			code_scope,
+		}));
 	}
 
 
@@ -606,7 +713,7 @@ pub struct QuParser {
 	/// 
 	/// A tuple is denoted by expressions separated by commas (Ex: "1,2,3").
 	/// Parenthesis technicly have nothing to do with tuples.
-	fn ck_tuple(&mut self) -> Result<Option<QuLeafExpr>, QuMsg>{
+	fn ck_tuple(&mut self) -> Result<Option<Expressio>, QuMsg>{
 		match self.ck_op_les()? {
 			// Matched an expression
 			Some(expr) => {
@@ -622,7 +729,7 @@ pub struct QuParser {
 								if self.tk_spy(0) != "," {
 									// No comma found, tuple must have ended.
 									// Return tuple.
-									return Ok(Some(QuLeafExpr::Tuple(elements)));
+									return Ok(Some(Expression::Tuple(elements)));
 								} else {
 									// Comma found, continue adding to tuple
 									self.tk_next()?;

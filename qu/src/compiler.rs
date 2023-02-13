@@ -36,6 +36,65 @@ macro_rules! with {
 	};
 }
 
+#[derive(Debug, Clone)]
+struct ClassMetadata {
+	/// The name of this class.
+	name: String,
+	/// The ID of this class.
+	id: usize,
+	/// A map of names to this class's function IDs.
+	id_map: HashMap<String, usize>,
+	/// A list of compiled fuctions in this class.
+	methods: Vec<FunctionMetadata>,
+} impl ClassMetadata {
+	fn new() -> Self {
+		Self {
+			name: "".to_owned(),
+			..Default::default()
+		}
+	}
+} impl Default for ClassMetadata {
+    fn default() -> Self {
+        Self {
+			name: "Void".to_owned(),
+			..Default::default()
+		}
+    }
+}
+
+
+#[derive(Debug, Default, Clone)]
+struct Definitions {
+	/// A map of names to module IDs.
+	id_map: HashMap<String, usize>,
+	/// A list of all compiled modules
+	modules: Vec<ModuleMetadata>
+}
+
+
+#[derive(Debug, Default, Clone)]
+struct ModuleMetadata {
+	/// The name of this module.
+	name: String,
+	/// The ID of this module.
+	id: usize,
+	/// A map of names to class and function IDs.
+	id_map: HashMap<String, usize>,
+	/// A list of all compiled classes in the module.
+	classes: Vec<ClassMetadata>,
+	/// A list of all compiled global functions in the module.
+	functions: Vec<FunctionMetadata>,		
+}
+
+
+#[derive(Debug, Default, Clone)]
+struct FunctionMetadata {
+	name: String,
+	id: u32,
+	parameters: Vec<()>,
+	retur_type_id: u32,
+}
+
 
 struct QuCmpContext {
 	var_identities:Vec<QuVarIdentity>,
@@ -74,18 +133,18 @@ pub struct QuCompiler {
 	name_refs:HashMap<String, u32>,
 	types:Vec<QuType2>,
 	types_map:HashMap<String, usize>,
-
-
+	definitions: Definitions,
 } impl QuCompiler {
 
 	/// Creates and returns a new [QuCompiler].
 	pub fn new() -> Self {
 		let mut inst = Self{
-			contexts:Vec::default(),
-			constants_code:Vec::default(),
-			name_refs:HashMap::default(),
-			types:vec![QuType2::int(), QuType2::uint(), QuType2::bool()],
-			types_map:HashMap::new(),
+			contexts: Vec::default(),
+			constants_code: Vec::default(),
+			name_refs: HashMap::default(),
+			types: vec![QuType2::int(), QuType2::uint(), QuType2::bool()],
+			types_map: HashMap::new(),
+			definitions: Definitions::default(),
 		};
 
 		let mut i:usize = 0;
@@ -110,8 +169,8 @@ pub struct QuCompiler {
 
 
 	/// Compiles an expression into bytecode.
-	fn cmp_expr(&mut self, leaf:QuLeafExpr, output_reg:QuStackId)
-			-> Result<QuAsmBuilder, QuMsg> {
+	fn cmp_expr(&mut self, leaf:QuLeafExpr, output_reg:QuStackId
+	) -> Result<QuAsmBuilder, QuMsg> {
 		return match leaf {
 			QuLeafExpr::FnCall(
 				name,
@@ -485,6 +544,11 @@ pub struct QuCompiler {
 	}
 
 
+	fn cmp_module(&mut self) {
+		
+	}
+
+
 	/// Compiles code variable assignment.
 	fn cmp_var_assign(&mut self,
 			var_token:QuToken, assign_to:QuLeafExpr
@@ -747,11 +811,13 @@ enum QuBuilderPiece {
 
 struct QuAsmBuilder {
 	code_pieces:Vec<QuBuilderPiece>,
+	return_type:String,
 } impl QuAsmBuilder {
 
 	fn new() -> Self {
 		return Self {
 			code_pieces: vec![],
+			return_type: "Void".to_owned(),
 		}
 	}
 
