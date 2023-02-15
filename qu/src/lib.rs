@@ -48,7 +48,7 @@ use tokens::{TOKEN_TYPE_NAME, QuToken};
 pub use errors::QuMsg;
 pub use compiler::QuCompiler;
 pub use objects::*;
-pub use parser::{QuParser, QuLeaf, QuLeafExpr};
+pub use parser::QuParser;
 pub use vm::QuOp;
 pub use vm::QuVm;
 pub use vm::QuStackId;
