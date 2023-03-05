@@ -38,10 +38,10 @@ pub const OP_MATH_SUB:&str = "-";
 
 pub type QuParamNode = (QuToken, Option<QuToken>);
 
-mod parsed {
+pub mod parsed {
 	use crate::tokens::QuToken;
 
-use super::OP_ASSIGN_SYMBOL;
+	use super::OP_ASSIGN_SYMBOL;
 
 	#[derive(Debug, Clone, PartialEq)]
 	/// Defines an expression in a Qu program tree.

@@ -169,23 +169,20 @@ pub struct QuCompiler {
 
 
 	/// Compiles an expression into bytecode.
-	fn cmp_expr(&mut self, leaf:QuLeafExpr, output_reg:QuStackId
+	fn cmp_expr(&mut self, expression:Expression, output_reg:QuStackId
 	) -> Result<QuAsmBuilder, QuMsg> {
-		return match leaf {
-			QuLeafExpr::FnCall(
-				name,
-				params,
-			) => self.cmp_fn_call(&name.slice, params, output_reg),
-			QuLeafExpr::Equation(
-				op,
-				left,
-				right
+		return match expression {
+			Expression::Call(
+				call_expression,,
+			) => self.cmp_fn_call(&call_expression, output_reg),
+			Expression::Operation(
+				operation_expression,
 			) => self.cmp_expr_math(op, *left, *right, output_reg),
-			QuLeafExpr::Number(val)
+			Expression::NumberLiteral(val)
 				=> Ok(self.cmp_expr_int(*val, output_reg)),
 				QuLeafExpr::Tuple(items)
 				=> self.cmp_expr_tuple(items, output_reg),
-			QuLeafExpr::Var(token)
+				Expression::Var(token)
 				=> self.cmp_expr_val(*token, output_reg),
 		};
 	}
