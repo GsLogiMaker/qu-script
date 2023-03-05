@@ -7,6 +7,7 @@ use crate::QuStackId;
 use crate::import::QuRegistered;
 use crate::parser::FLOW_TYPE_IF;
 use crate::parser::FLOW_TYPE_WHILE;
+use crate::parser::KEYWORD_IF;
 use crate::parser::QuOperator;
 use crate::parser::QuParamNode;
 use crate::parser::parsed::*;
@@ -169,50 +170,62 @@ pub struct QuCompiler {
 
 
 	/// Compiles an expression into bytecode.
-	fn cmp_expr(&mut self, expression:Expression, output_reg:QuStackId
+	fn cmp_expr(&mut self, expression:&Expression, output_reg:QuStackId
 	) -> Result<QuAsmBuilder, QuMsg> {
 		return match expression {
 			Expression::Call(
-				call_expression,,
-			) => self.cmp_fn_call(&call_expression, output_reg),
+				call_expression,
+			) => self.cmp_fn_call(
+				&call_expression.name,
+				&call_expression.parameters,
+				output_reg
+			),
 			Expression::Operation(
 				operation_expression,
-			) => self.cmp_expr_math(op, *left, *right, output_reg),
-			Expression::NumberLiteral(val)
-				=> Ok(self.cmp_expr_int(*val, output_reg)),
-				QuLeafExpr::Tuple(items)
-				=> self.cmp_expr_tuple(items, output_reg),
-				Expression::Var(token)
-				=> self.cmp_expr_val(*token, output_reg),
+			) => self.cmp_expr_operation(
+				&operation_expression.operator,
+				&operation_expression.left,
+				&operation_expression.right,
+				output_reg,
+			),
+			Expression::Number(number)
+				=> Ok(self.cmp_expr_int(&number.value, output_reg)),
+			Expression::Tuple(tuple)
+				=> self.cmp_expr_tuple(
+					&tuple.elements,
+					output_reg,
+				),
+			Expression::Var(var)
+				=> self.cmp_expr_val(&var.name, output_reg),
 		};
 	}
 
 
 	/// Compiles a math or logic expression into bytecode.
-	fn cmp_expr_math(
+	fn cmp_expr_operation(
 		&mut self,
-		op:QuOperator,
-		mut left:QuLeafExpr,
-		mut right:QuLeafExpr,
-		output_reg:QuStackId
+		operator: &QuToken,
+		left: &Expression,
+		right: &Expression,
+		output_reg: QuStackId
 	)-> Result<QuAsmBuilder, QuMsg> {
-		let left_reg = if let QuLeafExpr::Var(_) = left {
-			self.get_expr_reg(&mut left)?
+		let left_reg = if let Expression::Var(_) = left {
+			self.get_expr_reg(&left)?
 		} else { output_reg };
 
-		let right_reg = if let QuLeafExpr::Var(_) = right {
-			self.get_expr_reg(&mut right)?
+		let right_reg = if let Expression::Var(_) = right {
+			self.get_expr_reg(&right)?
 		} else {
 			if left_reg == output_reg {
-				self.get_expr_reg(&mut right)?
+				self.get_expr_reg(&right)?
 			} else { output_reg }
 		};
 
 		let mut builder = QuAsmBuilder::new();
-		builder.add_builder(self.cmp_expr(left, left_reg)?);
-		builder.add_builder(self.cmp_expr(right, right_reg)?);
+		builder.add_builder(self.cmp_expr(&left, left_reg)?);
+		builder.add_builder(self.cmp_expr(&right, right_reg)?);
 		builder.add_bp(QuBuilderPiece::ReprCallExt(
-			op.get_dunder().into(),
+			QuOperator::from_symbol(&operator.slice).get_function_name().into(),
 			vec![left_reg, right_reg],
 			output_reg
 		));
@@ -226,11 +239,13 @@ pub struct QuCompiler {
 	/// # Panics
 	/// 
 	/// Panics if `val` can't be parsed to a number.
-	fn cmp_expr_int(&mut self, val:QuToken, output_reg:QuStackId) -> QuAsmBuilder {
+	fn cmp_expr_int(
+		&mut self, value:&QuToken, output_reg:QuStackId
+	) -> QuAsmBuilder {
 		// TODO: Support other int sizes
 		
-		let Ok(val) = val.slice.parse::<isize>() else {
-			panic!("Could not convert text '{}' to number!", val.slice);
+		let Ok(val) = value.slice.parse::<isize>() else {
+			panic!("Could not convert text '{}' to number!", value.slice);
 		};
 
 		let mut b = QuAsmBuilder::new();
@@ -241,11 +256,12 @@ pub struct QuCompiler {
 
 
 	/// Compiles a tuple construction into bytecode.
-	fn cmp_expr_tuple(&mut self, items:Vec<QuLeafExpr>, to_reg:QuStackId
+	fn cmp_expr_tuple(
+		&mut self, elements:&Vec<Expression>, to_reg:QuStackId
 	) -> Result<QuAsmBuilder, QuMsg> {
 		let mut b = QuAsmBuilder::new();
 		let mut i:u8 = to_reg.into();
-		for item in items {
+		for item in elements {
 			b.add_builder(self.cmp_expr(item, i.into())?);
 			i += 1;
 		}
@@ -255,16 +271,17 @@ pub struct QuCompiler {
 
 
 	/// Compiles a variable-expression into bytecode.
-	fn cmp_expr_val(&mut self, token:QuToken, output_reg:QuStackId)
-			-> Result<QuAsmBuilder, QuMsg> {
+	fn cmp_expr_val(
+		&mut self, name:&QuToken, output_reg:QuStackId
+	) -> Result<QuAsmBuilder, QuMsg> {
 		
 		// The register to copy the variable value from
 		let Some(var_reg)
-			= self.get_var_register(&token.slice)
+			= self.get_var_register(&name.slice)
 			else {
 				let mut msg
-					= QuMsg::undefined_var_access(&token.slice);
-				msg.token = token.char_index;
+					= QuMsg::undefined_var_access(&name.slice);
+				msg.token = name.char_index.clone();
 				return Err(msg);
 			};
 		// Copying to same register location, return nothing
@@ -284,7 +301,8 @@ pub struct QuCompiler {
 
 
 	/// Compiles an *if* statement into bytecode.
-	fn cmp_flow_if(&mut self, mut condition:QuLeafExpr, body:Vec<QuLeaf>
+	fn cmp_flow_if(
+		&mut self, mut condition:&Expression, body:&CodeScope,
 	) -> Result<QuAsmBuilder, QuMsg> {
 		// Get expression register
 		let mut expr_b = with!{
@@ -314,7 +332,8 @@ pub struct QuCompiler {
 
 
 	/// Compiles a *while* statement into bytecode.
-	fn cmp_flow_while(&mut self, mut condition:QuLeafExpr, body:Vec<QuLeaf>
+	fn cmp_flow_while(
+		&mut self, mut condition:&Expression, body:&CodeScope,
 	) -> Result<QuAsmBuilder, QuMsg> {
 		// Get expression register
 		let mut expr_code = with!(
@@ -365,12 +384,15 @@ pub struct QuCompiler {
 
 
 	fn cmp_fn_call(
-		&mut self, name:&str, params:Vec<QuLeafExpr>, store_to:QuStackId
+		&mut self,
+		name:&QuToken,
+		parameters:&TupleExpression,
+		store_to:QuStackId,
 	) -> Result<QuAsmBuilder, QuMsg> {
 		let mut builder = QuAsmBuilder::new();
 
 		with!(self.stack_frame_start, self.stack_frame_end {
-			for p in params {
+			for p in &parameters.elements {
 				let reg = self.stack_reserve();
 				let parameter_expr = self.cmp_expr(p, reg)?;
 				builder.add_builder(parameter_expr);
@@ -379,7 +401,7 @@ pub struct QuCompiler {
 		})?;
 
 		builder.add_bp(
-			QuBuilderPiece::ReprCall(name.to_owned(), store_to)
+			QuBuilderPiece::ReprCall(name.slice.clone(), store_to)
 		);
 
 		return Ok(builder);
@@ -388,15 +410,13 @@ pub struct QuCompiler {
 
 	fn cmp_fn_decl(
 		&mut self,
-		name:&str,
-		params:Vec<QuParamNode>,
-		body:Vec<QuLeaf>
+		identity:&FunctionIdentity,
+		body:&CodeScope,
 	) -> Result<QuAsmBuilder, QuMsg> {
-		self.add_name_ref(name.to_owned());
+		self.add_name_ref(identity.name.slice.clone());
 
-		use QuLeaf::Return;
-		let needs_added_end_op = match body.last() {
-			Some(Return(_)) => false,
+		let needs_added_end_op = match body.code_block.statements.last() {
+			Some(Statement::Return(_)) => false,
 			_ => true,
 		};
 
@@ -406,18 +426,18 @@ pub struct QuCompiler {
 			// Add return value variable for padding.
 			self.add_variable(QuVarIdentity::new(
 				"return value".to_owned(),
-				"Variant".to_owned(),
+				"Any".to_owned(),
 			));
 			let _ = self.stack_reserve();
 
 			// Compile parameters
-			for p in params {
-				let static_type = match p.1 {
-					Some(token) => token.slice,
-					None => "Variant".to_owned(),
+			for p in &identity.parameters {
+				let static_type = match &p.static_type {
+					Some(token) => token.slice.clone(),
+					None => "Any".to_owned(),
 				};
 				self.add_variable(QuVarIdentity::new(
-					p.0.slice.to_owned(),
+					p.name.slice.to_owned(),
 					static_type.to_owned(),
 				));
 				// Reserver space for parameter
@@ -426,7 +446,7 @@ pub struct QuCompiler {
 
 			// Compile code block
 			let mut b = QuAsmBuilder::new();
-			b.add_builder(self.cmp_leafs(body)?);
+			b.add_builder(self.cmp_code_block(&body.code_block)?);
 			if needs_added_end_op {
 				b.add_op(End);
 			}
@@ -435,7 +455,7 @@ pub struct QuCompiler {
 
 		// Add fn declaration operation
 		let mut code = QuAsmBuilder::new();
-		code.add_op(DefineFn(name.to_owned(), body_code.len() as usize));
+		code.add_op(DefineFn(identity.name.slice.to_owned(), body_code.len() as usize));
 
 		// Add body
 		code.add_builder(body_code);
@@ -445,55 +465,44 @@ pub struct QuCompiler {
 
 
 	/// Compiles a [QuLeaf] into bytecode.
-	fn cmp_leaf(&mut self, leaf:QuLeaf) -> Result<QuAsmBuilder, QuMsg> {
-		match leaf {
-			QuLeaf::Expression(
-				mut expr_leaf,
-			) => {
+	fn cmp_statement(&mut self, statement:&Statement) -> Result<QuAsmBuilder, QuMsg> {
+		match statement {
+			Statement::Expression(expression) => {
 				return with!(self.stack_frame_start, self.stack_frame_end {
-					let reg = self.get_expr_reg(&mut expr_leaf)?;
-					self.cmp_expr(*expr_leaf, reg)
+					let reg = self.get_expr_reg(&expression)?;
+					self.cmp_expr(expression, reg)
 				});
 			}
-			QuLeaf::FlowStatement(
-				flow_type,
-				expr,
-				statements,
-			) => {
-				match flow_type{
-					FLOW_TYPE_IF => {
+			Statement::FlowStatement(flow_statement) => {
+				match flow_statement.flow_keyword.slice.as_str() {
+					KEYWORD_IF => {
 						return self.cmp_flow_if(
-							*expr,
-							statements
+							&flow_statement.condition,
+							&flow_statement.body,
 						);
 					},
-					FLOW_TYPE_WHILE => {
+					KEYWORD_WHILE => {
 						return self.cmp_flow_while(
-							*expr,
-							statements
+							&flow_statement.condition,
+							&flow_statement.body
 						);
 					}
 					_ => unimplemented!(),
 				}
 			}
-			QuLeaf::FnDecl(
-				mut name,
-				parameters,
-				statements,
-			) => {
+			Statement::FunctionDeclaration(function_declaration) => {
 				// TODO: Compiler fn declaration parameters
 				return self.cmp_fn_decl(
-					&name.slice,
-					parameters,
-					statements
+					&function_declaration.identity,
+					&function_declaration.body,
 				);
 			}
-			QuLeaf::Return(expr) => {
+			Statement::Return(return_statement) => {
 				let mut code = QuAsmBuilder::new();
-				match expr {
-					Some(mut l) => {
-						let reg = self.get_expr_reg(&mut l)?;
-						code.add_builder(self.cmp_expr(*l, reg)?);
+				match &return_statement.value {
+					Some(value) => {
+						let reg = self.get_expr_reg(value)?;
+						code.add_builder(self.cmp_expr(value, reg)?);
 						code.add_bp(QuBuilderPiece::ReprCallExt(
 							"__copy__".into(),
 							vec![reg],
@@ -509,33 +518,31 @@ pub struct QuCompiler {
 				}
 				return Ok(code);
 			}
-			QuLeaf::VarDecl(
-					name_tk,
-					type_tk,
-					value_leaf
-			) => {
+			Statement::VarDeclaration(var_declaration) => {
 				return self.cmp_var_decl(
-					*name_tk,
-					type_tk,
-					value_leaf
+					&var_declaration.name,
+					&var_declaration.static_type,
+					&var_declaration.initial_value
 				);
 			}
-			QuLeaf::VarAssign(
-					name_rk,
-					value_leaf
-			) => {
+			Statement::VarAssign(variable_assignment) => {
 				return  self.cmp_var_assign(
-					*name_rk, *value_leaf);
+					&variable_assignment.name,
+					&variable_assignment.new_value,
+				);
 			}
 		};
 	}
 
 
 	/// Compiles a [`Vec<QuLeaf>`] into bytecode.
-	fn cmp_leafs(&mut self, leafs:Vec<QuLeaf>) -> Result<QuAsmBuilder, QuMsg> {
+	fn cmp_code_block(
+		&mut self,
+		code_block:&CodeBlock,
+	) -> Result<QuAsmBuilder, QuMsg> {
 		let mut b = QuAsmBuilder::new();
-		for l in leafs {
-			b.add_builder(self.cmp_leaf(l)?);
+		for statements in &code_block.statements {
+			b.add_builder(self.cmp_statement(statements)?);
 		}
 		return Ok(b);
 	}
@@ -547,57 +554,61 @@ pub struct QuCompiler {
 
 
 	/// Compiles code variable assignment.
-	fn cmp_var_assign(&mut self,
-			var_token:QuToken, assign_to:QuLeafExpr
+	fn cmp_var_assign(
+		&mut self,
+		name:&QuToken,
+		new_value:&Expression,
 	) -> Result<QuAsmBuilder, QuMsg> {
 		// Get variable register
 		let var_reg
-			= self.get_var_register(&var_token.slice)
+			= self.get_var_register(&name.slice)
 				.ok_or_else(||{
 					let mut msg = QuMsg::undefined_var_assign(
-						&var_token.slice);
-					msg.token = var_token.char_index;
+						&name.slice);
+					msg.token = name.char_index.clone();
 					return msg;
 				}
 			)?
 		;
 		// Compile assignment to expression
-		return self.cmp_expr(assign_to, var_reg);
+		return self.cmp_expr(new_value, var_reg);
 	}
 
 
 	/// Compiles a variable declaration.
 	fn cmp_var_decl(
-		&mut self, var_token:QuToken,
-		variable_type_token:Option<Box<QuToken>>,
-		assign_to:Option<Box<QuLeafExpr>>
+		&mut self,
+		name:&QuToken,
+		static_type:&Option<QuToken>,
+		initial_value:&Option<Expression>
 	) -> Result<QuAsmBuilder, QuMsg> {
 
 		// Check if the variable is already defined
-		if self.is_var_defined(&var_token.slice) {
-			let mut msg = QuMsg::var_redefined(&var_token.slice);
-			msg.token = var_token.char_index;
+		if self.is_var_defined(&name.slice) {
+			let mut msg = QuMsg::var_redefined(&name.slice);
+			msg.token = name.char_index.clone();
 			return Err(msg);
 		}
 
 		// Get var type
-		let var_type = if let Some(type_tk) = variable_type_token {
-			type_tk.slice
+		let var_type = if let Some(type_tk) = static_type {
+			type_tk.slice.clone()
 		} else {
-			"Variant".to_owned()
+			"Any".to_owned()
 		};
 
 		// Create variable
 		let var_reg = self.stack_reserve();
-		self.add_variable(
-			QuVarIdentity{name:var_token.slice.to_owned(), static_type:var_type}
-		);
+		self.add_variable(QuVarIdentity {
+			name:name.slice.to_owned(),
+			static_type:var_type,
+		});
 
 		// Compile variable assignment
-		return match assign_to {
+		return match initial_value {
 			// Compile variable value
-			Some(val_leaf)
-				=> self.cmp_expr(*val_leaf, var_reg),
+			Some(expression)
+				=> self.cmp_expr(expression, var_reg),
 
 			// No default value, compile fallback to zero
 			None => {
@@ -611,10 +622,10 @@ pub struct QuCompiler {
 
 
 	/// Compiles a scope.
-	fn cmp_scope(&mut self, leaf:Vec<QuLeaf>) -> Result<QuAsmBuilder, QuMsg> {
-		let compiled = with!{
-			self.stack_frame_start, self.stack_frame_end {
-				/*return*/ self.cmp_leafs(leaf)
+	fn cmp_scope(&mut self, code_scope:&CodeScope) -> Result<QuAsmBuilder, QuMsg> {
+		let compiled
+			= with!{self.stack_frame_start, self.stack_frame_end {
+				self.cmp_code_block(&code_scope.code_block)
 			}
 		};
 		return compiled;
@@ -625,18 +636,18 @@ pub struct QuCompiler {
 	pub fn compile(&mut self, code:&str, imports:&QuRegistered
 	) -> Result<Vec<QuOp>, QuMsg> {
 		let mut p = QuParser::new();
-		let leafs = p.parse(code)?;
-		return Ok(self.compile_from_leafs(leafs, imports)?);
+		let code_block = p.parse(code)?;
+		return Ok(self.compile_code(&code_block, imports)?);
 	}
 
 
 	/// Compiles Qu code from a [QuLeaf] into a [`Vec<u8>`].
-	pub fn compile_from_leafs(
-		&mut self, leafs:Vec<QuLeaf>, imports:&QuRegistered
+	pub fn compile_code(
+		&mut self, code_block:&CodeBlock, imports:&QuRegistered
 	) -> Result<Vec<QuOp>, QuMsg> {
 		// Main code
 		let mut code = with!(self.context_start, self.context_end {
-			let mut code = self.cmp_scope(leafs)?;
+			let mut code = self.cmp_code_block(code_block)?;
 			code.add_op(End);
 			Ok::<QuAsmBuilder, QuMsg>(code)
 		})?;
@@ -692,19 +703,20 @@ pub struct QuCompiler {
 	/// 
 	/// Most expressions require a new memory location, but variables
 	/// should just return the register of the variable.
-	fn get_expr_reg(&mut self, expr_leaf:&mut QuLeafExpr
+	fn get_expr_reg(&mut self, expr_leaf:&Expression
 	) -> Result<QuStackId, QuMsg> {
 		return  match expr_leaf {
-			QuLeafExpr::Equation(_, _, _) => Ok(self.stack_reserve()),
-			QuLeafExpr::FnCall(_, _) => Ok(self.stack_reserve()),
-			QuLeafExpr::Number(_) => Ok(self.stack_reserve()),
-			QuLeafExpr::Tuple(_) => Ok(self.stack_reserve()),
-			QuLeafExpr::Var(name) => {
-				self.get_var_register(&name.slice)
+			Expression::Operation(_) => Ok(self.stack_reserve()),
+			Expression::Call(_) => Ok(self.stack_reserve()),
+			Expression::Number(_) => Ok(self.stack_reserve()),
+			Expression::Tuple(_) => Ok(self.stack_reserve()),
+			Expression::Var(var) => {
+				self.get_var_register(&var.name.slice)
 					.ok_or_else(||{
-						let mut msg
-							= QuMsg::undefined_var_access(&name.slice);
-						msg.token = name.char_index.clone();
+						let mut msg = QuMsg::undefined_var_access(
+							&var.name.slice
+						);
+						msg.token = var.name.char_index.clone();
 						return msg;
 					}
 				)
