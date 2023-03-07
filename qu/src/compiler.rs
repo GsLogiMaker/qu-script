@@ -1,10 +1,13 @@
 
 use crate::QuFunctionId;
+use crate::QuInt;
 use crate::QuOp;
 use crate::QuOp::*;
 use crate::QuParser;
+use crate::QuRegisterStruct;
 use crate::QuStackId;
 use crate::import::QuRegistered;
+use crate::import::QuStructId;
 use crate::parser::FLOW_TYPE_IF;
 use crate::parser::FLOW_TYPE_WHILE;
 use crate::parser::KEYWORD_IF;
@@ -57,7 +60,7 @@ struct ClassMetadata {
 } impl Default for ClassMetadata {
     fn default() -> Self {
         Self {
-			name: "Void".to_owned(),
+			name: "void".to_owned(),
 			..Default::default()
 		}
     }
@@ -128,24 +131,26 @@ struct QuCmpFrame {
 
 
 /// Compiles [QuLeaf]s into Qu bytecode.
-pub struct QuCompiler {
+pub struct QuCompiler<'a> {
 	contexts:Vec<QuCmpContext>,
 	constants_code:Vec<u8>,
 	name_refs:HashMap<String, u32>,
 	types:Vec<QuType2>,
 	types_map:HashMap<String, usize>,
 	definitions: Definitions,
-} impl QuCompiler {
+	imports: Option<&'a QuRegistered>
+} impl<'a> QuCompiler<'a> {
 
 	/// Creates and returns a new [QuCompiler].
 	pub fn new() -> Self {
-		let mut inst = Self{
+		let mut inst = Self {
 			contexts: Vec::default(),
 			constants_code: Vec::default(),
 			name_refs: HashMap::default(),
 			types: vec![QuType2::int(), QuType2::uint(), QuType2::bool()],
 			types_map: HashMap::new(),
 			definitions: Definitions::default(),
+			imports: None,
 		};
 
 		let mut i:usize = 0;
@@ -170,7 +175,8 @@ pub struct QuCompiler {
 
 
 	/// Compiles an expression into bytecode.
-	fn cmp_expr(&mut self, expression:&Expression, output_reg:QuStackId
+	fn cmp_expr(
+		&mut self, expression:&Expression, output_reg:QuStackId
 	) -> Result<QuAsmBuilder, QuMsg> {
 		return match expression {
 			Expression::Call(
@@ -207,7 +213,8 @@ pub struct QuCompiler {
 		operator: &QuToken,
 		left: &Expression,
 		right: &Expression,
-		output_reg: QuStackId
+		// TODO: Change output_reg to a struct without type information
+		output_reg: QuStackId,
 	)-> Result<QuAsmBuilder, QuMsg> {
 		let left_reg = if let Expression::Var(_) = left {
 			self.get_expr_reg(&left)?
@@ -221,15 +228,33 @@ pub struct QuCompiler {
 			} else { output_reg }
 		};
 
+		let left_b = self.cmp_expr(&left, left_reg)?;
+		let right_b = self.cmp_expr(&right, right_reg)?;
+		let function_name = QuOperator::from_symbol(&operator.slice).get_function_name();
+
 		let mut builder = QuAsmBuilder::new();
-		builder.add_builder(self.cmp_expr(&left, left_reg)?);
-		builder.add_builder(self.cmp_expr(&right, right_reg)?);
+		
+
+		// Set builder return type
+		let fn_id = self.imports.unwrap()
+			.get_struct(&left_b.return_type)?
+			.get_fn_id(function_name)?;
+		let return_type = self.imports.unwrap()
+			.get_struct_by_id(
+				self.imports.unwrap().get_fn_data_by_id(fn_id)?.return_type
+			)?
+			.name.clone();
+		builder.return_type = return_type.clone();
+
+		// Generate code
+		builder.add_builder(left_b);
+		builder.add_builder(right_b);
 		builder.add_bp(QuBuilderPiece::ReprCallExt(
-			QuOperator::from_symbol(&operator.slice).get_function_name().into(),
+			function_name.into(),
 			vec![left_reg, right_reg],
 			output_reg
 		));
-
+		
 		return Ok(builder);
 	}
 
@@ -240,6 +265,7 @@ pub struct QuCompiler {
 	/// 
 	/// Panics if `val` can't be parsed to a number.
 	fn cmp_expr_int(
+		// TODO: Change output_reg to a struct without type information
 		&mut self, value:&QuToken, output_reg:QuStackId
 	) -> QuAsmBuilder {
 		// TODO: Support other int sizes
@@ -250,6 +276,7 @@ pub struct QuCompiler {
 
 		let mut b = QuAsmBuilder::new();
 		b.add_op(Value(val, output_reg));
+		b.return_type = "int".into();
 
 		return b;
 	}
@@ -274,27 +301,25 @@ pub struct QuCompiler {
 	fn cmp_expr_val(
 		&mut self, name:&QuToken, output_reg:QuStackId
 	) -> Result<QuAsmBuilder, QuMsg> {
+
+		// TODO: Error handling
+		let var_identity = self.get_var_identity(&name.slice).unwrap();
 		
-		// The register to copy the variable value from
-		let Some(var_reg)
-			= self.get_var_register(&name.slice)
-			else {
-				let mut msg
-					= QuMsg::undefined_var_access(&name.slice);
-				msg.token = name.char_index.clone();
-				return Err(msg);
-			};
 		// Copying to same register location, return nothing
-		if var_reg == output_reg {
-			return Ok(QuAsmBuilder::default());
+		if var_identity.id == output_reg {
+			let mut b = QuAsmBuilder::default();
+			b.return_type = var_identity.static_type.clone();
+			return Ok(b);
 		}
 
 		let mut b = QuAsmBuilder::new();
 		b.add_bp(QuBuilderPiece::ReprCallExt(
-			"__copy__".into(),
-			vec![var_reg],
+			"copy".into(),
+			vec![var_identity.id],
 			output_reg,
 		));
+
+		b.return_type = var_identity.static_type.clone();
 
 		return Ok(b);
 	}
@@ -393,7 +418,9 @@ pub struct QuCompiler {
 
 		with!(self.stack_frame_start, self.stack_frame_end {
 			for p in &parameters.elements {
-				let reg = self.stack_reserve();
+				// TODO: Support more than int
+				let object_id = self.imports.unwrap().get_struct_id("int")?;
+				let reg = self.stack_reserve(object_id)?;
 				let parameter_expr = self.cmp_expr(p, reg)?;
 				builder.add_builder(parameter_expr);
 			}
@@ -424,24 +451,27 @@ pub struct QuCompiler {
 			= with!(self.context_start, self.context_end {
 
 			// Add return value variable for padding.
+			let object_id = self.imports.unwrap().get_struct_id("int")?;
+			let id = self.stack_reserve(object_id)?;
 			self.add_variable(QuVarIdentity::new(
 				"return value".to_owned(),
-				"Any".to_owned(),
+				"int".to_owned(),
+				id,
 			));
-			let _ = self.stack_reserve();
 
 			// Compile parameters
 			for p in &identity.parameters {
 				let static_type = match &p.static_type {
 					Some(token) => token.slice.clone(),
-					None => "Any".to_owned(),
+					None => "int".to_owned(),
 				};
+				let object_id = self.imports.unwrap().get_struct_id(&static_type)?;
+				let id = self.stack_reserve(object_id)?;
 				self.add_variable(QuVarIdentity::new(
 					p.name.slice.to_owned(),
 					static_type.to_owned(),
+					id,
 				));
-				// Reserver space for parameter
-				let _ = self.stack_reserve();
 			}
 
 			// Compile code block
@@ -504,12 +534,12 @@ pub struct QuCompiler {
 						let reg = self.get_expr_reg(value)?;
 						code.add_builder(self.cmp_expr(value, reg)?);
 						code.add_bp(QuBuilderPiece::ReprCallExt(
-							"__copy__".into(),
+							"copy".into(),
 							vec![reg],
 							0.into()
 						));
 						if self.contexts.len() == 1 {
-							code.add_op(Return);
+							code.add_op(Return(reg.struct_id()));
 						} else {
 							code.add_op(End);
 						}
@@ -594,14 +624,16 @@ pub struct QuCompiler {
 		let var_type = if let Some(type_tk) = static_type {
 			type_tk.slice.clone()
 		} else {
-			"Any".to_owned()
+			"int".to_owned()
 		};
 
 		// Create variable
-		let var_reg = self.stack_reserve();
+		let object_id = self.imports.unwrap().get_struct_id(&var_type)?;
+		let var_reg = self.stack_reserve(object_id)?;
 		self.add_variable(QuVarIdentity {
-			name:name.slice.to_owned(),
-			static_type:var_type,
+			name: name.slice.to_owned(),
+			static_type: var_type,
+			id: var_reg,
 		});
 
 		// Compile variable assignment
@@ -633,17 +665,20 @@ pub struct QuCompiler {
 
 
 	/// Compiles Qu code from a [`&str`] into a [`Vec<u8>`].
-	pub fn compile(&mut self, code:&str, imports:&QuRegistered
+	pub fn compile(&mut self, code:&str, imports:&'a QuRegistered
 	) -> Result<Vec<QuOp>, QuMsg> {
+		self.imports = Some(imports);
 		let mut p = QuParser::new();
 		let code_block = p.parse(code)?;
-		return Ok(self.compile_code(&code_block, imports)?);
+		let compiled = self.compile_code(&code_block)?;
+		self.imports = None;
+		Ok(compiled)
 	}
 
 
 	/// Compiles Qu code from a [QuLeaf] into a [`Vec<u8>`].
 	pub fn compile_code(
-		&mut self, code_block:&CodeBlock, imports:&QuRegistered
+		&mut self, code_block:&CodeBlock
 	) -> Result<Vec<QuOp>, QuMsg> {
 		// Main code
 		let mut code = with!(self.context_start, self.context_end {
@@ -651,9 +686,12 @@ pub struct QuCompiler {
 			code.add_op(End);
 			Ok::<QuAsmBuilder, QuMsg>(code)
 		})?;
-		
 
-		return Ok(code.compile(&self.name_refs, imports)?);
+
+		Ok(code.compile(
+			&self.name_refs,
+			self.imports.unwrap(),
+		)?)
 	}
 
 
@@ -703,13 +741,14 @@ pub struct QuCompiler {
 	/// 
 	/// Most expressions require a new memory location, but variables
 	/// should just return the register of the variable.
-	fn get_expr_reg(&mut self, expr_leaf:&Expression
+	fn get_expr_reg(
+		&mut self, expr_leaf:&Expression
 	) -> Result<QuStackId, QuMsg> {
 		return  match expr_leaf {
-			Expression::Operation(_) => Ok(self.stack_reserve()),
-			Expression::Call(_) => Ok(self.stack_reserve()),
-			Expression::Number(_) => Ok(self.stack_reserve()),
-			Expression::Tuple(_) => Ok(self.stack_reserve()),
+			Expression::Operation(_) => Ok(self.stack_reserve(self.imports.unwrap().get_struct_id("int")?)?),
+			Expression::Call(_) => Ok(self.stack_reserve(self.imports.unwrap().get_struct_id("int")?)?),
+			Expression::Number(_) => Ok(self.stack_reserve(self.imports.unwrap().get_struct_id("int")?)?),
+			Expression::Tuple(_) => Ok(self.stack_reserve(self.imports.unwrap().get_struct_id("int")?)?),
 			Expression::Var(var) => {
 				self.get_var_register(&var.name.slice)
 					.ok_or_else(||{
@@ -739,12 +778,25 @@ pub struct QuCompiler {
 	}
 
 
+	/// Gets the identity of a variable by the variable's name.
+	fn get_var_identity(&mut self, var_name:&str) -> Option<&QuVarIdentity> {
+		let mut i = 0usize;
+		for var_ref in &self.contexts_get_top().var_identities {
+			if var_ref == var_name {
+				return Some(var_ref);
+			}
+			i += 1;
+		}
+		return None;
+	}
+
+
 	/// Gets the pointer to a variable by the variable's name.
 	fn get_var_register(&mut self, var_name:&str) -> Option<QuStackId> {
 		let mut i = 0usize;
 		for var_ref in &self.contexts_get_top().var_identities {
 			if var_ref == var_name {
-				return Some(i.into());
+				return Some(var_ref.id);
 			}
 			i += 1;
 		}
@@ -786,11 +838,15 @@ pub struct QuCompiler {
 
 
 	/// Returns the current stack pointer and increments it.
-	fn stack_reserve(&mut self) -> QuStackId {
+	fn stack_reserve(&mut self, object: QuStructId) -> Result<QuStackId, QuMsg> {
+		let object_size = self.imports
+			.unwrap()
+			.get_struct_by_id(object)?
+			.size;
 		let mut top_frame = self.context_get_top_frame();
-		let x = top_frame.stack_idx;
-		top_frame.stack_idx += 1;
-		return x.into();
+		let index = top_frame.stack_idx;
+		top_frame.stack_idx += object_size;
+		return Ok(QuStackId::new(index as usize, object));
 	}
 
 }
@@ -829,6 +885,12 @@ struct QuAsmBuilder {
 			return_type: "Void".to_owned(),
 		}
 	}
+	
+
+	/// Adds a builder piece
+	fn add_bp(&mut self, repr:QuBuilderPiece) {
+		self.code_pieces.push(repr);
+	}
 
 
 	fn add_builder(&mut self, mut builder:QuAsmBuilder) {
@@ -843,11 +905,6 @@ struct QuAsmBuilder {
 
 	fn add_ops(&mut self, ops:Vec<QuOp>) {
 		self.code_pieces.push(QuBuilderPiece::Ops(ops));
-	}
-
-
-	fn add_bp(&mut self, repr:QuBuilderPiece) {
-		self.code_pieces.push(repr);
 	}
 
 
@@ -874,8 +931,14 @@ struct QuAsmBuilder {
 					output
 				) => {
 					// TODO: Implement static typing
+					let struct_data = imports.get_struct_by_id(
+						args.get(0)
+							.unwrap_or(&QuStackId::from(0))
+							.struct_id()
+					)?;
+
 					let id
-						= imports.get_fn_id(fn_name, "int")?;
+						= struct_data.get_fn_id(fn_name)?;
 					code.push(CallExt(id, take(args), *output));
 				},
 			};
@@ -901,10 +964,11 @@ struct QuAsmBuilder {
 struct QuVarIdentity {
 	name: String,
 	static_type: String,
+	id: QuStackId,
 } impl QuVarIdentity {
 
-	fn new(name:String, static_type:String) -> Self {
-		QuVarIdentity{name, static_type}
+	fn new(name:String, static_type:String, id:QuStackId) -> Self {
+		QuVarIdentity{name, static_type, id}
 	}
 
 } impl PartialEq<str> for QuVarIdentity {

@@ -37,6 +37,11 @@ qu_derive = { path="../qu_derive" }
 [dev-dependencies]
 criterion = "0.4.0"
 
+[features]
+qu_panic_upon_error = []
+
+default = ["qu_panic_upon_error"]
+
 [[bench]]
 name = "vm_benchmark"
 harness = false

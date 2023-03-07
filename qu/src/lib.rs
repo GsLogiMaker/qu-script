@@ -42,6 +42,8 @@ mod tokens;
 mod vm;
 
 
+use std::marker::PhantomData;
+
 pub use import::QuFunctionId;
 use import::QuRegistered;
 use tokens::{TOKEN_TYPE_NAME, QuToken};
@@ -76,11 +78,11 @@ use vm::StackValue;
 /// # return Ok(());
 /// # }
 /// ```
-pub struct Qu {
-	vm:QuVm,
-	imports:QuRegistered,
+pub struct Qu<'a> {
+	vm: QuVm,
+	ph: PhantomData<&'a u8>,
 
-} impl Qu {
+} impl<'a> Qu<'a> {
 
 	/// Instantiates a [`Qu`] struct.
 	/// 
@@ -92,13 +94,10 @@ pub struct Qu {
 	/// let qu = Qu::new();
 	/// ```
 	pub fn new() -> Self {
-		let mut qu = Qu {
+		Qu {
 			vm: QuVm::new(),
-			imports: QuRegistered::default(),
-		};
-		qu.register_struct::<QuInt>();
-		qu.register_fns();
-		qu
+			ph: PhantomData {},
+		}
 	}
 
 
@@ -124,28 +123,29 @@ pub struct Qu {
 	pub fn compile(&self, code:&str) -> Result<Vec<QuOp>, QuMsg> {
 		// Compile
 		let mut c = QuCompiler::new();
-		return Ok(c.compile(code, &self.imports)?);
+		return Ok(c.compile(code, &self.vm.imports)?);
 	}
 
 
 	pub fn register_fns(&mut self) {
-		self.imports.register_fns()
+		self.vm.imports.register_fns()
 	}
 
 
-	fn register_fn(&mut self, fn_data:QuExtFnData) {
-		self.imports.register_fn(fn_data)
+	fn register_fn(&mut self, fn_data:ExternalFunction) -> Result<(), QuMsg> {
+		self.vm.imports.register_fn(fn_data)
 	}
 
 
 	pub fn register_struct<S:QuRegisterStruct+'static>(&mut self) {
-		self.imports.register_struct::<S>()
+		self.vm.imports.register_struct::<S>()
 	}
 
 
-	pub fn reg_get_as<'a, T:'a + 'static>(&self, at_reg:QuStackId
+	pub fn reg_get<'b, T:'a>(
+		&self, at_reg:QuStackId
 	) -> Result<&T, QuMsg> {
-		self.vm.reg_get_as::<T>(at_reg)
+		self.vm.reg_get::<T>(at_reg)
 	}
 
 
@@ -169,31 +169,24 @@ pub struct Qu {
 	/// # return Ok(());
 	/// # }
 	/// ```
-	pub fn run(&mut self, script:&str) -> Result<Option<StackValue>, QuMsg> {
+	pub fn run(&mut self, script:&str) -> Result<(), QuMsg> {
 		let code = self.compile(script)?;
-		self.run_ops(&code)?;
-		Ok(self.vm.get_return_value())
+		self.run_ops(&code)
 	}
 
 
-	pub fn run_and_get<T:'static>(&mut self, script:&str
-	) -> Result<Box<T>, QuMsg> {
+	pub fn run_and_get<T:'a>(&mut self, script:&str) -> Result<&T, QuMsg> {
 		let code = self.compile(script)?;
 		self.run_ops(&code)?;
-
-		let Some(r) = self.vm.get_return_value() else {
-			return Err("Nothing was returned".into())
-		};
-		let Ok(r) = r.downcast::<T>() else {
-			return Err("Could not convert return type to `T`".into())
-		};
-
-		Ok(r)
+		let return_id = self.vm.return_value_id();
+		self.reg_get(
+			QuStackId::new(0, return_id)
+		)
 	}
 
 
 	pub fn run_ops(&mut self, instructions:&[QuOp]) -> Result<(), QuMsg> {
-		return self.vm.run_ops(instructions, &self.imports);
+		return self.vm.run_ops(instructions);
 	}
 
 }
@@ -319,7 +312,6 @@ mod lib {
 		"#;
 
 		let n1 = *qu.run_and_get::<QuInt>(script).unwrap();
-
 		assert_eq!(n1, QuInt(34));
 	}
 

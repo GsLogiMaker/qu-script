@@ -371,21 +371,21 @@ pub enum QuOperator {
 
 	pub fn get_function_name(&self) -> &'static str {
 		match self {
-			QuOperator::Add => "__add__",
-			QuOperator::Sub => "__subtract__",
-			QuOperator::Mul => "__multiply__",
-			QuOperator::Div => "__divide__",
-			QuOperator::Mod => "__modular__",
-			QuOperator::Pow => "__power__",
-			QuOperator::Sqrt => "__sqareroot__",
-			QuOperator::Less => "__lesser__",
-			QuOperator::LessEq => "__lesserorequal__",
-			QuOperator::Great => "__greater__",
-			QuOperator::GreatEq => "__greaterorequal__",
-			QuOperator::Eq => "__equal__",
-			QuOperator::NotEq => "__notequal__",
-			QuOperator::And => "__and__",
-			QuOperator::Or => "__or__",
+			QuOperator::Add => "add",
+			QuOperator::Sub => "sub",
+			QuOperator::Mul => "mul",
+			QuOperator::Div => "div",
+			QuOperator::Mod => "mod",
+			QuOperator::Pow => "pow",
+			QuOperator::Sqrt => "sqrt",
+			QuOperator::Less => "lesser",
+			QuOperator::LessEq => "lessereq",
+			QuOperator::Great => "greater",
+			QuOperator::GreatEq => "greatereq",
+			QuOperator::Eq => "eq",
+			QuOperator::NotEq => "neq",
+			QuOperator::And => "and",
+			QuOperator::Or => "or",
 		}
 	}
 

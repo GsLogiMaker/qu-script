@@ -42,40 +42,6 @@ fn speed(c: &mut Criterion) {
 	let zero:QuStackId = 20.into();
 	let add:QuFunctionId = 0.into();
 	let lesser:QuFunctionId = 1.into();
-
-	let ops = vec![
-		QuOp::Value(0, zero),
-		QuOp::Value(25, nterms),
-		QuOp::Value(0, n1),
-		QuOp::Value(1, n2),
-		QuOp::Value(0, count),
-
-		QuOp::CallExt(lesser, vec![count, nterms], QuStackId(4)),
-		QuOp::JumpByIfNot(6),
-
-			QuOp::CallExt(add, vec![n1, n2], QuStackId(4)),
-			QuOp::CallExt(add, vec![n2, zero], n1),
-			QuOp::CallExt(add, vec![QuStackId(4), zero], n2),
-
-			QuOp::Value(1, QuStackId(5)),
-			QuOp::CallExt(add, vec![count, QuStackId(5)], count),
-
-		QuOp::JumpBy(-8),
-
-		QuOp::End,
-	];
-
-	c.bench_function(
-		"ops", |b| {
-			b.iter(|| {
-				qu.run_ops(&ops).unwrap();
-			})
-		}
-	);
-
-	println!("{:?}", qu.reg_get_as::<QuInt>(QuStackId(1)).unwrap());
-	println!("{:?}", qu.reg_get_as::<QuInt>(QuStackId(2)).unwrap());
-	println!("{:?}", qu.reg_get_as::<QuInt>(QuStackId(3)).unwrap());
 }
 
 

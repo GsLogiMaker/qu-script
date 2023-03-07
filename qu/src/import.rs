@@ -1,9 +1,10 @@
 
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::mem::size_of;
 
+use crate::ExternalFunction;
 use crate::QuMsg;
-use crate::QuExtFnData;
 use crate::QuRegisterStruct;
 
 
@@ -33,8 +34,7 @@ impl From<QuFunctionId> for u8 {
 
 #[derive(Default)]
 pub struct QuRegistered {
-	pub fns:Vec<QuExtFnData>,
-	pub fns_map:HashMap<String, QuFunctionId>,
+	pub fns:Vec<ExternalFunction>,
 	pub structs:Vec<QuStruct>,
 	pub structs_map:HashMap<String, QuStructId>,
 } impl QuRegistered {
@@ -42,7 +42,6 @@ pub struct QuRegistered {
 	fn new() -> Self {
 		Self {
 			fns: Vec::default(),
-			fns_map: HashMap::default(),
 			structs: Vec::default(),
 			structs_map: HashMap::default(),
 		}
@@ -50,7 +49,7 @@ pub struct QuRegistered {
 	
 
 	pub fn get_fn_data_by_id(&self, fn_id:QuFunctionId
-	) -> Result<&QuExtFnData, QuMsg>{
+	) -> Result<&ExternalFunction, QuMsg>{
 		match self.fns.get(fn_id.0) {
 			Some(v) => Ok(v),
 			None => Err(format!(
@@ -118,33 +117,36 @@ pub struct QuRegistered {
 	/// A struct must be registered with [`Qu::register_struct`] before its
 	/// functions can be registered.
 	pub fn register_fns(&mut self) {
-		let mut fn_datas
-			= Vec::default();
-		for s in self.structs.iter_mut() {
-			for data
-			in (s.register_fn)() {
-				let None = s.fns_map.insert(
-					data.0.clone(),
-					fn_datas.len().into(),
-				) else {
-					panic!(
-						"Can't define a function with name {} in struct {} because it already has a function with that name.",
-						data.0, s.name,
-					);
-				};
-				fn_datas.push(data);
+		let mut registrations = vec![];
+		for s in self.structs.iter() {
+			registrations.push(s.register_fn);
+		}
+		for registration in registrations {
+			for external_function in (registration)() {
+				self.register_fn(external_function);
 			}
 		}
-		self.fns = fn_datas;
 	}
 
 
-	pub fn register_fn(&mut self, fn_data:QuExtFnData) {
-		self.fns_map.insert(
-			fn_data.0.clone(),
-			QuFunctionId::new(self.fns.len()),
-		);
-		self.fns.push(fn_data);
+	/// Registers an [`ExternalFunction`] to Qu.
+	pub fn register_fn(
+		&mut self, external_function:ExternalFunction,
+	) -> Result<(), QuMsg> {
+		let new_function_id = QuFunctionId::new(self.fns.len());
+
+		// Associate function as a method of its first perameter
+		let struct_id = *external_function
+			.parameters
+			.get(0)
+			.unwrap_or(&QuStructId::from(0));
+		let struct_data = self.get_struct_by_id_mut(struct_id)?;
+		struct_data.fns_map.insert(external_function.name.clone(), new_function_id);
+
+		// Add function to list
+		self.fns.push(external_function);
+
+		Ok(())
 	}
 
 
@@ -176,7 +178,8 @@ pub struct QuRegistered {
 	pub fn register_struct<S:QuRegisterStruct+'static>(&mut self) {
 		let r_struct = QuStruct::new(
 			<S as QuRegisterStruct>::get_name(),
-			&<S as QuRegisterStruct>::register_fns
+			&<S as QuRegisterStruct>::register_fns,
+			size_of::<S>(),
 		);
 		
 		self.structs_map.insert(
@@ -187,20 +190,6 @@ pub struct QuRegistered {
 
 	}
 
-
-	pub fn register_struct_fn(
-		&mut self, struct_id:QuStructId, fn_data:QuExtFnData
-	) -> Result<(), QuMsg> {
-		let new_idx = self.fns.len();
-		let s = self.get_struct_by_id_mut(struct_id)?;
-		s.fns_map.insert(
-			fn_data.0.clone(),
-			QuFunctionId::new(new_idx),
-		);
-		self.fns.push(fn_data);
-		Ok(())
-	}
-
 }
 
 
@@ -209,6 +198,12 @@ pub struct QuStructId(pub usize);
 impl QuStructId {
 
 	pub fn new(index:usize) -> Self {
+		Self(index)
+	}
+
+} impl From<usize> for QuStructId {
+
+	fn from(index: usize) -> Self {
 		Self(index)
 	}
 
@@ -224,21 +219,26 @@ impl From<QuStructId> for u8 {
 
 #[derive(Clone)]
 pub struct QuStruct {
-	pub name:String,
-	pub fns_map:HashMap<String, QuFunctionId>,
-	pub register_fn:&'static dyn Fn() -> Vec<QuExtFnData>,
+	pub name: String,
+	pub fns_map: HashMap<String, QuFunctionId>,
+	pub register_fn: &'static dyn Fn() -> Vec<ExternalFunction>,
+	/// The size of the struct in bytes.
+	pub size: u8,
 
 } impl QuStruct {
 
 	pub fn new(
 		name:impl Into<String>,
-		fn_registerer:&'static dyn Fn() -> Vec<QuExtFnData>,
+		fn_registerer:&'static dyn Fn() -> Vec<ExternalFunction>,
+		size:usize,
 	) -> Self {
 		let name = name.into();
+		assert!(size < u8::MAX as usize);
 		Self {
 			name,
 			fns_map: HashMap::default(),
 			register_fn: fn_registerer,
+			size: size as u8,
 		}
 	}
 
