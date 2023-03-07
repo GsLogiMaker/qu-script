@@ -1,6 +1,5 @@
 
 use crate::QuFunctionId;
-use crate::QuInt;
 use crate::QuOp;
 use crate::QuOp::*;
 use crate::QuParser;
@@ -230,7 +229,7 @@ pub struct QuCompiler<'a> {
 
 		let left_b = self.cmp_expr(&left, left_reg)?;
 		let right_b = self.cmp_expr(&right, right_reg)?;
-		let function_name = QuOperator::from_symbol(&operator.slice).get_function_name();
+		let function_name = QuOperator::from_symbol(&operator.slice).name();
 
 		let mut builder = QuAsmBuilder::new();
 		
@@ -240,7 +239,7 @@ pub struct QuCompiler<'a> {
 			.get_struct(&left_b.return_type)?
 			.get_fn_id(function_name)?;
 		let return_type = self.imports.unwrap()
-			.get_struct_by_id(
+			.get_struct(
 				self.imports.unwrap().get_fn_data_by_id(fn_id)?.return_type
 			)?
 			.name.clone();

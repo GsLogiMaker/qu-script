@@ -9,7 +9,6 @@ use std::mem::take;
 use std::ops::AddAssign;
 
 use crate::QuExtFnData;
-use crate::QuInt;
 use crate::QuMsg;
 use crate::QuRegisterStruct;
 use crate::QuValue;
@@ -253,7 +252,7 @@ pub struct QuVm {
 			pc: 0,
 		};
 		vm.imports.register_struct::<QuVoid>();
-		vm.imports.register_struct::<QuInt>();
+		vm.imports.register_struct::<i32>();
 		vm.imports.register_fns();
 		vm
 	}
@@ -334,7 +333,7 @@ pub struct QuVm {
 		imports:&QuRegistered,
 	) -> Result<(), QuMsg> {
 
-		let struct_name = <S as QuRegisterStruct>::get_name();
+		let struct_name = <S as QuRegisterStruct>::name();
 		let r_struct = imports.get_struct(&struct_name)?;
 
 		let fn_id = imports.get_fn_id(fn_name, &struct_name)?;
@@ -697,7 +696,8 @@ pub struct QuVm {
 
 
 	fn op_load_int(&mut self, value:isize, output:QuStackId) {
-		self.reg_set(output, QuInt(value));
+		// TODO: Make function signature i32
+		self.reg_set(output, value as i32);
 	}
 
 
@@ -916,19 +916,5 @@ struct Stack {
 	fn subtract_offset(&mut self, by:usize) {
 		self.offset -= by;
 	}
-
-}
-
-
-pub trait QuAny: Any+Clone {}
-
-
-#[cfg(test)]
-mod test_vm {
-	use std::any::Any;
-	use std::any::TypeId;
-
-	use crate::vm::QuAny;
-	use crate::{Qu, QuVm, QuMsg, QuFnObject, QuType, QuCompiler, QuInt, vm::QuStackId};
 
 }

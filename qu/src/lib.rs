@@ -291,7 +291,7 @@ struct QuVar {
 
 #[cfg(test)]
 mod lib {
-    use crate::{Qu, QuMsg, QuInt, QuVoid};
+    use crate::Qu;
 
 	#[test]
 	fn fibinachi() {
@@ -308,11 +308,11 @@ mod lib {
 				n2 = nth
 				count = count + 1
 			
-			return nothing
+			return n1
 		"#;
 
-		let n1 = *qu.run_and_get::<QuInt>(script).unwrap();
-		//assert_eq!(n1, QuInt(34));
+		let n1 = *qu.run_and_get::<i32>(script).unwrap();
+		assert_eq!(n1, 34);
 	}
 
 
@@ -345,8 +345,8 @@ mod lib {
 		"#;
 
 		dbg!(qu.compile(script).unwrap());
-		let value:QuInt = *qu.run_and_get(script).unwrap();
-		assert_eq!(value, QuInt(128));
+		let value:i32 = *qu.run_and_get(script).unwrap();
+		assert_eq!(value, 128);
 	}
 
 
@@ -360,9 +360,9 @@ mod lib {
 			return add(l, r)
 		"#;
 		let mut qu = Qu::new();
-		
-		let val = *qu.run_and_get::<QuInt>(script).unwrap();
-		assert_eq!(val, QuInt(3));
+
+		let val = *qu.run_and_get::<i32>(script).unwrap();
+		assert_eq!(val, 3);
 	}
 
 
@@ -415,8 +415,8 @@ mod lib {
 			return counter
 		"#;
 
-		let res:QuInt = *qu.run_and_get(script).unwrap();
-		assert_eq!(res, QuInt(0));
+		let res:i32 = *qu.run_and_get(script).unwrap();
+		assert_eq!(res, 0);
 	}
 
 
@@ -430,8 +430,8 @@ mod lib {
 			return counter
 		"#;
 
-		let res:QuInt = *qu.run_and_get(script).unwrap();
-		assert_eq!(res, QuInt(10));
+		let res:i32 = *qu.run_and_get(script).unwrap();
+		assert_eq!(res, 10);
 	}
 
 
@@ -443,8 +443,8 @@ mod lib {
 			return counter
 		"#;
 
-		let res:QuInt = *qu.run_and_get(script).unwrap();
-		assert_eq!(res, QuInt(100));
+		let res:i32 = *qu.run_and_get(script).unwrap();
+		assert_eq!(res, 100);
 	}
 
 
@@ -457,7 +457,7 @@ mod lib {
 			return counter
 		"#;
 
-		let res:QuInt = *qu.run_and_get(script).unwrap();
+		let res:i32 = *qu.run_and_get(script).unwrap();
 	}
 
 
@@ -470,7 +470,7 @@ mod lib {
 			return counter
 		"#;
 
-		let res:QuInt = *qu.run_and_get(script).unwrap();
+		let res:i32 = *qu.run_and_get(script).unwrap();
 	}
 
 }

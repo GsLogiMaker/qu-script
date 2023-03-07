@@ -369,7 +369,7 @@ pub enum QuOperator {
 	}
 
 
-	pub fn get_function_name(&self) -> &'static str {
+	pub fn name(&self) -> &'static str {
 		match self {
 			QuOperator::Add => "add",
 			QuOperator::Sub => "sub",

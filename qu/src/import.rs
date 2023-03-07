@@ -6,6 +6,7 @@ use std::mem::size_of;
 use crate::ExternalFunction;
 use crate::QuMsg;
 use crate::QuRegisterStruct;
+use crate::QuVoid;
 
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -136,10 +137,12 @@ pub struct QuRegistered {
 		let new_function_id = QuFunctionId::new(self.fns.len());
 
 		// Associate function as a method of its first perameter
-		let struct_id = *external_function
-			.parameters
-			.get(0)
-			.unwrap_or(&QuStructId::from(0));
+		let struct_id = self.get_struct_id(
+			*external_function
+				.parameters
+				.get(0)
+				.unwrap_or(&QuVoid::name())
+		)?;
 		let struct_data = self.get_struct_by_id_mut(struct_id)?;
 		struct_data.fns_map.insert(external_function.name.clone(), new_function_id);
 
@@ -166,7 +169,7 @@ pub struct QuRegistered {
 	/// 
 	/// struct MyStruct();
 	/// impl QuRegisterStruct for MyStruct {
-	/// 	fn get_name() -> &'static str {
+	/// 	fn name() -> &'static str {
 	/// 		"MyStruct"
 	/// 	}
 	/// }
@@ -176,13 +179,13 @@ pub struct QuRegistered {
 	/// ```
 	pub fn register_struct<S:QuRegisterStruct+'static>(&mut self) {
 		let r_struct = QuStruct::new(
-			<S as QuRegisterStruct>::get_name(),
+			<S as QuRegisterStruct>::name(),
 			&<S as QuRegisterStruct>::register_fns,
 			size_of::<S>(),
 		);
 		
 		self.structs_map.insert(
-			<S as QuRegisterStruct>::get_name().to_owned(),
+			<S as QuRegisterStruct>::name().to_owned(),
 			QuStructId::new(self.structs.len()),
 		);
 		self.structs.push(r_struct);

@@ -10,7 +10,6 @@ use criterion::Criterion;
 use qu::Qu;
 use qu::QuCompiler;
 use qu::QuFunctionId;
-use qu::QuInt;
 use qu::QuMsg;
 use qu::QuOp;
 use qu::QuStackId;
