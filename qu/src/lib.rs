@@ -145,7 +145,7 @@ pub struct Qu<'a> {
 	pub fn reg_get<'b, T:'a>(
 		&self, at_reg:QuStackId
 	) -> Result<&T, QuMsg> {
-		self.vm.reg_get::<T>(at_reg)
+		self.vm.read::<T>(at_reg)
 	}
 
 

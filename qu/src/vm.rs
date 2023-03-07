@@ -697,13 +697,13 @@ pub struct QuVm {
 
 	fn op_load_int(&mut self, value:isize, output:QuStackId) {
 		// TODO: Make function signature i32
-		self.reg_set(output, value as i32);
+		self.write(output, value as i32);
 	}
 
 
 	#[inline]
 	/// Gets a register value.
-	pub fn reg_get<T>(&self, at_reg:QuStackId) -> Result<&T, QuMsg> {
+	pub fn read<T>(&self, at_reg:QuStackId) -> Result<&T, QuMsg> {
 		let Ok(struct_data) = self.imports
 			.get_struct_by_id(at_reg.struct_id())
 		else {
@@ -752,7 +752,7 @@ pub struct QuVm {
 
 	#[inline]
 	/// Sets a register value.
-	pub fn reg_set<T>(&mut self, id:QuStackId, value:T) {
+	pub fn write<T>(&mut self, id:QuStackId, value:T) {
 		return self.stack.set(id, value);
 	}
 

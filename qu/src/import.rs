@@ -138,10 +138,10 @@ pub struct QuRegistered {
 
 		// Associate function as a method of its first perameter
 		let struct_id = self.get_struct_id(
-			*external_function
+			external_function
 				.parameters
 				.get(0)
-				.unwrap_or(&QuVoid::name())
+				.unwrap_or(&QuVoid::name().into())
 		)?;
 		let struct_data = self.get_struct_by_id_mut(struct_id)?;
 		struct_data.fns_map.insert(external_function.name.clone(), new_function_id);
