@@ -166,13 +166,12 @@ pub struct QuRegistered {
 	/// 
 	/// struct MyStruct();
 	/// impl QuRegisterStruct for MyStruct {
-	/// 	fn get_name() -> String {
-	/// 		"MyStruct".into()
+	/// 	fn get_name() -> &'static str {
+	/// 		"MyStruct"
 	/// 	}
 	/// }
 	/// 
 	/// let mut qu = Qu::new();
-	/// 
 	/// qu.register_struct::<MyStruct>();
 	/// ```
 	pub fn register_struct<S:QuRegisterStruct+'static>(&mut self) {

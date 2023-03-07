@@ -309,7 +309,27 @@ impl QuInt {
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct QuVoid();
-impl QuRegisterStruct for QuVoid {
+impl QuVoid {
+
+	fn quwrapper__copy__(
+		vm:&mut QuVm, parameters:&[QuStackId], output_id: QuStackId,
+	) -> Result<(), QuMsg> {
+		Ok(())
+	}
+
+} impl QuRegisterStruct for QuVoid {
+
+	fn register_fns() -> Vec<ExternalFunction> {
+		vec![
+			ExternalFunction::new(
+				"copy",
+				&Self::quwrapper__copy__,
+				&[0.into(), 0.into()],
+				0.into(),
+			),
+		]
+	}
+
 
 	fn get_name() -> &'static str {
 		"void"

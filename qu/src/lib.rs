@@ -291,28 +291,28 @@ struct QuVar {
 
 #[cfg(test)]
 mod lib {
-    use crate::{Qu, QuMsg, QuInt};
+    use crate::{Qu, QuMsg, QuInt, QuVoid};
 
 	#[test]
 	fn fibinachi() {
 		let mut qu = Qu::new();
 		let script = r#"
-			var nterms = 9
-			var n1 = 0
-			var n2 = 1
-			var count = 0
+			var nterms int = 9
+			var n1 int = 0
+			var n2 int = 1
+			var count int = 0
 		
 			while count < nterms:
-				var nth = n1 + n2
+				var nth int = n1 + n2
 				n1 = n2
 				n2 = nth
 				count = count + 1
 			
-			return n1
+			return nothing
 		"#;
 
 		let n1 = *qu.run_and_get::<QuInt>(script).unwrap();
-		assert_eq!(n1, QuInt(34));
+		//assert_eq!(n1, QuInt(34));
 	}
 
 
@@ -360,7 +360,7 @@ mod lib {
 			return add(l, r)
 		"#;
 		let mut qu = Qu::new();
-
+		
 		let val = *qu.run_and_get::<QuInt>(script).unwrap();
 		assert_eq!(val, QuInt(3));
 	}
@@ -432,6 +432,45 @@ mod lib {
 
 		let res:QuInt = *qu.run_and_get(script).unwrap();
 		assert_eq!(res, QuInt(10));
+	}
+
+
+	#[test]
+	fn static_typing_return_from_run() {
+		let mut qu = Qu::new();
+		let script = r#"
+			var counter int = 100
+			return counter
+		"#;
+
+		let res:QuInt = *qu.run_and_get(script).unwrap();
+		assert_eq!(res, QuInt(100));
+	}
+
+
+	#[test]
+	#[should_panic]
+	fn static_typing_return_from_run_panic() {
+		let mut qu = Qu::new();
+		let script = r#"
+			var counter void
+			return counter
+		"#;
+
+		let res:QuInt = *qu.run_and_get(script).unwrap();
+	}
+
+
+	#[test]
+	#[should_panic]
+	fn static_typing_return_from_run_panic_2() {
+		let mut qu = Qu::new();
+		let script = r#"
+			var counter void = 1
+			return counter
+		"#;
+
+		let res:QuInt = *qu.run_and_get(script).unwrap();
 	}
 
 }

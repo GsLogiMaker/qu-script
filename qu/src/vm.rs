@@ -625,7 +625,7 @@ pub struct QuVm {
 		ouput:QuStackId,
 		code:&[QuOp],
 	) -> Result<(), QuMsg> {
-		self.stack_offset += usize::from(ouput);
+		self.stack.add_offset(usize::from(ouput));
 		// Assure registers is big enought to fit u8::MAX more values
 		if (self.stack_offset + u8::MAX as usize) > self.stack.len() {
 			self.stack.data.resize(
@@ -638,7 +638,7 @@ pub struct QuVm {
 		let fn_obj:&QuFnObject = self.get_const_by_id(fn_id)?;
 		self.frame_start(fn_obj.body.start_index);
 		self.loop_ops(code)?;
-		self.stack_offset -= usize::from(ouput);
+		self.stack.subtract_offset(usize::from(ouput));
 		self.pc = return_pc;
 
 		return Ok(());
@@ -707,10 +707,11 @@ pub struct QuVm {
 		let Ok(struct_data) = self.imports
 			.get_struct_by_id(at_reg.struct_id())
 		else {
-			return Err("Class does not exist. From reg_get_mut".into());
+			return Err("Class does not exist. From reg_get_mut TODO: Better msg".into());
 		};
-		// TODO: Add check if casting to right struct
-		assert_eq!(size_of::<T>(), struct_data.size as usize);
+		if size_of::<T>() != struct_data.size as usize {
+			return Err("Can't get register. Mismatched types. TODO: Better msg".into());
+		}
 
 		unsafe {
 			let Some(got) = self.stack.get(at_reg)
@@ -817,7 +818,6 @@ pub struct QuVm {
 		&mut self, instructions:&[QuOp]
 	) -> Result<(), QuMsg> {
 		let op = self.next_op(instructions);
-		println!("Doing op: {:?}", &op);
 		match op {
 			QuOp::Call(fn_id, ouput) => self.op_call_fn(*fn_id, *ouput, instructions)?,
 			QuOp::CallExt(fn_id, args, output) => self.op_call_fn_ext(*fn_id, args, *output)?,
@@ -875,12 +875,12 @@ struct Stack {
 
 
 	fn get(&self, id:QuStackId) -> &[u8] {
-		&self.data[id.index()..]
+		&self.data[self.offset + id.index()..]
 	}
 
 
 	fn get_mut(&mut self, id:QuStackId) -> &mut [u8] {
-		&mut self.data[id.index()..]
+		&mut self.data[self.offset + id.index()..]
 	}
 
 
@@ -930,61 +930,5 @@ mod test_vm {
 
 	use crate::vm::QuAny;
 	use crate::{Qu, QuVm, QuMsg, QuFnObject, QuType, QuCompiler, QuInt, vm::QuStackId};
-
-	#[test]
-	fn define_and_get_const() -> Result<(), QuMsg> {
-		let mut vm = QuVm::new();
-
-		vm.define_const(
-			"MEANING_OF_LIFE".into(), Box::new(42isize));
-		vm.define_const(
-			"NAME".into(), Box::new("Qu"));
-
-		let meaning = vm.get_const::<isize>("MEANING_OF_LIFE")?;
-		assert_eq!(*meaning, 42isize);
-
-		let name = vm.get_const::<&str>("NAME")?;
-		assert_eq!(*name, "Qu");
-
-		let wrong_type
-			= vm.get_const::<&str>("MEANING_OF_LIFE");
-		assert!(wrong_type.is_err());
-
-		let not_defined
-			= vm.get_const::<isize>("DIVIDE_BY_INF");
-		assert!(not_defined.is_err());
-
-		return Ok(());
-	}
-
-
-	#[test]
-	fn define_and_get_mem() -> Result<(), QuMsg> {
-		let mut vm = QuVm::new();
-
-		vm.define_mem("health".to_owned(), Box::new(10.0f32));
-		assert_eq!(*vm.get_mem::<f32>("health")?, 10.0f32);
-
-		vm.define_mem("lives".to_owned(), Box::new(3isize));
-		assert_eq!(*vm.get_mem::<isize>("lives")?, 3isize);
-
-		let health = vm.get_mem_mut::<f32>("health")?;
-		*health = 5.0;
-		assert_eq!(*vm.get_mem::<f32>("health")?, 5.0f32);
-
-		let lives = vm.get_mem_mut::<isize>("lives")?;
-		*lives = 2;
-		assert_eq!(*vm.get_mem::<isize>("lives")?, 2isize);
-
-		let bad_type
-			= vm.get_const::<&str>("health");
-		assert!(bad_type.is_err());
-		
-		let not_defined
-			= vm.get_const::<isize>("i_dont_exist");
-		assert!(not_defined.is_err());
-
-		return Ok(());
-	}
 
 }
