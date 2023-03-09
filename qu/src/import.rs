@@ -33,7 +33,7 @@ impl From<QuFunctionId> for u8 {
 }
 
 
-#[derive(Default)]
+#[derive(Clone, Debug, Default)]
 pub struct QuRegistered {
 	pub fns:Vec<ExternalFunction>,
 	pub structs:Vec<QuStruct>,
@@ -63,14 +63,21 @@ pub struct QuRegistered {
 
 	pub fn get_fn_id(&self, fn_name:&str, struct_name:&str
 	) -> Result<QuFunctionId, QuMsg> {
-		let s_data = self.get_struct(struct_name)?;
+		let s_data = self.get_struct_by_str(struct_name)?;
 		Ok(s_data.get_fn_id(fn_name)?)
 	}
 
 
-	pub fn get_struct(&self, name:&str
+	pub fn get_struct<T:QuRegisterStruct>(
+		&self,
 	) -> Result<&QuStruct, QuMsg>{
-		Ok(self.get_struct_by_id(self.get_struct_id(name)?)?)
+		self.get_struct_by_str(<T as QuRegisterStruct>::name())
+	}
+
+
+	pub fn get_struct_by_str(&self, name:&str
+	) -> Result<&QuStruct, QuMsg>{
+		Ok(self.get_struct_by_id(self.get_struct_id_by_str(name)?)?)
 	}
 
 
@@ -98,7 +105,14 @@ pub struct QuRegistered {
 	}
 
 
-	pub fn get_struct_id(&self, name:&str
+	pub fn get_struct_id<T:QuRegisterStruct>(
+		&self
+	) -> Result<QuStructId, QuMsg> {
+		self.get_struct_id_by_str(<T as QuRegisterStruct>::name())
+	}
+
+
+	pub fn get_struct_id_by_str(&self, name:&str
 	) -> Result<QuStructId, QuMsg>{
 		let Some(d) = self.structs_map.get(name)
 			else {
@@ -137,7 +151,7 @@ pub struct QuRegistered {
 		let new_function_id = QuFunctionId::new(self.fns.len());
 
 		// Associate function as a method of its first perameter
-		let struct_id = self.get_struct_id(
+		let struct_id = self.get_struct_id_by_str(
 			external_function
 				.parameters
 				.get(0)

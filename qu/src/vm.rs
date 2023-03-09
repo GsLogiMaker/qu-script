@@ -13,6 +13,7 @@ use crate::QuMsg;
 use crate::QuRegisterStruct;
 use crate::QuValue;
 use crate::QuVoid;
+use crate::compiler::Definitions;
 use crate::import::QuFunctionId;
 use crate::import::QuRegistered;
 use crate::import::QuStruct;
@@ -200,9 +201,9 @@ impl From<QuStackId> for i32 {
 /// 
 /// This struct is not meant to be accessed directly (in most cases). See
 /// [`qu::Qu`] for interfacing with Qu script.
+#[derive(Default)]
 pub struct QuVm {
 	/// Holds the outputed value of the last executed operation.
-	hold: StackValue,
 	pub hold_is_zero: bool,
 
 	/// Holds defined constants.
@@ -215,7 +216,7 @@ pub struct QuVm {
 	memory_map: HashMap<String, QuMemId>,
 	/// Holds the value returned from a Qu script.
 	return_type: QuStructId,
-	pub imports: QuRegistered,
+	pub definitions: Definitions,
 
 	/// The memory registers. Holds all primatives of the VM.
 	stack: Stack,
@@ -237,23 +238,17 @@ pub struct QuVm {
 	/// ```
 	pub fn new() -> Self {
 		let mut vm = QuVm { 
-			hold: Box::new(QuVoid()),
 			hold_is_zero: false,
-
-			constants: Vec::default(),
-			constant_map: HashMap::default(),
-			memory: Vec::default(),
-			memory_map: HashMap::default(),
 			return_type: 0.into(),
-			imports: QuRegistered::default(),
-
 			stack: Stack::new(u8::MAX as usize),
 			stack_offset: 0,
 			pc: 0,
+			..Default::default()
 		};
-		vm.imports.register_struct::<QuVoid>();
-		vm.imports.register_struct::<i32>();
-		vm.imports.register_fns();
+		vm.definitions.imports.register_struct::<QuVoid>();
+		vm.definitions.imports.register_struct::<i32>();
+		vm.definitions.imports.register_struct::<bool>();
+		vm.definitions.imports.register_fns();
 		vm
 	}
 
@@ -330,13 +325,16 @@ pub struct QuVm {
 		obj_name:&str,
 		fn_name:&str,
 		parameters:Vec<QuMemId>,
-		imports:&QuRegistered,
 	) -> Result<(), QuMsg> {
 
 		let struct_name = <S as QuRegisterStruct>::name();
-		let r_struct = imports.get_struct(&struct_name)?;
+		let r_struct = self.definitions
+			.imports
+			.get_struct_by_str(&struct_name)?;
 
-		let fn_id = imports.get_fn_id(fn_name, &struct_name)?;
+		let fn_id = self.definitions
+			.imports
+			.get_fn_id(fn_name, &struct_name)?;
 		let mem_id = self.get_mem_id(obj_name)?.clone();
 
 		// TODO: Bring named memory addresses into registers to be used in fn
@@ -356,7 +354,7 @@ pub struct QuVm {
 		parameters:&Vec<QuStackId>,
 		output_id:QuStackId,
 	) -> Result<(), QuMsg> {
-		Ok((self.imports.get_fn_data_by_id(fn_id)?.pointer)(
+		Ok((self.definitions.imports.get_fn_data_by_id(fn_id)?.pointer)(
 			self,
 			parameters,
 			output_id,
@@ -650,9 +648,6 @@ pub struct QuVm {
 		args:&Vec<QuStackId>,
 		output:QuStackId,
 	) -> Result<(), QuMsg> {
-		let fn_data
-			= self.imports.get_fn_data_by_id(func)?;
-
 		self.external_call_by_id(
 			func,
 			args,
@@ -704,7 +699,8 @@ pub struct QuVm {
 	#[inline]
 	/// Gets a register value.
 	pub fn read<T>(&self, at_reg:QuStackId) -> Result<&T, QuMsg> {
-		let Ok(struct_data) = self.imports
+		let Ok(struct_data) = self.definitions
+			.imports
 			.get_struct_by_id(at_reg.struct_id())
 		else {
 			return Err("Class does not exist. From reg_get_mut TODO: Better msg".into());
@@ -729,7 +725,8 @@ pub struct QuVm {
 	#[inline]
 	/// Gets a register value.
 	pub fn reg_get_mut<T>(&mut self, at_reg:QuStackId) -> Result<&mut T, QuMsg> {
-		let Ok(struct_data) = self.imports
+		let Ok(struct_data) = self.definitions
+			.imports
 			.get_struct_by_id(at_reg.struct_id())
 		else {
 			return Err("Class does not exist. From reg_get_mut".into());

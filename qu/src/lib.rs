@@ -44,6 +44,7 @@ mod vm;
 
 use std::marker::PhantomData;
 
+use compiler::Definitions;
 pub use import::QuFunctionId;
 use import::QuRegistered;
 use tokens::{TOKEN_TYPE_NAME, QuToken};
@@ -115,30 +116,31 @@ pub struct Qu<'a> {
 	/// 
 	/// # fn main(){example().unwrap()}
 	/// # fn example() -> Result<(), QuMsg> {
-	/// let qu = Qu::new();
+	/// let mut qu = Qu::new();
 	/// let bytecode = qu.compile("var count = 0")?;
 	/// # return Ok(());
 	/// # }
 	/// ```
-	pub fn compile(&self, code:&str) -> Result<Vec<QuOp>, QuMsg> {
+	pub fn compile(&mut self, code:&str) -> Result<Vec<QuOp>, QuMsg> {
 		// Compile
 		let mut c = QuCompiler::new();
-		return Ok(c.compile(code, &self.vm.imports)?);
+		let code = c.compile(code, &mut self.vm.definitions)?;
+		return Ok(code);
 	}
 
 
 	pub fn register_fns(&mut self) {
-		self.vm.imports.register_fns()
+		self.vm.definitions.imports.register_fns()
 	}
 
 
 	fn register_fn(&mut self, fn_data:ExternalFunction) -> Result<(), QuMsg> {
-		self.vm.imports.register_fn(fn_data)
+		self.vm.definitions.imports.register_fn(fn_data)
 	}
 
 
 	pub fn register_struct<S:QuRegisterStruct+'static>(&mut self) {
-		self.vm.imports.register_struct::<S>()
+		self.vm.definitions.imports.register_struct::<S>()
 	}
 
 
@@ -320,7 +322,7 @@ mod lib {
 	fn non_returning_fn() {
 		let mut qu = Qu::new();
 		let script = r#"
-			fn count(to):
+			fn count(to int) void:
 				var i = 0
 				while i < to:
 					i = i + 1
@@ -336,7 +338,7 @@ mod lib {
 	fn recursive_fn_addinate() {
 		let mut qu = Qu::new();
 		let script = r#"
-			fn addinate(val):
+			fn addinate(val int) int:
 				if val < 100:
 					return addinate(val + val)
 				return val
@@ -344,7 +346,6 @@ mod lib {
 			return addinate(1)
 		"#;
 
-		dbg!(qu.compile(script).unwrap());
 		let value:i32 = *qu.run_and_get(script).unwrap();
 		assert_eq!(value, 128);
 	}
@@ -355,7 +356,7 @@ mod lib {
 		let script = r#"
 			var l = 1
 			var r = 2
-			fn add(a, b):
+			fn add(a int, b int) int:
 				return a + b
 			return add(l, r)
 		"#;
@@ -385,7 +386,7 @@ mod lib {
 		let mut qu = Qu::new();
 		qu.run(r#"
 			var counter = 1
-			if counter:
+			if counter == 1:
 				var value = 25
 			return counter
 		"#).unwrap();
@@ -471,6 +472,19 @@ mod lib {
 		"#;
 
 		let res:i32 = *qu.run_and_get(script).unwrap();
+	}
+
+
+	#[test]
+	#[should_panic]
+	fn assign_int_to_bool_panic() {
+		let mut qu = Qu::new();
+		let script = r#"
+			var counter bool = 1
+			return counter
+		"#;
+
+		let res:bool = *qu.run_and_get(script).unwrap();
 	}
 
 }

@@ -11,6 +11,7 @@ use crate::vm::QuMemId;
 use crate::vm::QuVoidExtFn;
 use crate::vm::QuStackId;
 use crate::vm::StackValue;
+use std::fmt::Debug;
 
 
 macro_rules! qufn {
@@ -32,13 +33,13 @@ pub type QuVoidFnForm = (String, QuVoidExtFn, Vec<usize>);
 type QuMethodRegistration = (String, &'static dyn Fn(&mut QuVm));
 
 
+#[derive(Clone)]
 pub struct ExternalFunction {
 	pub name: String,
 	pub pointer: QuExtFn,
 	pub parameters: Vec<&'static str>,
 	pub return_type: &'static str,
 } impl ExternalFunction {
-
 	pub fn new(
 		name: &str,
 		pointer: QuExtFn,
@@ -59,7 +60,21 @@ pub struct ExternalFunction {
 	) -> Result<(), QuMsg> {
 		(self.pointer)(vm, parameters, output_id)
 	}
-
+} impl Debug for ExternalFunction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExternalFunction")
+			.field("name", &self.name)
+			.field("parameters", &self.parameters)
+			.field("return_type", &self.return_type)
+			.finish()
+    }
+} impl Default for ExternalFunction {
+    fn default() -> Self {
+        Self {
+			pointer: &|_, _, _| {Ok(())},
+			..Default::default()
+		}
+    }
 }
 
 
@@ -186,7 +201,7 @@ impl QuRegisterStruct for bool {
 				Ok(())
 			}),
 			qufn!(copy(Self, Self) Self |vm, args, return_id| {
-				vm.write(return_id, *vm.read::<i32>(args[0])?);
+				vm.write(return_id, *vm.read::<bool>(args[0])?);
 				Ok(())
 			}),
 		];
@@ -202,59 +217,59 @@ impl QuRegisterStruct for i32 {
 	
 	fn register_fns() -> Vec<ExternalFunction> {
 		return vec![
-			qufn!(add(Self, Self) Self |vm, args, return_id| {
+			qufn!(add(i32, i32) i32 |vm, args, return_id| {
 				vm.write(return_id, vm.read::<i32>(args[0])? + vm.read::<i32>(args[1])?);
 				Ok(())
 			}),
-			qufn!(sub(Self, Self) Self |vm, args, return_id| {
+			qufn!(sub(i32, i32) i32 |vm, args, return_id| {
 				vm.write(return_id, vm.read::<i32>(args[0])? - vm.read::<i32>(args[1])?);
 				Ok(())
 			}),
-			qufn!(mul(Self, Self) Self |vm, args, return_id| {
+			qufn!(mul(i32, i32) i32 |vm, args, return_id| {
 				vm.write(return_id, vm.read::<i32>(args[0])? * vm.read::<i32>(args[1])?);
 				Ok(())
 			}),
-			qufn!(div(Self, Self) Self |vm, args, return_id| {
+			qufn!(div(i32, i32) i32 |vm, args, return_id| {
 				vm.write(return_id, vm.read::<i32>(args[0])? / vm.read::<i32>(args[1])?);
 				Ok(())
 			}),
-			qufn!(lesser(Self, Self) bool |vm, args, return_id| {
+			qufn!(lesser(i32, i32) bool |vm, args, return_id| {
 				let output = vm.read::<i32>(args[0])? < vm.read::<i32>(args[1])?;
 				vm.hold_is_zero = output;
 				vm.write(return_id, output);
 				Ok(())
 			}),
-			qufn!(lessereq(Self, Self) bool |vm, args, return_id| {
+			qufn!(lessereq(i32, i32) bool |vm, args, return_id| {
 				let output = vm.read::<i32>(args[0])? <= vm.read::<i32>(args[1])?;
 				vm.hold_is_zero = output;
 				vm.write(return_id, output);
 				Ok(())
 			}),
-			qufn!(greater(Self, Self) bool |vm, args, return_id| {
+			qufn!(greater(i32, i32) bool |vm, args, return_id| {
 				let output = vm.read::<i32>(args[0])? > vm.read::<i32>(args[1])?;
 				vm.hold_is_zero = output;
 				vm.write(return_id, output);
 				Ok(())
 			}),
-			qufn!(greatereq(Self, Self) bool |vm, args, return_id| {
+			qufn!(greatereq(i32, i32) bool |vm, args, return_id| {
 				let output = vm.read::<i32>(args[0])? >= vm.read::<i32>(args[1])?;
 				vm.hold_is_zero = output;
 				vm.write(return_id, output);
 				Ok(())
 			}),
-			qufn!(eq(Self, Self) bool |vm, args, return_id| {
+			qufn!(eq(i32, i32) bool |vm, args, return_id| {
 				let output = vm.read::<i32>(args[0])? == vm.read::<i32>(args[1])?;
 				vm.hold_is_zero = output;
 				vm.write(return_id, output);
 				Ok(())
 			}),
-			qufn!(neq(Self, Self) bool |vm, args, return_id| {
+			qufn!(neq(i32, i32) bool |vm, args, return_id| {
 				let output = vm.read::<i32>(args[0])? != vm.read::<i32>(args[1])?;
 				vm.hold_is_zero = output;
 				vm.write(return_id, output);
 				Ok(())
 			}),
-			qufn!(copy(Self, Self) Self |vm, args, return_id| {
+			qufn!(copy(i32, i32) i32 |vm, args, return_id| {
 				vm.write(return_id, *vm.read::<i32>(args[0])?);
 				Ok(())
 			}),

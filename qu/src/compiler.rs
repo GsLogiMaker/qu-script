@@ -5,8 +5,11 @@ use crate::QuOp::*;
 use crate::QuParser;
 use crate::QuRegisterStruct;
 use crate::QuStackId;
+use crate::QuVoid;
 use crate::import::QuRegistered;
+use crate::import::QuStruct;
 use crate::import::QuStructId;
+use crate::parser;
 use crate::parser::FLOW_TYPE_IF;
 use crate::parser::FLOW_TYPE_WHILE;
 use crate::parser::KEYWORD_IF;
@@ -20,7 +23,9 @@ use crate::QuType2;
 use crate::vm::QuConstId;
 
 use core::panic;
+use std::any::Any;
 use std::collections::HashMap;
+use std::default;
 use std::mem::take;
 
 // TODO: Fix compiler's documentation
@@ -45,57 +50,125 @@ struct ClassMetadata {
 	name: String,
 	/// The ID of this class.
 	id: usize,
-	/// A map of names to this class's function IDs.
-	id_map: HashMap<String, usize>,
-	/// A list of compiled fuctions in this class.
-	methods: Vec<FunctionMetadata>,
-} impl ClassMetadata {
-	fn new() -> Self {
-		Self {
-			name: "".to_owned(),
-			..Default::default()
-		}
-	}
 } impl Default for ClassMetadata {
-    fn default() -> Self {
-        Self {
+	fn default() -> Self {
+		Self {
 			name: "void".to_owned(),
 			..Default::default()
 		}
-    }
+	}
 }
 
 
 #[derive(Debug, Default, Clone)]
-struct Definitions {
+pub struct Definitions {
 	/// A map of names to module IDs.
-	id_map: HashMap<String, usize>,
+	pub id_map: HashMap<String, ModuleId>,
 	/// A list of all compiled modules
-	modules: Vec<ModuleMetadata>
+	pub modules: Vec<ModuleMetadata>,
+	pub imports: QuRegistered,
+} impl Definitions {
+	pub fn new(imports: QuRegistered) -> Self {
+		Self {
+			imports,
+			..Default::default()
+		}
+	}
+
+
+	fn define_module(&mut self, name:String) -> &mut ModuleMetadata {
+		assert!(!self.id_map.contains_key(&name));
+		let id = self.modules.len();
+		self.modules.push(ModuleMetadata {
+			name: name.clone(),
+			id,
+			..Default::default()
+		});
+		self.id_map.insert(name, id);
+		&mut self.modules[id]
+	}
 }
 
 
+type ModuleId = usize;
+
+
 #[derive(Debug, Default, Clone)]
-struct ModuleMetadata {
+/// An item that is owned by a Qu module. See [`ModuleMetadata`].
+enum ModuleItem {
+	Class(Box<ClassMetadata>),
+	#[default]
+	Constant,
+	Function(Box<FunctionMetadata>),
+}
+
+
+type ModuleItemId = usize;
+
+
+#[derive(Debug, Clone)]
+/// Reresents a Qu module.
+pub struct ModuleMetadata {
 	/// The name of this module.
 	name: String,
 	/// The ID of this module.
-	id: usize,
+	id: ModuleId,
 	/// A map of names to class and function IDs.
-	id_map: HashMap<String, usize>,
-	/// A list of all compiled classes in the module.
-	classes: Vec<ClassMetadata>,
-	/// A list of all compiled global functions in the module.
-	functions: Vec<FunctionMetadata>,		
+	id_map: HashMap<String, ModuleItemId>,
+	/// A list of all compiled classes, functions, and constants in the module.
+	items: Vec<ModuleItem>,
+} impl ModuleMetadata {
+	fn define_class(&mut self, name:String) -> &mut ClassMetadata {
+		assert!(!self.id_map.contains_key(&name));
+		let id = self.items.len();
+		self.items.push(ModuleItem::Class(Box::new(ClassMetadata {
+			name: name.clone(),
+			id,
+			..Default::default()
+		})));
+		self.id_map.insert(name, id);
+		let ModuleItem::Class(class) = &mut self.items[id] else {panic!("")};
+		class
+	}
+
+
+	fn define_function(&mut self, identity:FunctionIdentity) -> &mut FunctionMetadata{
+		assert!(!self.id_map.contains_key(&identity.name));
+		let id = self.items.len();
+		let fn_name = identity.name.clone();
+		self.items.push(ModuleItem::Function(Box::new(FunctionMetadata {
+			identity,
+			id,
+			..Default::default()
+		})));
+		self.id_map.insert(fn_name, id);
+		let ModuleItem::Function(function) = &mut self.items[id] else {panic!("")};
+		function
+	}
+} impl Default for ModuleMetadata {
+	fn default() -> Self {
+		Self {
+			name: "__main__".into(),
+			id : Default::default(),
+			id_map : Default::default(),
+			items : Default::default(),
+		}
+	}
+}
+
+
+#[derive(Debug, Default, Clone)]
+struct FunctionIdentity {
+	name: String,
+	parameters: Vec<String>,
+	return_type: String,
 }
 
 
 #[derive(Debug, Default, Clone)]
 struct FunctionMetadata {
-	name: String,
-	id: u32,
-	parameters: Vec<()>,
-	retur_type_id: u32,
+	id: ModuleItemId,
+	identity: FunctionIdentity,
 }
 
 
@@ -130,15 +203,14 @@ struct QuCmpFrame {
 
 
 /// Compiles [QuLeaf]s into Qu bytecode.
-pub struct QuCompiler<'a> {
+pub struct QuCompiler {
 	contexts:Vec<QuCmpContext>,
 	constants_code:Vec<u8>,
 	name_refs:HashMap<String, u32>,
 	types:Vec<QuType2>,
 	types_map:HashMap<String, usize>,
 	definitions: Definitions,
-	imports: Option<&'a QuRegistered>
-} impl<'a> QuCompiler<'a> {
+} impl QuCompiler {
 
 	/// Creates and returns a new [QuCompiler].
 	pub fn new() -> Self {
@@ -149,7 +221,6 @@ pub struct QuCompiler<'a> {
 			types: vec![QuType2::int(), QuType2::uint(), QuType2::bool()],
 			types_map: HashMap::new(),
 			definitions: Definitions::default(),
-			imports: None,
 		};
 
 		let mut i:usize = 0;
@@ -175,15 +246,19 @@ pub struct QuCompiler<'a> {
 
 	/// Compiles an expression into bytecode.
 	fn cmp_expr(
-		&mut self, expression:&Expression, output_reg:QuStackId
+		&mut self,
+		expression:&Expression,
+		output_reg:QuStackId,
+		definitions: &mut Definitions,
 	) -> Result<QuAsmBuilder, QuMsg> {
-		return match expression {
+		let builder = match expression {
 			Expression::Call(
 				call_expression,
 			) => self.cmp_fn_call(
 				&call_expression.name,
 				&call_expression.parameters,
-				output_reg
+				output_reg,
+				definitions
 			),
 			Expression::Operation(
 				operation_expression,
@@ -192,17 +267,36 @@ pub struct QuCompiler<'a> {
 				&operation_expression.left,
 				&operation_expression.right,
 				output_reg,
+				definitions,
 			),
 			Expression::Number(number)
-				=> Ok(self.cmp_expr_int(&number.value, output_reg)),
+				=> self.cmp_expr_int(&number.value, output_reg, definitions),
 			Expression::Tuple(tuple)
 				=> self.cmp_expr_tuple(
 					&tuple.elements,
 					output_reg,
+					definitions,
 				),
 			Expression::Var(var)
 				=> self.cmp_expr_val(&var.name, output_reg),
-		};
+		}?;
+
+		// Type check
+		let void_id = definitions.imports
+			.get_struct_id::<QuVoid>()?;
+		if builder.return_type != "void" {
+			let returning_type = definitions.imports
+				.get_struct_id_by_str(&builder.return_type)?;
+			if returning_type != output_reg.struct_id() {
+				return Err(format!(
+					"Attempted to assign a value of type '{}' to a location of type '{}'.",
+					builder.return_type,
+					definitions.imports.get_struct_by_id(output_reg.struct_id())?.name,
+				).into());
+			}
+		}
+
+		Ok(builder)
 	}
 
 
@@ -214,33 +308,25 @@ pub struct QuCompiler<'a> {
 		right: &Expression,
 		// TODO: Change output_reg to a struct without type information
 		output_reg: QuStackId,
+		definitions: &mut Definitions,
 	)-> Result<QuAsmBuilder, QuMsg> {
-		let left_reg = if let Expression::Var(_) = left {
-			self.get_expr_reg(&left)?
-		} else { output_reg };
+		let left_reg = self.get_expr_reg(&left, definitions)?;
+		let right_reg = self.get_expr_reg(&right, definitions)?;
 
-		let right_reg = if let Expression::Var(_) = right {
-			self.get_expr_reg(&right)?
-		} else {
-			if left_reg == output_reg {
-				self.get_expr_reg(&right)?
-			} else { output_reg }
-		};
-
-		let left_b = self.cmp_expr(&left, left_reg)?;
-		let right_b = self.cmp_expr(&right, right_reg)?;
+		let left_b = self.cmp_expr(&left, left_reg, definitions)?;
+		let right_b = self.cmp_expr(&right, right_reg, definitions)?;
 		let function_name = QuOperator::from_symbol(&operator.slice).name();
 
 		let mut builder = QuAsmBuilder::new();
 		
 
 		// Set builder return type
-		let fn_id = self.imports.unwrap()
-			.get_struct(&left_b.return_type)?
+		let fn_id = definitions.imports
+			.get_struct_by_str(&left_b.return_type)?
 			.get_fn_id(function_name)?;
-		let return_type = self.imports.unwrap()
-			.get_struct(
-				self.imports.unwrap().get_fn_data_by_id(fn_id)?.return_type
+		let return_type = definitions.imports
+			.get_struct_by_str(
+				definitions.imports.get_fn_data_by_id(fn_id)?.return_type
 			)?
 			.name.clone();
 		builder.return_type = return_type.clone();
@@ -265,8 +351,11 @@ pub struct QuCompiler<'a> {
 	/// Panics if `val` can't be parsed to a number.
 	fn cmp_expr_int(
 		// TODO: Change output_reg to a struct without type information
-		&mut self, value:&QuToken, output_reg:QuStackId
-	) -> QuAsmBuilder {
+		&mut self,
+		value:&QuToken,
+		output_reg:QuStackId,
+		definitions: &mut Definitions,
+	) -> Result<QuAsmBuilder, QuMsg> {
 		// TODO: Support other int sizes
 		
 		let Ok(val) = value.slice.parse::<isize>() else {
@@ -275,20 +364,23 @@ pub struct QuCompiler<'a> {
 
 		let mut b = QuAsmBuilder::new();
 		b.add_op(Value(val, output_reg));
-		b.return_type = "int".into();
+		b.return_type = definitions.imports.get_struct::<i32>()?.name.clone();
 
-		return b;
+		return Ok(b);
 	}
 
 
 	/// Compiles a tuple construction into bytecode.
 	fn cmp_expr_tuple(
-		&mut self, elements:&Vec<Expression>, to_reg:QuStackId
+		&mut self,
+		elements:&Vec<Expression>,
+		to_reg:QuStackId,
+		definitions: &mut Definitions,
 	) -> Result<QuAsmBuilder, QuMsg> {
 		let mut b = QuAsmBuilder::new();
 		let mut i:u8 = to_reg.into();
 		for item in elements {
-			b.add_builder(self.cmp_expr(item, i.into())?);
+			b.add_builder(self.cmp_expr(item, i.into(), definitions)?);
 			i += 1;
 		}
 
@@ -305,7 +397,7 @@ pub struct QuCompiler<'a> {
 		let var_identity = self.get_var_identity(&name.slice).unwrap();
 		
 		// Copying to same register location, return nothing
-		if var_identity.id == output_reg {
+		if var_identity.stack_id == output_reg {
 			let mut b = QuAsmBuilder::default();
 			b.return_type = var_identity.static_type.clone();
 			return Ok(b);
@@ -314,7 +406,7 @@ pub struct QuCompiler<'a> {
 		let mut b = QuAsmBuilder::new();
 		b.add_bp(QuBuilderPiece::ReprCallExt(
 			"copy".into(),
-			vec![var_identity.id],
+			vec![var_identity.stack_id],
 			output_reg,
 		));
 
@@ -326,20 +418,30 @@ pub struct QuCompiler<'a> {
 
 	/// Compiles an *if* statement into bytecode.
 	fn cmp_flow_if(
-		&mut self, mut condition:&Expression, body:&CodeScope,
+		&mut self,
+		mut condition:&Expression,
+		body:&CodeScope,
+		definitions: &mut Definitions,
 	) -> Result<QuAsmBuilder, QuMsg> {
 		// Get expression register
 		let mut expr_b = with!{
 			self.stack_frame_start, self.stack_frame_end {
-				let expr_reg = self.get_expr_reg(&mut condition)?;
-				self.cmp_expr(condition, expr_reg)
+				let expr_reg = self.get_expr_reg(&mut condition, definitions)?;
+				self.cmp_expr(
+					condition,
+					QuStackId::new(
+						expr_reg.index(),
+						definitions.imports.get_struct_id::<bool>()?,
+					),
+					definitions
+				)
 			}
 		}?;
 
 		// New frame for the code in the 'if' body
 		let b:Result<QuAsmBuilder, QuMsg> = with!{
 			self.stack_frame_start, self.stack_frame_end {
-				let body_code = self.cmp_scope(body)?;
+				let body_code = self.cmp_scope(body, definitions)?;
 
 				let mut b = QuAsmBuilder::new();
 				b.add_op(JumpByIfNot(body_code.len() as isize));
@@ -357,14 +459,24 @@ pub struct QuCompiler<'a> {
 
 	/// Compiles a *while* statement into bytecode.
 	fn cmp_flow_while(
-		&mut self, mut condition:&Expression, body:&CodeScope,
+		&mut self,
+		mut condition:&Expression,
+		body:&CodeScope,
+		definitions: &mut Definitions,
 	) -> Result<QuAsmBuilder, QuMsg> {
 		// Get expression register
 		let mut expr_code = with!(
 			self.stack_frame_start, self.stack_frame_end {
-				let if_expr_reg = self.get_expr_reg(&mut condition)?;
+				let if_expr_reg = self.get_expr_reg(&mut condition, definitions)?;
 				// Expression code
-				self.cmp_expr(condition, if_expr_reg)
+				self.cmp_expr(
+					condition,
+					QuStackId::new(
+						if_expr_reg.index(),
+						definitions.imports.get_struct_id::<bool>()?,
+					),
+					definitions
+				)
 			}
 		)?;
 
@@ -373,7 +485,7 @@ pub struct QuCompiler<'a> {
 			self.stack_frame_start, self.stack_frame_end {
 				// --- Compile Pieces ---
 				// Code block
-				let mut block_code = self.cmp_scope(body)?;
+				let mut block_code = self.cmp_scope(body, definitions)?;
 				let block_code_len = block_code.len();
 
 				let mut b = QuAsmBuilder::new();
@@ -412,15 +524,16 @@ pub struct QuCompiler<'a> {
 		name:&QuToken,
 		parameters:&TupleExpression,
 		store_to:QuStackId,
+		definitions: &mut Definitions,
 	) -> Result<QuAsmBuilder, QuMsg> {
 		let mut builder = QuAsmBuilder::new();
 
 		with!(self.stack_frame_start, self.stack_frame_end {
 			for p in &parameters.elements {
 				// TODO: Support more than int
-				let object_id = self.imports.unwrap().get_struct_id("int")?;
-				let reg = self.stack_reserve(object_id)?;
-				let parameter_expr = self.cmp_expr(p, reg)?;
+				let object_id = definitions.imports.get_struct_id_by_str("int")?;
+				let reg = self.stack_reserve(object_id, definitions)?;
+				let parameter_expr = self.cmp_expr(p, reg, definitions)?;
 				builder.add_builder(parameter_expr);
 			}
 			Ok::<(), QuMsg>(())
@@ -436,8 +549,9 @@ pub struct QuCompiler<'a> {
 
 	fn cmp_fn_decl(
 		&mut self,
-		identity:&FunctionIdentity,
-		body:&CodeScope,
+		identity: &crate::parser::parsed::FunctionIdentity,
+		body: &CodeScope,
+		definitions: &mut Definitions,
 	) -> Result<QuAsmBuilder, QuMsg> {
 		self.add_name_ref(identity.name.slice.clone());
 
@@ -450,8 +564,8 @@ pub struct QuCompiler<'a> {
 			= with!(self.context_start, self.context_end {
 
 			// Add return value variable for padding.
-			let object_id = self.imports.unwrap().get_struct_id("int")?;
-			let id = self.stack_reserve(object_id)?;
+			let object_id = definitions.imports.get_struct_id_by_str("int")?;
+			let id = self.stack_reserve(object_id, definitions)?;
 			self.add_variable(QuVarIdentity::new(
 				"return value".to_owned(),
 				"int".to_owned(),
@@ -464,8 +578,8 @@ pub struct QuCompiler<'a> {
 					Some(token) => token.slice.clone(),
 					None => "int".to_owned(),
 				};
-				let object_id = self.imports.unwrap().get_struct_id(&static_type)?;
-				let id = self.stack_reserve(object_id)?;
+				let object_id = definitions.imports.get_struct_id_by_str(&static_type)?;
+				let id = self.stack_reserve(object_id, definitions)?;
 				self.add_variable(QuVarIdentity::new(
 					p.name.slice.to_owned(),
 					static_type.to_owned(),
@@ -475,7 +589,7 @@ pub struct QuCompiler<'a> {
 
 			// Compile code block
 			let mut b = QuAsmBuilder::new();
-			b.add_builder(self.cmp_code_block(&body.code_block)?);
+			b.add_builder(self.cmp_code_block(&body.code_block, definitions)?);
 			if needs_added_end_op {
 				b.add_op(End);
 			}
@@ -494,12 +608,16 @@ pub struct QuCompiler<'a> {
 
 
 	/// Compiles a [QuLeaf] into bytecode.
-	fn cmp_statement(&mut self, statement:&Statement) -> Result<QuAsmBuilder, QuMsg> {
+	fn cmp_statement(
+		&mut self,
+		statement:&Statement,
+		definitions: &mut Definitions,
+	) -> Result<QuAsmBuilder, QuMsg> {
 		match statement {
 			Statement::Expression(expression) => {
 				return with!(self.stack_frame_start, self.stack_frame_end {
-					let reg = self.get_expr_reg(&expression)?;
-					self.cmp_expr(expression, reg)
+					let reg = self.get_expr_reg(&expression, definitions)?;
+					self.cmp_expr(expression, reg, definitions)
 				});
 			}
 			Statement::FlowStatement(flow_statement) => {
@@ -508,12 +626,14 @@ pub struct QuCompiler<'a> {
 						return self.cmp_flow_if(
 							&flow_statement.condition,
 							&flow_statement.body,
+							definitions,
 						);
 					},
 					KEYWORD_WHILE => {
 						return self.cmp_flow_while(
 							&flow_statement.condition,
-							&flow_statement.body
+							&flow_statement.body,
+							definitions,
 						);
 					}
 					_ => unimplemented!(),
@@ -524,14 +644,15 @@ pub struct QuCompiler<'a> {
 				return self.cmp_fn_decl(
 					&function_declaration.identity,
 					&function_declaration.body,
+					definitions,
 				);
 			}
 			Statement::Return(return_statement) => {
 				let mut code = QuAsmBuilder::new();
 				match &return_statement.value {
 					Some(value) => {
-						let reg = self.get_expr_reg(value)?;
-						code.add_builder(self.cmp_expr(value, reg)?);
+						let reg = self.get_expr_reg(value, definitions)?;
+						code.add_builder(self.cmp_expr(value, reg, definitions)?);
 						code.add_bp(QuBuilderPiece::ReprCallExt(
 							"copy".into(),
 							vec![reg],
@@ -551,13 +672,15 @@ pub struct QuCompiler<'a> {
 				return self.cmp_var_decl(
 					&var_declaration.name,
 					&var_declaration.static_type,
-					&var_declaration.initial_value
+					&var_declaration.initial_value,
+					definitions
 				);
 			}
 			Statement::VarAssign(variable_assignment) => {
 				return  self.cmp_var_assign(
 					&variable_assignment.name,
 					&variable_assignment.new_value,
+					definitions,
 				);
 			}
 		};
@@ -567,11 +690,12 @@ pub struct QuCompiler<'a> {
 	/// Compiles a [`Vec<QuLeaf>`] into bytecode.
 	fn cmp_code_block(
 		&mut self,
-		code_block:&CodeBlock,
+		code_block: &CodeBlock,
+		definitions: &mut Definitions,
 	) -> Result<QuAsmBuilder, QuMsg> {
 		let mut b = QuAsmBuilder::new();
 		for statements in &code_block.statements {
-			b.add_builder(self.cmp_statement(statements)?);
+			b.add_builder(self.cmp_statement(statements, definitions)?);
 		}
 		return Ok(b);
 	}
@@ -587,10 +711,11 @@ pub struct QuCompiler<'a> {
 		&mut self,
 		name:&QuToken,
 		new_value:&Expression,
+		definitions: &mut Definitions,
 	) -> Result<QuAsmBuilder, QuMsg> {
 		// Get variable register
-		let var_reg
-			= self.get_var_register(&name.slice)
+		let var_identity
+			= self.get_var_identity(&name.slice)
 				.ok_or_else(||{
 					let mut msg = QuMsg::undefined_var_assign(
 						&name.slice);
@@ -599,8 +724,9 @@ pub struct QuCompiler<'a> {
 				}
 			)?
 		;
+		let var_id = var_identity.stack_id.clone();
 		// Compile assignment to expression
-		return self.cmp_expr(new_value, var_reg);
+		return self.cmp_expr(new_value, var_id, definitions);
 	}
 
 
@@ -609,7 +735,8 @@ pub struct QuCompiler<'a> {
 		&mut self,
 		name:&QuToken,
 		static_type:&Option<QuToken>,
-		initial_value:&Option<Expression>
+		initial_value:&Option<Expression>,
+		definitions: &mut Definitions,
 	) -> Result<QuAsmBuilder, QuMsg> {
 
 		// Check if the variable is already defined
@@ -619,27 +746,34 @@ pub struct QuCompiler<'a> {
 			return Err(msg);
 		}
 
-		// Get var type
-		let var_type = if let Some(type_tk) = static_type {
-			type_tk.slice.clone()
-		} else {
-			"int".to_owned()
+		// Get static type
+		let object_id = match static_type {
+			Some(type_tk) => {
+				definitions.imports.get_struct_id_by_str(&type_tk.slice)?
+			},
+			None => {
+				match initial_value {
+					Some(expression) => {
+						self.get_expr_type(expression, definitions)?
+					},
+					None => definitions.imports.get_struct_id::<i32>()?,
+				}
+			},
 		};
 
 		// Create variable
-		let object_id = self.imports.unwrap().get_struct_id(&var_type)?;
-		let var_reg = self.stack_reserve(object_id)?;
+		let var_reg = self.stack_reserve(object_id, definitions)?;
 		self.add_variable(QuVarIdentity {
 			name: name.slice.to_owned(),
-			static_type: var_type,
-			id: var_reg,
+			static_type: definitions.imports.get_struct_by_id(object_id)?.name.clone(),
+			stack_id: var_reg,
 		});
 
 		// Compile variable assignment
 		return match initial_value {
 			// Compile variable value
 			Some(expression)
-				=> self.cmp_expr(expression, var_reg),
+				=> self.cmp_expr(expression, var_reg, definitions),
 
 			// No default value, compile fallback to zero
 			None => {
@@ -653,10 +787,14 @@ pub struct QuCompiler<'a> {
 
 
 	/// Compiles a scope.
-	fn cmp_scope(&mut self, code_scope:&CodeScope) -> Result<QuAsmBuilder, QuMsg> {
+	fn cmp_scope(
+		&mut self,
+		code_scope: &CodeScope,
+		definitions: &mut Definitions,
+	) -> Result<QuAsmBuilder, QuMsg> {
 		let compiled
 			= with!{self.stack_frame_start, self.stack_frame_end {
-				self.cmp_code_block(&code_scope.code_block)
+				self.cmp_code_block(&code_scope.code_block, definitions)
 			}
 		};
 		return compiled;
@@ -664,24 +802,25 @@ pub struct QuCompiler<'a> {
 
 
 	/// Compiles Qu code from a [`&str`] into a [`Vec<u8>`].
-	pub fn compile(&mut self, code:&str, imports:&'a QuRegistered
+	pub fn compile(
+		&mut self, code:&str, definitions: &mut Definitions,
 	) -> Result<Vec<QuOp>, QuMsg> {
-		self.imports = Some(imports);
 		let mut p = QuParser::new();
 		let code_block = p.parse(code)?;
-		let compiled = self.compile_code(&code_block)?;
-		self.imports = None;
-		Ok(compiled)
+
+		self.prepass(&code_block, definitions);
+		let compiled = self.compile_code(&code_block, definitions)?;
+		Ok((compiled))
 	}
 
 
 	/// Compiles Qu code from a [QuLeaf] into a [`Vec<u8>`].
 	pub fn compile_code(
-		&mut self, code_block:&CodeBlock
+		&mut self, code_block:&CodeBlock, definitions: &mut Definitions
 	) -> Result<Vec<QuOp>, QuMsg> {
 		// Main code
 		let mut code = with!(self.context_start, self.context_end {
-			let mut code = self.cmp_code_block(code_block)?;
+			let mut code = self.cmp_code_block(code_block, definitions)?;
 			code.add_op(End);
 			Ok::<QuAsmBuilder, QuMsg>(code)
 		})?;
@@ -689,7 +828,7 @@ pub struct QuCompiler<'a> {
 
 		Ok(code.compile(
 			&self.name_refs,
-			self.imports.unwrap(),
+			definitions,
 		)?)
 	}
 
@@ -741,13 +880,13 @@ pub struct QuCompiler<'a> {
 	/// Most expressions require a new memory location, but variables
 	/// should just return the register of the variable.
 	fn get_expr_reg(
-		&mut self, expr_leaf:&Expression
+		&mut self, expr_leaf:&Expression, definitions: &mut Definitions
 	) -> Result<QuStackId, QuMsg> {
 		return  match expr_leaf {
-			Expression::Operation(_) => Ok(self.stack_reserve(self.imports.unwrap().get_struct_id("int")?)?),
-			Expression::Call(_) => Ok(self.stack_reserve(self.imports.unwrap().get_struct_id("int")?)?),
-			Expression::Number(_) => Ok(self.stack_reserve(self.imports.unwrap().get_struct_id("int")?)?),
-			Expression::Tuple(_) => Ok(self.stack_reserve(self.imports.unwrap().get_struct_id("int")?)?),
+			Expression::Operation(_) => Ok(self.stack_reserve(definitions.imports.get_struct_id_by_str("int")?, definitions)?),
+			Expression::Call(_) => Ok(self.stack_reserve(definitions.imports.get_struct_id_by_str("int")?, definitions)?),
+			Expression::Number(_) => Ok(self.stack_reserve(definitions.imports.get_struct_id_by_str("int")?, definitions)?),
+			Expression::Tuple(_) => Ok(self.stack_reserve(definitions.imports.get_struct_id_by_str("int")?, definitions)?),
 			Expression::Var(var) => {
 				self.get_var_register(&var.name.slice)
 					.ok_or_else(||{
@@ -760,6 +899,44 @@ pub struct QuCompiler<'a> {
 				)
 			}
 		};
+	}
+
+
+	/// Returns the static type of an expression.
+	fn get_expr_type(
+		&mut self, expr_leaf:&Expression, definitions: &mut Definitions
+	) -> Result<QuStructId, QuMsg> {
+		let object_id = match expr_leaf {
+			Expression::Operation(operation) => {
+				unimplemented!()
+			},
+			Expression::Call(call_expr) => {
+				unimplemented!()
+			},
+			Expression::Number(_) => {
+				definitions.imports.get_struct_id::<i32>()?
+			},
+			Expression::Tuple(tuple) => {
+				match tuple.elements.get(0) {
+					Some(that) => {
+						self.get_expr_type(that, definitions)?
+					},
+					None => {
+						definitions.imports
+							.get_struct_id::<QuVoid>()?
+					},
+				}
+			},
+			Expression::Var(var) => {
+				self.get_var_identity(&var.name.slice)
+					.ok_or_else(|| {
+						let mut msg = QuMsg::undefined_var_access(&var.name.slice);
+						msg.token = var.name.char_index.clone();
+						return msg;
+					})?.object_id()
+			}
+		};
+		Ok(object_id)
 	}
 
 
@@ -795,7 +972,7 @@ pub struct QuCompiler<'a> {
 		let mut i = 0usize;
 		for var_ref in &self.contexts_get_top().var_identities {
 			if var_ref == var_name {
-				return Some(var_ref.id);
+				return Some(var_ref.stack_id);
 			}
 			i += 1;
 		}
@@ -812,6 +989,39 @@ pub struct QuCompiler<'a> {
 			}
 		}
 		return false;
+	}
+
+
+	fn prepass(&mut self, code_block:&CodeBlock, definitions:&mut Definitions) {
+		let module = definitions.define_module("__main__".into());
+		for statement in &code_block.statements {
+			match statement {
+				Statement::FunctionDeclaration(function_declaration) => {
+					let identity = &function_declaration.identity;
+					let mut parameters = vec![];
+					for parameter in &identity.parameters {
+						match &parameter.static_type {
+							Some(token) => {
+								parameters.push(token.slice.clone());
+							},
+							None => panic!("Dynamic typing not implemented yet"),
+						}
+					}
+					let return_type = match &identity.return_type {
+						Some(token) => {
+							token.slice.clone()
+						},
+						None => panic!("Dynamic typing not implemented yet"),
+					};
+					module.define_function(FunctionIdentity {
+						name: identity.name.slice.clone(),
+						parameters,
+						return_type,
+					});
+				},
+				_ => {},
+			}
+		}
 	}
 
 
@@ -837,9 +1047,12 @@ pub struct QuCompiler<'a> {
 
 
 	/// Returns the current stack pointer and increments it.
-	fn stack_reserve(&mut self, object: QuStructId) -> Result<QuStackId, QuMsg> {
-		let object_size = self.imports
-			.unwrap()
+	fn stack_reserve(
+		&mut self,
+		object: QuStructId,
+		definitions:&mut Definitions,
+	) -> Result<QuStackId, QuMsg> {
+		let object_size = definitions.imports
 			.get_struct_by_id(object)?
 			.size;
 		let mut top_frame = self.context_get_top_frame();
@@ -881,7 +1094,7 @@ struct QuAsmBuilder {
 	fn new() -> Self {
 		return Self {
 			code_pieces: vec![],
-			return_type: "Void".to_owned(),
+			return_type: <QuVoid as QuRegisterStruct>::name().into(),
 		}
 	}
 	
@@ -908,7 +1121,9 @@ struct QuAsmBuilder {
 
 
 	fn compile(
-		&mut self, name_references:&HashMap<String, u32>, imports:&QuRegistered
+		&mut self,
+		name_references: &HashMap<String, u32>,
+		definitions: &mut Definitions,
 	) -> Result<Vec<QuOp>, QuMsg> {
 		let mut code = vec![];
 		
@@ -924,13 +1139,13 @@ struct QuAsmBuilder {
 					};
 					code.push(Call((*fn_index).into(), *output));
 				}
-    			QuBuilderPiece::ReprCallExt(
+				QuBuilderPiece::ReprCallExt(
 					fn_name,
 					args,
 					output
 				) => {
 					// TODO: Implement static typing
-					let struct_data = imports.get_struct_by_id(
+					let struct_data = definitions.imports.get_struct_by_id(
 						args.get(0)
 							.unwrap_or(&QuStackId::from(0))
 							.struct_id()
@@ -963,11 +1178,16 @@ struct QuAsmBuilder {
 struct QuVarIdentity {
 	name: String,
 	static_type: String,
-	id: QuStackId,
+	stack_id: QuStackId,
 } impl QuVarIdentity {
 
 	fn new(name:String, static_type:String, id:QuStackId) -> Self {
-		QuVarIdentity{name, static_type, id}
+		QuVarIdentity{name, static_type, stack_id: id}
+	}
+
+
+	fn object_id(&self) -> QuStructId {
+		self.stack_id.struct_id()
 	}
 
 } impl PartialEq<str> for QuVarIdentity {
@@ -978,6 +1198,21 @@ struct QuVarIdentity {
 
 }
 
-#[cfg(test)]
-mod test {
+
+pub enum CompilerInstruction {
+	// (fn_name, args, result_variable)
+	CallExt(FunctionIdentity, Vec<String>, String),
+	CloseFrame,
+	CloseScope,
+	// (name, body_size)
+	DefineFn(String, usize),
+	// (name, type)
+	DefineVariable(String, String),
+	End,
+	JumpBy(isize),
+	JumpByIfNot(isize),
+	OpenFrame,
+	OpenScope,
+	// (var_name)
+	Return(String),
 }
