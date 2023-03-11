@@ -2,13 +2,11 @@
 //! Defines all types and objects used by Qu.
 
 
-use crate::{QuVm, parser::QuOperator, import::ClassId};
-use crate::Qu;
+use crate::QuVm;
 use crate::QuMsg;
 use crate::vm::QuExtFn;
 use crate::vm::QuVoidExtFn;
 use crate::vm::QuStackId;
-use crate::vm::StackValue;
 use std::fmt::Debug;
 
 
@@ -31,8 +29,6 @@ pub type QuExtFnData = (String, QuExtFn, Vec<usize>, usize);
 
 /// Data for a void external function.
 pub type QuVoidFnForm = (String, QuVoidExtFn, Vec<usize>);
-
-type QuMethodRegistration = (String, &'static dyn Fn(&mut QuVm));
 
 
 #[derive(Clone)]

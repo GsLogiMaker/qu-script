@@ -126,6 +126,8 @@ pub struct Definitions {
 	/// A map of names to module IDs.
 	pub module_map: HashMap<String, ModuleId>,
 	pub imports: QuRegistered,
+	/// All registered classes with external functions that were not registered.
+	with_unregistered_functions: Vec<ClassId>,
 } impl Definitions {
 	pub fn new(imports: QuRegistered) -> Self {
 		Self {
@@ -525,14 +527,15 @@ pub struct Definitions {
 	/// functions can be registered.
 	pub fn register_functions(&mut self) -> Result<(), QuMsg> {
 		let mut registrations = vec![];
-		for s in self.classes.iter() {
-			registrations.push(s.register_fn);
+		for class_id in &self.with_unregistered_functions {
+			registrations.push(self.get_class(*class_id)?.register_fn);
 		}
 		for registration in registrations {
 			for external_function in (registration)() {
 				self.register_function(external_function)?;
 			}
 		}
+		self.with_unregistered_functions.clear();
 		Ok(())
 	}
 
@@ -614,6 +617,7 @@ pub struct Definitions {
 		let module = self.get_module_mut(module_id)?;
 		assert!(!module.class_map.contains_key(class_name));
 		module.class_map.insert(class_name.into(), class_id);
+		self.with_unregistered_functions.push(class_id);
 
 		// Add class to list of classes
 		let class = QuStruct::new(

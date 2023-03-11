@@ -28,9 +28,7 @@ SOFTWARE.
 #![warn(missing_docs)]
 #![warn(rustdoc::broken_intra_doc_links)]
 
-
 extern crate lazy_static;
-
 
 mod compiler;
 mod errors;
@@ -40,12 +38,10 @@ mod parser;
 mod tokens;
 mod vm;
 
-
 use std::marker::PhantomData;
 
-use compiler::Definitions;
-use import::QuRegistered;
-use tokens::{TOKEN_TYPE_NAME, QuToken};
+use tokens::TOKEN_TYPE_NAME;
+use tokens::QuToken;
 pub use errors::QuMsg;
 pub use compiler::QuCompiler;
 pub use objects::*;
@@ -53,7 +49,6 @@ pub use parser::QuParser;
 pub use vm::QuOp;
 pub use vm::QuVm;
 pub use vm::QuStackId;
-use vm::StackValue;
 
 
 /// The interface for the Qu programming language.
@@ -127,22 +122,22 @@ pub struct Qu<'a> {
 	}
 
 
-	pub fn register_fns(&mut self) {
-		self.vm.definitions.imports.register_fns()
+	pub fn register_fns(&mut self) -> Result<(), QuMsg>{
+		self.vm.definitions.register_functions()
 	}
 
 
 	fn register_fn(&mut self, fn_data:ExternalFunction) -> Result<(), QuMsg> {
-		self.vm.definitions.imports.register_fn(fn_data)
+		self.vm.definitions.register_function(fn_data)
 	}
 
 
 	pub fn register_struct<S:QuRegisterStruct+'static>(&mut self) {
-		self.vm.definitions.imports.register_struct::<S>()
+		unimplemented!()
 	}
 
 
-	pub fn reg_get<'b, T:'a>(
+	pub fn read<'b, T:'a>(
 		&self, at_reg:QuStackId
 	) -> Result<&T, QuMsg> {
 		self.vm.read::<T>(at_reg)
@@ -177,16 +172,15 @@ pub struct Qu<'a> {
 
 
 	pub fn run_and_get<T:'a>(&mut self, script:&str) -> Result<&T, QuMsg> {
-		let code = self.compile(script)?;
-		self.run_ops(&code)?;
+		self.run(script)?;
 		let return_id = self.vm.return_value_id();
-		self.reg_get(
+		self.read(
 			QuStackId::new(0, return_id)
 		)
 	}
 
 
-	pub fn run_ops(&mut self, instructions:&[QuOp]) -> Result<(), QuMsg> {
+	fn run_ops(&mut self, instructions:&[QuOp]) -> Result<(), QuMsg> {
 		return self.vm.run_ops(instructions);
 	}
 
@@ -434,6 +428,14 @@ mod lib {
 		"#;
 		let outcome:i32 = *qu.run_and_get(script).unwrap();
 		assert_eq!(outcome, (1+2) + (3+4+5));
+	}
+
+
+	#[test]
+	fn repeated_register_functions() {
+		let mut qu = Qu::new(); // register_fns is called once in new().
+		qu.register_fns().unwrap();
+		qu.register_fns().unwrap();
 	}
 
 

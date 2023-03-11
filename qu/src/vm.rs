@@ -1,31 +1,13 @@
 
-use std::any::Any;
-use std::collections::HashMap;
 use std::fmt::Debug;
-use std::fmt::Display;
 use std::mem::size_of;
-use std::mem::replace;
-use std::mem::take;
-use std::ops::AddAssign;
-use std::ops::Deref;
-use std::ops::DerefMut;
 
-use lazy_static::__Deref;
-
-use crate::FunctionPointer;
-use crate::QuExtFnData;
 use crate::QuMsg;
 use crate::QuVoid;
 use crate::compiler::Definitions;
 use crate::compiler::ExternalFunctionId;
 use crate::compiler::FunctionId;
-use crate::compiler::FunctionMetadata;
-use crate::compiler::ModuleBuilder;
-use crate::import::QuRegistered;
-use crate::import::QuStruct;
 use crate::import::ClassId;
-use crate::objects::QuCodeObject;
-use crate::objects::QuFnObject;
 
 pub const BASE_MODULE:&str = "__base__";
 
@@ -38,9 +20,6 @@ pub type QuVoidExtFn = &'static dyn Fn(
 	&mut QuVm,
 	&Vec<QuStackId>,
 	)->Result<(), QuMsg>;
-
-/// The [QuVm] registers type.
-pub type StackValue = Box<dyn Any>;
 
 
 #[derive(Clone, PartialEq)]
@@ -59,6 +38,7 @@ pub enum QuOp {
 	/// Loads an [`isize`] into the stack. Takes the value being loaded and the
 	/// stack id where it will bestored.
 	Value(isize, QuStackId),
+	/// Specifies to the Vm what class can be retrieved from the API.
 	Return(ClassId),
 } impl Debug for QuOp {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -139,27 +119,16 @@ impl From<QuConstId> for u32 {
 }
 
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct QuMemId {
-	index:usize,
-} impl QuMemId {
-
-	fn new(index:usize) -> Self {
-		return Self{
-			index
-		};
-	}
-
-}
-
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// An ID to a location on the Vm's stack.
 pub struct QuStackId(pub usize, ClassId);
 impl QuStackId {
+	/// Constructs a [`QuStackId`]
 	pub fn new(index: usize, struct_id: ClassId) -> Self {
 		Self(index, struct_id)
 	}
 
+	/// Returns a readable [`String`] representation of the Id.
 	fn readable(&self, definitions: &Definitions) -> String {
 		format!(
 			"{}:{}",
@@ -169,11 +138,13 @@ impl QuStackId {
 	}
 
 
+	/// Returns an index in the [`QuVm`]s stack.
 	pub fn index(&self) -> usize {
 		self.0
 	}
 
 
+	/// Returns the Id of the class this Id is connected to.
 	pub fn class_id(&self) -> ClassId {
 		self.1
 	}
@@ -224,23 +195,12 @@ impl From<QuStackId> for u8 {
 pub struct QuVm {
 	/// Holds the outputed value of the last executed operation.
 	pub hold_is_zero: bool,
-
-	/// Holds defined constants.
-	constants: Vec<Box<dyn Any>>,
-	/// Maps constant names to their index in [`QuMemory::constants`].
-	constant_map:HashMap<String, QuConstId>,
-	/// Holds allocated data types.
-	memory: Vec<Box<dyn Any>>,
-	/// Maps variable names to their index in [`QuMemory::memory`].
-	memory_map: HashMap<String, QuMemId>,
 	/// Holds the value returned from a Qu script.
 	return_type: ClassId,
+	/// Contains all the defined class, funcitons, and more for the Vm. 
 	pub definitions: Definitions,
-
-	/// The memory registers. Holds all primatives of the VM.
+	/// Holds the Vm's memory.
 	stack: VmStack,
-	/// The offset of reading and writing to registers.
-	stack_offset: usize,
 	/// The program counter.
 	pc: usize,
 
@@ -260,7 +220,7 @@ pub struct QuVm {
 			hold_is_zero: false,
 			return_type: 0.into(),
 			stack: VmStack::new(u8::MAX as usize),
-			stack_offset: 0,
+			//stack_offset: 0,
 			pc: 0,
 			..Default::default()
 		};
@@ -278,60 +238,6 @@ pub struct QuVm {
 	}
 
 
-	/// Defines a new constant in Qu.
-	///
-	/// # Examples
-	/// 
-	/// ```
-	/// use qu::QuVm;
-	/// use qu::QuMsg;
-	/// 
-	/// # fn main() {example().unwrap()}
-	/// # fn example() -> Result<(), QuMsg> {
-	/// let mut vm = QuVm::new();
-	/// vm.define_const("BIRTHDAY".to_owned(), Box::new("c280800"));
-	/// 
-	/// let constant = vm.get_const::<&str>("BIRTHDAY")?;
-	/// assert_eq!(*constant, "c280800");
-	/// # return Ok(());
-	/// # }
-	/// ```
-	pub fn define_const(&mut self, name:String, value:Box<dyn Any>) {
-		assert_eq!(self.constants.len(), self.constant_map.len());
-		let const_index = self.constants.len();
-
-		self.constants.push(value);
-		self.constant_map.insert(name.to_owned(), const_index.into());
-	}
-
-
-	/// Defines a variable in Qu memory.
-	/// 
-	/// # Examples
-	/// 
-	/// ```
-	/// use qu::QuVm;
-	/// use qu::QuMsg;
-	/// 
-	/// # fn main() {example().unwrap()}
-	/// # fn example() -> Result<(), QuMsg> {
-	/// let mut vm = QuVm::new();
-	/// vm.define_mem("name".to_owned(), Box::new("Dave"));
-	/// 
-	/// let constant = vm.get_mem::<&str>("name")?;
-	/// assert_eq!(*constant, "Dave");
-	/// # return Ok(());
-	/// # }
-	/// ```
-	pub fn define_mem(&mut self, name:String, value:Box<dyn Any>) {
-		assert_eq!(self.memory.len(), self.memory_map.len());
-		let const_index = self.memory.len();
-
-		self.memory.push(value);
-		self.memory_map.insert(name.to_owned(), QuMemId::new(const_index));
-	}
-
-
 	fn external_call_by_id(
 		&mut self,
 		fn_id: ExternalFunctionId,
@@ -343,290 +249,6 @@ pub struct QuVm {
 			parameters,
 			output_id,
 		)?)
-	}
-
-
-	/// Returns a reference to a Qu constant.
-	/// 
-	/// # Errors
-	/// 
-	/// If no constant called `name` is found or if the constant can't be cast
-	/// to `T` then an [`Err`] is returned.
-	/// 
-	/// # Examples
-	/// 
-	/// ```
-	/// use qu::QuVm;
-	/// use qu::QuMsg;
-	/// 
-	/// # fn main() {example().unwrap()}
-	/// # fn example() -> Result<(), QuMsg> {
-	/// let mut vm = QuVm::new();
-	/// vm.define_const("MEANING_OF_LIFE".into(), Box::new(42isize));
-	/// 
-	/// let constant = vm.get_const::<isize>("MEANING_OF_LIFE")?;
-	/// assert_eq!(*constant, 42isize);
-	/// # return Ok(());
-	/// # }
-	/// ```
-	pub fn get_const<'a, T:'a + 'static>(&'a self, name:&str
-	) -> Result<&T, QuMsg> {
-		let Some(index) = self.constant_map.get(&name.to_owned())
-			else {return Err(QuMsg::general(
-				&format!("No constant by name {name} found. TODO: Better msg.")
-			))};
-		
-		let const_ref = self.get_const_by_id::<T>(*index)?;
-
-		return Ok(const_ref);
-	}
-
-
-	/// Returns a reference to a Qu constant by its index.
-	/// 
-	/// # Errors
-	/// 
-	/// If `index` is out of range or the constant can't be cast to `T` then an
-	/// [`Err`] is returned.
-	/// 
-	/// # Examples
-	/// 
-	/// ```
-	/// use qu::QuVm;
-	/// use qu::QuMsg;
-	/// 
-	/// # fn main() {example().unwrap()}
-	/// # fn example() -> Result<(), QuMsg> {
-	/// let mut vm = QuVm::new();
-	/// vm.define_const("BITS".into(), Box::new(128isize));
-	/// 
-	/// let BITS = vm.get_const_by_id::<isize>(0.into())?;
-	/// assert_eq!(*BITS, 128isize);
-	/// # return Ok(());
-	/// # }
-	/// ```
-	pub fn get_const_by_id<'a, T:'a + 'static>(&'a self, id:QuConstId
-	) -> Result<&T, QuMsg> {
-		let Some(any) = self.constants.get(id.0)
-			else {return Err(QuMsg::general(
-				"Can't access constant by id {id}. Index is out of range. TODO: Better msg"
-			))};
-
-		let Some(cast) = any.downcast_ref::<T>()
-			else {return Err(QuMsg::general(
-				&format!("Can't cast constant to specified T. TODO: Better msg.")
-			))};
-
-		return Ok(cast);
-	}
-
-
-	/// Returns a memory location's ID from its name.
-	/// 
-	/// /// # Errors
-	/// 
-	/// If no memory location called `name` is found then an [`Err`] is
-	/// returned.
-	/// 
-	/// # Examples
-	/// 
-	/// ```
-	/// use qu::QuVm;
-	/// use qu::QuMsg;
-	/// 
-	/// # fn main() {example().unwrap()}
-	/// # fn example() -> Result<(), QuMsg> {
-	/// let mut vm = QuVm::new();
-	/// vm.define_mem("count".into(), Box::new(100isize));
-	/// 
-	/// let mem_id = vm.get_mem_id("count")?;
-	/// assert_eq!(vm.get_mem_by_id::<isize>(mem_id)?, &100isize);
-	/// # return Ok(());
-	/// # }
-	/// ```
-	pub fn get_mem_id(&mut self, name:&str) -> Result<QuMemId, QuMsg> {
-		let Some(id) = self.memory_map.get(name) else {
-			return Err(QuMsg::general(
-				&format!("qu has no memory location with name {name}")
-			));
-		};
-
-		Ok(id.clone())
-	}
-
-
-	/// Returns a mutable reference to a variable in Qu memory.
-	/// 
-	/// # Errors
-	/// 
-	/// If no variable called `name` is found or if the variable can't be cast
-	/// to `T` then an [`Err`] is returned.
-	/// 
-	/// # Examples
-	/// 
-	/// ```
-	/// use qu::QuVm;
-	/// use qu::QuMsg;
-	/// 
-	/// # fn main() {example().unwrap()}
-	/// # fn example() -> Result<(), QuMsg> {
-	/// let mut vm = QuVm::new();
-	/// vm.define_mem("count".into(), Box::new(100isize));
-	/// 
-	/// let count = vm.get_mem_mut::<isize>("count")?;
-	/// assert_eq!(*count, 100isize);
-	/// 
-	/// *count += 5;
-	/// let altered_count = vm.get_mem_mut::<isize>("count")?;
-	/// assert_eq!(*altered_count, 105isize);
-	/// # return Ok(());
-	/// # }
-	/// ```
-	pub fn get_mem_mut<'a, T:'a + 'static>(&'a mut self, name:&str
-	) -> Result<&mut T, QuMsg> {
-		let Some(index) = self.memory_map.get(&name.to_owned())
-			else {return Err(QuMsg::general(
-				&format!("No variable by name {name} found. TODO: Better msg.")
-			))};
-
-		return Ok(self.get_mem_mut_by_id(index.clone())?);
-	}
-
-
-	/// Returns a mutable referance to a [`QuVm`] memory variable.
-	/// 
-	/// /// # Errors
-	/// 
-	/// If no variable by `id` is found or if the variable can't be cast
-	/// to `T` then an [`Err`] is returned.
-	/// 
-	/// # Examples
-	/// 
-	/// ```
-	/// use qu::QuVm;
-	/// use qu::QuMsg;
-	/// 
-	/// # fn main() {example().unwrap()}
-	/// # fn example() -> Result<(), QuMsg> {
-	/// let mut vm = QuVm::new();
-	/// vm.define_mem("count".into(), Box::new(100isize));
-	/// let count_id = vm.get_mem_id("count")?;
-	/// 
-	/// let count = vm.get_mem_mut_by_id::<isize>(count_id)?;
-	/// assert_eq!(count, &mut 100isize);
-	/// # return Ok(());
-	/// # }
-	/// ```
-	pub fn get_mem_mut_by_id<'a, T:'a + 'static>(&'a mut self, id:QuMemId
-	) -> Result<&mut T, QuMsg> {
-		self.get_mem_mut_by_index(id.index)
-	}
-
-
-	/// Returns a mutable reference to a variable in Qu memory by its index.
-	/// 
-	/// # Errors
-	/// 
-	/// If `index` is out of range or if the variable can't be cast to `T` then
-	/// an [`Err`] is returned.
-	fn get_mem_mut_by_index<'a, T:'a + 'static>(&'a mut self, index:usize
-	) -> Result<&mut T, QuMsg> {
-		let Some(any) = self.memory.get_mut(index)
-		else {return Err(QuMsg::general(
-			&format!("Can't get variable. Index {index} is out of range.")
-		))};
-		let Some(cast) = any.downcast_mut::<T>()
-			else {return Err(QuMsg::general(
-				&format!("Can't cast variable to specified T. TODO: Better msg.")
-			))};
-
-		return Ok(cast);
-	}
-
-
-	/// Returns a reference to a variable in Qu memory.
-	/// 
-	/// # Errors
-	/// 
-	/// If no variable called `name` is found or if the variable can't be
-	/// cast to `T` then an [`Err`] is returned.
-	/// 
-	/// # Examples
-	/// 
-	/// ```
-	/// use qu::QuVm;
-	/// use qu::QuMsg;
-	/// 
-	/// # fn main() {example().unwrap()}
-	/// # fn example() -> Result<(), QuMsg> {
-	/// let mut vm = QuVm::new();
-	/// vm.define_mem("count".into(), Box::new(100isize));
-	/// 
-	/// let count = vm.get_mem::<isize>("count")?;
-	/// assert_eq!(*count, 100isize);
-	/// # return Ok(());
-	/// # }
-	/// ```
-	pub fn get_mem<'a, T:'a + 'static>(&'a self, name:&str
-	) -> Result<&T, QuMsg> {
-		let Some(index) = self.memory_map.get(&name.to_owned())
-			else {return Err(QuMsg::general(
-				&format!("No variable by name {name} found. TODO: Better msg.")
-			))};
-
-		self.get_mem_by_id(index.clone())
-	}
-
-
-	/// Returns a shared referance to a [`QuVm`] memory variable.
-	/// 
-	/// /// # Errors
-	/// 
-	/// If no variable by `id` is found or if the variable can't be cast
-	/// to `T` then an [`Err`] is returned.
-	/// 
-	/// # Examples
-	/// 
-	/// ```
-	/// use qu::QuVm;
-	/// use qu::QuMsg;
-	/// 
-	/// # fn main() {example().unwrap()}
-	/// # fn example() -> Result<(), QuMsg> {
-	/// let mut vm = QuVm::new();
-	/// vm.define_mem("count".into(), Box::new(100isize));
-	/// let count_id = vm.get_mem_id("count")?;
-	/// 
-	/// let count = vm.get_mem_mut_by_id::<isize>(count_id)?;
-	/// assert_eq!(count, &100isize);
-	/// # return Ok(());
-	/// # }
-	/// ```
-	pub fn get_mem_by_id<'a, T:'a + 'static>(&'a self, id:QuMemId
-	) -> Result<&T, QuMsg> {
-		self.get_mem_by_index(id.index)
-	}
-
-
-	/// Returns a reference to a variable in Qu memory by its index.
-	/// 
-	/// # Errors
-	/// 
-	/// If `index` is out of range or if the variable can't be
-	/// cast to `T` then an [`Err`] is returned.
-	fn get_mem_by_index<'a, T:'a + 'static>(&'a self, index:usize
-	) -> Result<&T, QuMsg> {
-		let Some(any) = self.memory.get(index)
-			else {return Err(QuMsg::general(
-				&format!("Can't get variable. Index {index} is out of range.")
-			))};
-
-		let Some(cast) = any.downcast_ref::<T>()
-			else {return Err(QuMsg::general(
-				&format!("Can't cast variable to specified T. TODO: Better msg.")
-			))};
-
-		return Ok(cast);
 	}
 
 
@@ -676,9 +298,9 @@ pub struct QuVm {
 	) -> Result<(), QuMsg> {
 		*self.stack.offset_mut() += usize::from(ouput);
 		// Assure registers is big enought to fit u8::MAX more values
-		if (self.stack_offset + u8::MAX as usize) > self.stack.len() {
+		if (self.stack.offset + u8::MAX as usize) > self.stack.len() {
 			self.stack.data.resize(
-				self.stack_offset + u8::MAX as usize, 
+				self.stack.offset + u8::MAX as usize, 
 				0
 			);
 		}
@@ -785,44 +407,6 @@ pub struct QuVm {
 	}
 
 
-	/// Sets a memory location by its name.
-	pub fn set_mem<'a, T:'a + 'static>(&'a mut self, name:&str, value:T
-	) -> Result<(), QuMsg> {
-		let Some(id) = self.memory_map.get(&name.to_owned())
-			else {return Err(QuMsg::general(
-				&format!("No variable by name {name} found. TODO: Better msg.")
-			))};
-
-		self.set_mem_by_id(id.clone(), value)?;
-
-		return Ok(());
-	}
-
-
-	/// Sets a memory location by its ID.
-	pub fn set_mem_by_id<'a, T:'a + 'static>(&'a mut self, id:QuMemId, value:T
-	) -> Result<(), QuMsg> {
-		self.set_mem_by_index(id.index, value)
-	}
-
-
-	fn set_mem_by_index<'a, T:'a + 'static>(&'a mut self, index:usize, value:T
-	) -> Result<(), QuMsg> {
-		let Some(any) = self.memory.get_mut(index)
-		else {return Err(QuMsg::general(
-			&format!("Can't get variable. Index {index} is out of range.")
-		))};
-		let Some(cast) = any.downcast_mut::<T>()
-			else {return Err(QuMsg::general(
-				&format!("Can't cast variable to specified T. TODO: Better msg.")
-			))};
-		
-		*cast = value;
-
-		return Ok(());
-	}
-
-
 	/// Runs inputed bytecode in a loop.
 	fn loop_ops(&mut self, code:&[QuOp]
 	) -> Result<(), QuMsg>{
@@ -839,8 +423,6 @@ pub struct QuVm {
 		}
 		return Ok(());
 	}
-
-
 
 
 	/// Runs the next command in the given bytecode.
@@ -957,7 +539,6 @@ pub struct QuVm {
 
 		return Ok(());
 	}
-
 }
 
 
@@ -966,13 +547,11 @@ struct VmStack {
 	data: Vec<u8>,
 	offset: usize,
 } impl VmStack {
-
 	pub fn new(size:usize) -> Self {
 		let mut stack = Self {data: vec![], offset: 0};
 		stack.data.resize(size, 0);
 		stack
 	}
-
 } impl Stack for VmStack {
 	type Indexer = QuStackId;
 
