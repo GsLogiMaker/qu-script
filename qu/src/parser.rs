@@ -18,23 +18,27 @@ pub const KEYWORD_ELSE:&str = "else";
 pub const KEYWORD_ELIF:&str = "elif";
 pub const KEYWORD_FN:&str = "fn";
 pub const KEYWORD_IF:&str = "if";
-pub const KEYWORD_PRINT:&str = "print";
 pub const KEYWORD_RETURN:&str = "return";
 pub const KEYWORD_VAR:&str = "var";
 pub const KEYWORD_WHILE:&str = "while";
 
 pub const OP_ASSIGN_SYMBOL:&str = "=";
 pub const OP_BLOCK_START:&str = ":";
-pub const OP_MATH_ADD:&str = "+";
-pub const OP_MATH_DIV:&str = "/";
-pub const OP_MATH_EQL:&str = "==";
-pub const OP_MATH_GRT:&str = ">";
-pub const OP_MATH_GTE:&str = ">=";
-pub const OP_MATH_LES:&str = "<";
-pub const OP_MATH_LSE:&str = "<=";
-pub const OP_MATH_MUL:&str = "*";
-pub const OP_MATH_NEQ:&str = "!=";
-pub const OP_MATH_SUB:&str = "-";
+pub const OP_EXPR_ADD:&str = "+";
+pub const OP_EXPR_AND:&str = "and";
+pub const OP_EXPR_DIV:&str = "/";
+pub const OP_EXPR_EQL:&str = "==";
+pub const OP_EXPR_GRT:&str = ">";
+pub const OP_EXPR_GTE:&str = ">=";
+pub const OP_EXPR_LES:&str = "<";
+pub const OP_EXPR_LSE:&str = "<=";
+pub const OP_EXPR_MOD:&str = "%";
+pub const OP_EXPR_MUL:&str = "*";
+pub const OP_EXPR_NEQ:&str = "!=";
+pub const OP_EXPR_OR:&str = "or";
+pub const OP_EXPR_POW:&str = "**";
+pub const OP_EXPR_SUB:&str = "-";
+pub const OP_EXPR_SQRT:&str = "//";
 
 pub type QuBlockNode = Vec<QuLeaf>;
 pub type QuParamNode = (QuToken, Option<QuToken>);
@@ -117,23 +121,23 @@ pub enum QuOperator {
 	fn from_symbol(symbol:&str) -> Self {
 		use QuOperator::*;
 		match symbol {
-			"+" => Add,
-			"-" => Sub,
-			"*" => Mul,
-			"/" => Div,
-			"%" => Mod,
-			"**" => Pow,
-			"//" => Sqrt,
+			OP_EXPR_ADD => Add,
+			OP_EXPR_SUB => Sub,
+			OP_EXPR_MUL => Mul,
+			OP_EXPR_DIV => Div,
+			OP_EXPR_MOD => Mod,
+			OP_EXPR_POW => Pow,
+			OP_EXPR_SQRT => Sqrt,
 
-			"<" => Less,
-			"<=" => LessEq,
-			">" => Great,
-			">=" => GreatEq,
-			"==" => Eq,
-			"!=" => NotEq,
+			OP_EXPR_LES => Less,
+			OP_EXPR_LSE => LessEq,
+			OP_EXPR_GRT => Great,
+			OP_EXPR_GTE => GreatEq,
+			OP_EXPR_EQL => Eq,
+			OP_EXPR_NEQ => NotEq,
 
-			"and" => And,
-			"or" => Or,
+			OP_EXPR_AND => And,
+			OP_EXPR_OR => Or,
 
 			_ => unimplemented!(),
 		}
@@ -468,61 +472,61 @@ pub struct QuParser {
 
 	/// Attempts to parse a lesser than expression.
 	fn ck_op_les(&mut self) -> Result<Option<QuLeafExpr>, QuMsg>{
-		return self.ck_operation(OP_MATH_LES, &Self::ck_op_grt);
+		return self.ck_operation(OP_EXPR_LES, &Self::ck_op_grt);
 	}
 
 
 	/// Attempts to parse a lesser or equal than expression.
 	//fn ck_op_lse(&mut self) -> Result<Option<QuLeafExpr>, QuMsg>{
-	//	return self.ck_operation(OP_MATH_LSE, &Self::ck_op_grt);
+	//	return self.ck_operation(OP_EXPR_LSE, &Self::ck_op_grt);
 	//}
 
 
 	/// Attempts to parse a greater than expression.
 	fn ck_op_grt(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
-		return self.ck_operation(OP_MATH_GRT, &Self::ck_op_eql);
+		return self.ck_operation(OP_EXPR_GRT, &Self::ck_op_eql);
 	}
 
 
 	/// Attempts to parse a greater or equal than expression.
 	//fn ck_op_gte(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
-	//	return self.ck_operation(OP_MATH_GTE, &Self::ck_op_eql);
+	//	return self.ck_operation(OP_EXPR_GTE, &Self::ck_op_eql);
 	//}
 
 
 	/// Attempts to parse an equal to expression.
 	fn ck_op_eql(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
-		return self.ck_operation(OP_MATH_EQL, &Self::ck_op_not_eql);
+		return self.ck_operation(OP_EXPR_EQL, &Self::ck_op_not_eql);
 	}
 
 
 	/// Attempts to parse a not equal to expression.
 	fn ck_op_not_eql(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
-		return self.ck_operation(OP_MATH_NEQ, &Self::ck_op_sub);
+		return self.ck_operation(OP_EXPR_NEQ, &Self::ck_op_sub);
 	}
 
 
 	/// Attempts to parse a subtraction expression.
 	fn ck_op_sub(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
-		return self.ck_operation(OP_MATH_SUB, &Self::ck_op_add);
+		return self.ck_operation(OP_EXPR_SUB, &Self::ck_op_add);
 	}
 
 
 	/// Attempts to parse an addition expression.
 	fn ck_op_add(&mut self) -> Result<Option<QuLeafExpr>, QuMsg>  {
-		return self.ck_operation(OP_MATH_ADD, &Self::ck_op_div);
+		return self.ck_operation(OP_EXPR_ADD, &Self::ck_op_div);
 	}
 
 
 	/// Attempts to parse a division expression.
 	fn ck_op_div(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
-		return self.ck_operation(OP_MATH_DIV, &Self::ck_op_mul);
+		return self.ck_operation(OP_EXPR_DIV, &Self::ck_op_mul);
 	}
 
 
 	/// Attempts to parse a multiplication expression.
 	fn ck_op_mul(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
-		return self.ck_operation(OP_MATH_MUL, &Self::ck_op_paren_expr);
+		return self.ck_operation(OP_EXPR_MUL, &Self::ck_op_paren_expr);
 	}
 
 
@@ -955,20 +959,6 @@ pub struct QuParser {
 		return &self.tokens[self.tk_idx+at];
 	}
 
-
-	/// Returns a &[QuToken] relative to the current token index without
-	/// incrementing the current token index.
-	fn tk_spy_option(&mut self, at:usize) -> Option<&QuToken> {
-		if self.tk_idx+at >= self.tokens.len() {
-			return None;
-		}
-		let token = &self.tokens[self.tk_idx+at];
-		if token.tk_type == u8::MAX {
-			return None;
-		}
-		return Some(&self.tokens[self.tk_idx+at]);
-	}
-
 }
 
 
@@ -977,14 +967,6 @@ mod test_qu_matcher {
     use crate::QuLeaf;
     use crate::QuLeafExpr;
     use crate::parser::FLOW_TYPE_IF;
-    use crate::parser::OP_MATH_ADD;
-    use crate::parser::OP_MATH_DIV;
-    use crate::parser::OP_MATH_EQL;
-    use crate::parser::OP_MATH_GRT;
-    use crate::parser::OP_MATH_LES;
-    use crate::parser::OP_MATH_MUL;
-    use crate::parser::OP_MATH_NEQ;
-    use crate::parser::OP_MATH_SUB;
     use crate::QuParser;
 	use crate::QuMsg;
 	use crate::parser::QuOperator;
@@ -1020,7 +1002,7 @@ use crate::tokens::QuToken;
 						))),
 					),
 					QuLeaf::VarDecl(
-						Box::new((QuToken::from("right"))),
+						Box::new(QuToken::from("right")),
 						None,
 						Some(Box::new(QuLeafExpr::Number(
 							Box::new(QuToken::from("5"))

@@ -29,7 +29,6 @@ SOFTWARE.
 #![warn(rustdoc::broken_intra_doc_links)]
 
 
-#[macro_use]
 extern crate lazy_static;
 
 
@@ -42,8 +41,8 @@ mod tokens;
 mod vm;
 
 
-pub use import::QuFunctionId;
-use import::QuRegistered;
+pub use import::QuExtFnId;
+use import::QuImports;
 use tokens::{TOKEN_TYPE_NAME, QuToken};
 pub use errors::QuMsg;
 pub use compiler::QuCompiler;
@@ -78,7 +77,7 @@ use vm::StackValue;
 /// ```
 pub struct Qu {
 	vm:QuVm,
-	imports:QuRegistered,
+	imports:QuImports,
 
 } impl Qu {
 
@@ -94,10 +93,10 @@ pub struct Qu {
 	pub fn new() -> Self {
 		let mut qu = Qu {
 			vm: QuVm::new(),
-			imports: QuRegistered::default(),
+			imports: QuImports::default(),
 		};
-		qu.register_struct::<QuInt>();
-		qu.register_fns();
+		qu.import_struct::<isize>();
+		qu.import_fns();
 		qu
 	}
 
@@ -128,24 +127,43 @@ pub struct Qu {
 	}
 
 
-	pub fn register_fns(&mut self) {
+	/// Imports the external functions of all imported structs.
+	/// 
+	/// # Warning
+	/// 
+	/// Likely to panic.
+	pub fn import_fns(&mut self) {
 		self.imports.register_fns()
 	}
 
 
-	fn register_fn(&mut self, fn_data:QuExtFnData) {
-		self.imports.register_fn(fn_data)
-	}
-
-
-	pub fn register_struct<S:QuRegisterStruct+'static>(&mut self) {
+	/// Imports an external struct.
+	/// 
+	/// # Note
+	/// 
+	/// Does not register the methods of the struct. Call
+	/// [`Qu::register_struct`] to register the methods of all registered
+	/// structs.
+	/// 
+	/// # Example
+	/// 
+	/// ```
+	/// use qu::Qu;
+	/// use qu::QuRegisterStruct;
+	/// 
+	/// struct MyStruct();
+	/// impl QuRegisterStruct for MyStruct {
+	/// 	fn get_name() -> String {
+	/// 		"MyStruct".into()
+	/// 	}
+	/// }
+	/// 
+	/// let mut qu = Qu::new();
+	/// 
+	/// qu.import_struct::<MyStruct>();
+	/// ```
+	pub fn import_struct<S:QuRegisterStruct+'static>(&mut self) {
 		self.imports.register_struct::<S>()
-	}
-
-
-	pub fn reg_get_as<'a, T:'a + 'static>(&self, at_reg:QuStackId
-	) -> Result<&T, QuMsg> {
-		self.vm.reg_get_as::<T>(at_reg)
 	}
 
 
@@ -153,7 +171,7 @@ pub struct Qu {
 	/// 
 	/// # Errors
 	/// 
-	/// If `code` contains improper Qu syntax or if a Qu runtime error occurs
+	/// If `code` contains improper Qu syntax or a Qu runtime error occurs
 	/// then an [`Err`] is returned.
 	/// 
 	/// # Example
@@ -165,6 +183,7 @@ pub struct Qu {
 	/// # fn main(){example().unwrap()}
 	/// # fn example() -> Result<(), QuMsg> {
 	/// let mut qu = Qu::new();
+	/// 
 	/// qu.run("var count = 5 + 6")?;
 	/// # return Ok(());
 	/// # }
@@ -176,6 +195,29 @@ pub struct Qu {
 	}
 
 
+	/// Runs a Qu script and returns the value returned by the script.
+	/// 
+	/// # Errors
+	/// 
+	/// If `code` contains improper Qu syntax, a Qu runtime error occurs,
+	/// there is no return value, or the return value could not be cast to `T`
+	/// then an [`Err`] is returned.
+	/// 
+	/// # Example
+	/// 
+	/// ```
+	/// use qu::Qu;
+	/// use qu::QuMsg;
+	/// 
+	/// # fn main(){example().unwrap()}
+	/// # fn example() -> Result<(), QuMsg> {
+	/// let mut qu = Qu::new();
+	/// 
+	/// let val = qu.run_and_get::<isize>("return 5 + 6")?;
+	/// assert_eq!(val, Box::new(11isize));
+	/// # return Ok(());
+	/// # }
+	/// ```
 	pub fn run_and_get<T:'static>(&mut self, script:&str
 	) -> Result<Box<T>, QuMsg> {
 		let code = self.compile(script)?;
@@ -192,113 +234,38 @@ pub struct Qu {
 	}
 
 
-	pub fn run_ops(&mut self, instructions:&[QuOp]) -> Result<(), QuMsg> {
-		return self.vm.run_ops(instructions, &self.imports);
+	/// Runs compiled Qu code.
+	/// 
+	/// # Errors
+	/// 
+	/// If `code` fails the sanity checks or a Qu runtime error occurs
+	/// then an [`Err`] is returned.
+	/// 
+	/// # Example
+	/// 
+	/// ```
+	/// use qu::Qu;
+	/// use qu::QuMsg;
+	/// 
+	/// # fn main(){example().unwrap()}
+	/// # fn example() -> Result<(), QuMsg> {
+	/// let mut qu = Qu::new();
+	/// 
+	/// let code = qu.compile("var count = 5 + 6")?;
+	/// qu.run_ops(&code)?;
+	/// # return Ok(());
+	/// # }
+	/// ```
+	pub fn run_ops(&mut self, code:&[QuOp]) -> Result<(), QuMsg> {
+		return self.vm.run_ops(code, &self.imports);
 	}
 
 }
 
-
-/// A declared Qu function. Contains all the metadata for a defined function.
-#[derive(Debug, Default)]
-pub struct QuFunc {
-	/// The name of this funciton.
-	name:String,
-	/// The index that is function is stored at in the function list.
-	id:usize,
-	/// The arguments accepted by this function.
-	arg_list:Vec<u8>,
-	/// The start index of this function's code.
-	code_start:usize,
-
-} impl QuFunc {
-
-	fn new(name:&str, id:usize, code_start:usize) -> Self {
-		return Self{
-			name: name.to_owned(),
-			id: id,
-			arg_list: Vec::default(),
-			code_start: code_start,
-		}
-	}
-
-}
-
-
-/// TODO: Remove this struct, it is replaced with an enum.
-/// An object type (Ex: int, bool, String, Object).
-pub struct QuType2 {
-	name:String,
-	size:usize,
-} impl QuType2 {
-
-	/// Makes a new [`QuType`].
-	fn new(name:String, size:usize) -> QuType2 {
-		return QuType2{
-			name,
-			size,
-		};
-	}
-
-
-	/// Instantiates a boolean [`QuType`].
-	fn bool() -> QuType2 {
-		// TODO:: Make "bool" string a constant
-		return QuType2::new("bool".to_string(), 1);
-	}
-
-
-	/// Instantiates an integer [`QuType`].
-	fn int() -> QuType2 {
-		// TODO: Make "int" string a constant
-		return QuType2::new("int".to_string(), 1);
-	}
-
-
-	/// Instantiates an unsigned integer [`QuType`].
-	fn uint() -> QuType2 {
-		// TODO:: Make "uint" string a constant
-		return QuType2::new("uint".to_string(), 1);
-	}
-
-}
-
-
-/// Metadata for a Qu variable.
-#[derive(Debug, Default, Clone)]
-struct QuVar {
-	/// The name of this variable.
-	name:String,
-	/// The static type of this variable.
-	static_type:Option<usize>,
-	/// The register to which this variable is saved to.
-	register:u8,
-} impl QuVar {
-	
-	/// Instantiate a [QuVar] struct.
-	fn new(name:&str, static_type:Option<usize>, register:u8) -> Self {
-		return Self{
-			name: name.to_owned(),
-			static_type: static_type,
-			register: register,
-		};
-	}
-
-
-	/// Instantiate a [QuVar] struct with default values.
-	fn default() -> Self {
-		return Self {
-			name: String::default(),
-			static_type: None,
-			register: u8::default(),
-		};
-	}
-
-}
 
 #[cfg(test)]
 mod lib {
-    use crate::{Qu, QuMsg, QuInt};
+    use crate::Qu;
 
 	#[test]
 	fn fibinachi() {
@@ -318,9 +285,9 @@ mod lib {
 			return n1
 		"#;
 
-		let n1 = *qu.run_and_get::<QuInt>(script).unwrap();
+		let n1 = *qu.run_and_get::<isize>(script).unwrap();
 
-		assert_eq!(n1, QuInt(34));
+		assert_eq!(n1, 34isize);
 	}
 
 
@@ -353,8 +320,8 @@ mod lib {
 		"#;
 
 		dbg!(qu.compile(script).unwrap());
-		let value:QuInt = *qu.run_and_get(script).unwrap();
-		assert_eq!(value, QuInt(128));
+		let value:isize = *qu.run_and_get(script).unwrap();
+		assert_eq!(value, 128isize);
 	}
 
 
@@ -369,8 +336,8 @@ mod lib {
 		"#;
 		let mut qu = Qu::new();
 
-		let val = *qu.run_and_get::<QuInt>(script).unwrap();
-		assert_eq!(val, QuInt(3));
+		let val = *qu.run_and_get::<isize>(script).unwrap();
+		assert_eq!(val, 3isize);
 	}
 
 
@@ -423,8 +390,8 @@ mod lib {
 			return counter
 		"#;
 
-		let res:QuInt = *qu.run_and_get(script).unwrap();
-		assert_eq!(res, QuInt(0));
+		let res:isize = *qu.run_and_get(script).unwrap();
+		assert_eq!(res, 0isize);
 	}
 
 
@@ -438,8 +405,8 @@ mod lib {
 			return counter
 		"#;
 
-		let res:QuInt = *qu.run_and_get(script).unwrap();
-		assert_eq!(res, QuInt(10));
+		let res:isize = *qu.run_and_get(script).unwrap();
+		assert_eq!(res, 10isize);
 	}
 
 }

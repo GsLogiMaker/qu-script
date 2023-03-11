@@ -8,38 +8,41 @@ use crate::QuRegisterStruct;
 
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct QuFunctionId(pub usize);
-impl QuFunctionId {
+/// An ID for an external function.
+pub struct QuExtFnId(pub usize);
+impl QuExtFnId {
 
+	/// Constructs a new [`QuExtFnId`].
 	pub fn new(index:usize) -> Self {
 		Self(index)
 	}
 
-} impl From<usize> for QuFunctionId {
+} impl From<usize> for QuExtFnId {
 
 	fn from(v:usize) -> Self {
-		QuFunctionId(v)
+		QuExtFnId(v)
 	}
 
 }
 
 
-impl From<QuFunctionId> for u8 {
-	fn from(v:QuFunctionId) -> Self {
+impl From<QuExtFnId> for u8 {
+	fn from(v:QuExtFnId) -> Self {
 		v.0 as u8
 	}
 }
 
 
 #[derive(Default)]
-pub struct QuRegistered {
+pub struct QuImports {
 	pub fns:Vec<QuExtFnData>,
-	pub fns_map:HashMap<String, QuFunctionId>,
+	pub fns_map:HashMap<String, QuExtFnId>,
 	pub structs:Vec<QuStruct>,
 	pub structs_map:HashMap<String, QuStructId>,
-} impl QuRegistered {
+} impl QuImports {
 
-	fn new() -> Self {
+	/// Constructs a new [`QuImports`].
+	pub fn new() -> Self {
 		Self {
 			fns: Vec::default(),
 			fns_map: HashMap::default(),
@@ -49,7 +52,7 @@ pub struct QuRegistered {
 	}
 	
 
-	pub fn get_fn_data_by_id(&self, fn_id:QuFunctionId
+	pub fn get_fn_data_by_id(&self, fn_id:QuExtFnId
 	) -> Result<&QuExtFnData, QuMsg>{
 		match self.fns.get(fn_id.0) {
 			Some(v) => Ok(v),
@@ -62,7 +65,7 @@ pub struct QuRegistered {
 
 
 	pub fn get_fn_id(&self, fn_name:&str, struct_name:&str
-	) -> Result<QuFunctionId, QuMsg> {
+	) -> Result<QuExtFnId, QuMsg> {
 		let s_data = self.get_struct(struct_name)?;
 		Ok(s_data.get_fn_id(fn_name)?)
 	}
@@ -142,7 +145,7 @@ pub struct QuRegistered {
 	pub fn register_fn(&mut self, fn_data:QuExtFnData) {
 		self.fns_map.insert(
 			fn_data.0.clone(),
-			QuFunctionId::new(self.fns.len()),
+			QuExtFnId::new(self.fns.len()),
 		);
 		self.fns.push(fn_data);
 	}
@@ -171,7 +174,7 @@ pub struct QuRegistered {
 	/// 
 	/// let mut qu = Qu::new();
 	/// 
-	/// qu.register_struct::<MyStruct>();
+	/// qu.import_struct::<MyStruct>();
 	/// ```
 	pub fn register_struct<S:QuRegisterStruct+'static>(&mut self) {
 		let r_struct = QuStruct::new(
@@ -195,7 +198,7 @@ pub struct QuRegistered {
 		let s = self.get_struct_by_id_mut(struct_id)?;
 		s.fns_map.insert(
 			fn_data.0.clone(),
-			QuFunctionId::new(new_idx),
+			QuExtFnId::new(new_idx),
 		);
 		self.fns.push(fn_data);
 		Ok(())
@@ -225,7 +228,7 @@ impl From<QuStructId> for u8 {
 #[derive(Clone)]
 pub struct QuStruct {
 	pub name:String,
-	pub fns_map:HashMap<String, QuFunctionId>,
+	pub fns_map:HashMap<String, QuExtFnId>,
 	pub register_fn:&'static dyn Fn() -> Vec<QuExtFnData>,
 
 } impl QuStruct {
@@ -243,7 +246,7 @@ pub struct QuStruct {
 	}
 
 
-	pub fn get_fn_id(&self, name:&str) -> Result<QuFunctionId, QuMsg> {
+	pub fn get_fn_id(&self, name:&str) -> Result<QuExtFnId, QuMsg> {
 		let Some(fn_id) = self.fns_map.get(name) else {
 			return Err(format!(
 				"External struct `{}` has no registered function by name `{}`",
