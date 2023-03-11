@@ -69,12 +69,12 @@ use vm::StackValue;
 /// # fn run_test() -> Result<(), QuMsg>{
 /// let mut qu = Qu::new();
 /// qu.run(r#"
-/// 	fn add():
+/// 	fn adder() int:
 /// 		var left = 2
 /// 		var right = 5
 /// 		return left + right
 /// 
-/// 	add()
+/// 	adder()
 /// "#)?;
 /// # return Ok(());
 /// # }
