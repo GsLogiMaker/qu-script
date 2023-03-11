@@ -356,9 +356,9 @@ mod lib {
 		let script = r#"
 			var l = 1
 			var r = 2
-			fn add(a int, b int) int:
+			fn adder(a int, b int) int:
 				return a + b
-			return add(l, r)
+			return adder(l, r)
 		"#;
 		let mut qu = Qu::new();
 
@@ -485,6 +485,65 @@ mod lib {
 		"#;
 
 		let res:bool = *qu.run_and_get(script).unwrap();
+	}
+
+
+	#[test]
+	fn function_identity_same_names() {
+		let mut qu = Qu::new();
+		let script = r#"
+			fn grow(item int) int:
+				return item * 2
+			
+			fn grow(item int, times int) int:
+				return item * times
+			
+			return grow(2) + grow(3, 3)
+		"#;
+
+		let res:i32 = *qu.run_and_get(script).unwrap();
+		assert_eq!(res, (2*2) + (3*3));
+	}
+
+
+	#[test]
+	#[should_panic]
+	fn function_identity_same_names_diff_returns_panic() {
+		let mut qu = Qu::new();
+		let script = r#"
+			fn weird(item int) int:
+				return item + 5
+			
+			fn weird(item int) bool:
+				return item > 5
+		"#;
+		qu.run(script).unwrap();
+	}
+
+
+	#[test]
+	fn function_similar_identity_to_add() {
+		let mut qu = Qu::new();
+		let script = r#"
+			fn add(a int, b int, c int) int:
+				return a + b + c
+			
+			return add(1, 2) + add(3, 4, 5)
+		"#;
+		let outcome:i32 = *qu.run_and_get(script).unwrap();
+		assert_eq!(outcome, (1+2) + (3+4+5));
+	}
+
+
+//	#[test]
+	fn function_multiple_parameters_same_name() {
+		let mut qu = Qu::new();
+		// TODO: Prevent this:
+		let script = r#"
+			fn some(a int, a int, c int) int:
+				return a + c
+		"#;
+		qu.run(script).unwrap();
 	}
 
 }

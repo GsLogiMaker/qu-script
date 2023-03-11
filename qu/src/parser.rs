@@ -342,7 +342,6 @@ pub enum QuOperator {
 	Or,
 
 } impl QuOperator {
-
 	pub fn from_symbol(symbol:&str) -> Self {
 		use QuOperator::*;
 		match symbol {
@@ -388,7 +387,10 @@ pub enum QuOperator {
 			QuOperator::Or => "or",
 		}
 	}
-
+} impl From<&str> for QuOperator {
+    fn from(value: &str) -> Self {
+        Self::from_symbol(value)
+    }
 }
 
 

@@ -3,7 +3,7 @@
 
 use std::{any::Any, ops::{Add, AddAssign, Sub, SubAssign}};
 
-use crate::{QuVm, parser::QuOperator, import::QuStructId};
+use crate::{QuVm, parser::QuOperator, import::ClassId};
 use crate::Qu;
 use crate::QuMsg;
 use crate::vm::QuExtFn;
@@ -75,6 +75,12 @@ pub struct ExternalFunction {
 			..Default::default()
 		}
     }
+}
+
+
+#[derive(Debug, Default, Clone)]
+pub struct FunctionPointer {
+	pub pc_target: usize,
 }
 
 
@@ -200,7 +206,7 @@ impl QuRegisterStruct for bool {
 				}
 				Ok(())
 			}),
-			qufn!(copy(Self, Self) Self |vm, args, return_id| {
+			qufn!(copy(Self) Self |vm, args, return_id| {
 				vm.write(return_id, *vm.read::<bool>(args[0])?);
 				Ok(())
 			}),
@@ -269,7 +275,7 @@ impl QuRegisterStruct for i32 {
 				vm.write(return_id, output);
 				Ok(())
 			}),
-			qufn!(copy(i32, i32) i32 |vm, args, return_id| {
+			qufn!(copy(i32) i32 |vm, args, return_id| {
 				vm.write(return_id, *vm.read::<i32>(args[0])?);
 				Ok(())
 			}),
@@ -290,7 +296,7 @@ impl QuRegisterStruct for QuVoid {
 
 	fn register_fns() -> Vec<ExternalFunction> {
 		vec![
-			qufn!(copy(Self, Self) Self |_vm, _parameters, _return_id| {
+			qufn!(copy(Self) Self |_vm, _parameters, _return_id| {
 				Ok(())
 			}),
 		]
