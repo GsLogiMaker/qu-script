@@ -40,46 +40,276 @@ pub const OP_EXPR_POW:&str = "**";
 pub const OP_EXPR_SUB:&str = "-";
 pub const OP_EXPR_SQRT:&str = "//";
 
-pub type QuBlockNode = Vec<QuLeaf>;
 pub type QuParamNode = (QuToken, Option<QuToken>);
 
+pub mod parsed {
+	use crate::tokens::QuToken;
 
-#[derive(Debug, Clone, PartialEq)]
-/// A Qu instruction.
-pub enum QuLeaf {
-	/// A floating expression
-	Expression(Box<QuLeafExpr>),
-	/// An if statement. Contains an assertion statement and a [`Vec`] of
-	/// instructions.
-	FlowStatement(u8, Box<QuLeafExpr>, QuBlockNode),
-	/// A function declaration branch. Contains the function name,
-	/// parameters, and instructions.
-	FnDecl(Box<QuToken>, Vec<QuParamNode>, QuBlockNode),
-	/// A return statement for a function
-	Return(Option<Box<QuLeafExpr>>),
-	/// A variable assignment. Contains a var name and a [`QuLeafExpr`].
-	VarAssign(Box<QuToken>, Box<QuLeafExpr>),
-	/// A variable declaration. Contains a var name, type(TODO), and
-	/// [`QuLeafExpr`].
-	VarDecl(Box<QuToken>, Option<Box<QuToken>>, Option<Box<QuLeafExpr>>),
+	use super::OP_ASSIGN_SYMBOL;
 
+	#[derive(Debug, Clone, PartialEq)]
+	/// Defines an expression in a Qu program tree.
+	pub enum Expression {
+		/// Call function branch.
+		Call(Box<CallExpression>), // TODO: Implement arguments
+		/// A calculable expression. Contains an operator and two [`QuLeafExpr`]s.
+		Operation(Box<OperationExpression>),
+		/// A literal int value.
+		Number(Box<NumberLiteral>),
+		/// A tuple.
+		Tuple(Box<TupleExpression>),
+		/// A variable name.
+		Var(Box<VarExpression>),
+	}
+
+
+	#[derive(Debug, Clone, PartialEq)]
+	/// Defines an expression in a Qu program tree.
+	pub enum Statement {
+		/// A floating expression
+		Expression(Box<Expression>),
+		/// An if statement. Contains an assertion statement and a [`Vec`] of
+		/// instructions.
+		FlowStatement(Box<FlowStatement>),
+		/// A function declaration branch. Contains the function name,
+		/// parameters, and instructions.
+		FunctionDeclaration(Box<FunctionDeclaration>),
+		/// A return statement for a function
+		Return(Box<ReturnStatement>),
+		/// A variable assignment. Contains a var name and a [`QuLeafExpr`].
+		VarAssign(Box<VarAssignment>),
+		/// A variable declaration. Contains a var name, type(TODO), and
+		/// [`QuLeafExpr`].
+		VarDeclaration(Box<VarDeclaration>),
+	}
+
+
+	#[derive(Debug, Default, Clone, PartialEq)]
+	pub struct CallExpression {
+		pub name: QuToken,
+		pub parameters: TupleExpression,
+		pub open_parenthesy: QuToken,
+		pub close_parenthesy: QuToken,
+	} impl CallExpression {
+		pub fn new(function_name:&str, parameters:TupleExpression) -> Self {
+			Self {
+				name: QuToken::from(function_name),
+				parameters,
+				open_parenthesy: QuToken::from("("),
+				close_parenthesy: QuToken::from(")"),
+			}
+		}
+	}
+
+
+	#[derive(Debug, Default, Clone, PartialEq)]
+	pub struct CodeBlock {
+		pub statements: Vec<Statement>,
+	} impl CodeBlock {
+		pub fn new(statements:Vec<Statement>) -> Self {
+			Self {
+				statements,
+			}
+		}
+	}
+
+
+	#[derive(Debug, Default, Clone, PartialEq)]
+	pub struct CodeScope {
+		pub colon: QuToken,
+		pub code_block: CodeBlock,
+	} impl CodeScope {
+		pub fn new(statements:Vec<Statement>) -> Self {
+			Self {
+				colon: QuToken::from(":"),
+				code_block: CodeBlock::new(statements),
+			}
+		}
+	}
+
+
+	#[derive(Debug, Clone, PartialEq)]
+	pub struct FlowStatement {
+		pub flow_keyword: QuToken,
+		pub condition: Expression,
+		pub body: CodeScope,
+	} impl FlowStatement {
+		pub fn new(
+			flow_keyword:&str, expression:Expression, code_scope:CodeScope
+		) -> Self {
+			Self {
+				flow_keyword: QuToken::from(flow_keyword),
+				condition: expression,
+				body: code_scope,
+			}
+		}
+	}
+
+
+	#[derive(Debug, Clone, PartialEq)]
+	pub struct FunctionDeclaration {
+		pub fn_keyword: QuToken,
+		pub identity: FunctionIdentity,
+		pub body: CodeScope,
+	} impl FunctionDeclaration {
+		pub fn new(
+			function_identity:FunctionIdentity, body:CodeScope
+		) -> Self {
+			Self {
+				fn_keyword: QuToken::from("fn"),
+				identity: function_identity,
+				body,
+			}
+		}
+	}
+
+
+	#[derive(Debug, Default, Clone, PartialEq)]
+	pub struct FunctionIdentity {
+		pub name: QuToken,
+		pub parameters: Vec<FunctionParameterElement>,
+		pub return_type: Option<QuToken>,
+	} impl FunctionIdentity {
+		pub fn new(
+			name:&str,
+			parameters:Vec<FunctionParameterElement>,
+			return_type:Option<&str>
+		) -> Self {
+			Self {
+				name: QuToken::from(name),
+				parameters,
+				return_type: match return_type {
+					Some(t) => Some(QuToken::from(name)),
+					None => None,
+				},
+			}
+		}
+	}
+
+
+	#[derive(Debug, Default, Clone, PartialEq)]
+	pub struct FunctionParameterElement {
+		pub name: QuToken,
+		pub static_type: Option<QuToken>,
+		pub comma: Option<QuToken>,
+	} impl FunctionParameterElement {
+		pub fn new(name:&str) -> Self {
+			Self {
+				name: QuToken::from(name),
+				..Default::default()
+			}
+		}
+	}
+
+
+	#[derive(Debug, Clone, PartialEq)]
+	pub struct NumberLiteral {
+		pub value: QuToken,
+	} impl NumberLiteral {
+		pub fn new(value:&str) -> Self {
+			Self {
+				value: QuToken::from(value),
+			}
+		}
+	}
+
+
+	#[derive(Debug, Clone, PartialEq)]
+	pub struct OperationExpression {
+		pub left: Expression,
+		pub operator: QuToken,
+		pub right: Expression,
+	} impl OperationExpression {
+		pub fn new(left:Expression, operator:&str, right:Expression) -> Self {
+			Self {
+				left,
+				operator: QuToken::from(operator),
+				right,
+			}
+		}
+	}
+
+
+	#[derive(Debug, Default, Clone, PartialEq)]
+	pub struct ReturnStatement {
+		pub value: Option<Expression>,
+	} impl ReturnStatement {
+		pub fn new(value:Option<Expression>) -> Self {
+			Self {
+				value,
+			}
+		}
+	}
+
+
+	#[derive(Debug, Default, Clone, PartialEq)]
+	pub struct TupleExpression {
+		pub elements:Vec<Expression>,
+	} impl TupleExpression {
+		pub fn new(elements:Vec<Expression>) -> Self {
+			Self {
+				elements,
+			}
+		}
+	}
+
+
+	#[derive(Debug, Clone, PartialEq)]
+	pub struct VarAssignment {
+		pub name: QuToken,
+		pub equals_sign: QuToken,
+		pub new_value: Expression,
+	} impl VarAssignment {
+		pub fn new(name:&str, value:Expression) -> Self {
+			Self {
+				name: QuToken::from(name),
+				equals_sign: QuToken::from(OP_ASSIGN_SYMBOL),
+				new_value: value,
+			}
+		}
+	}
+
+
+	#[derive(Debug, Clone, PartialEq)]
+	pub struct VarDeclaration {
+		pub var_keyword: QuToken,
+		pub name: QuToken,
+		pub static_type: Option<QuToken>,
+		pub equals_sign: Option<QuToken>,
+		pub initial_value: Option<Expression>,
+	} impl VarDeclaration {
+		pub fn new(
+			name:&str, static_type:Option<QuToken>, value:Option<Expression>
+		) -> Self {
+			let equals_sign = match value.is_some() {
+				true => Some(QuToken::from("=")),
+				false => None,
+			};
+			Self {
+				var_keyword: QuToken::from("var"),
+				name: QuToken::from(name),
+				static_type,
+				equals_sign,
+				initial_value: value,
+			}
+		}
+	}
+
+
+	#[derive(Debug, Default, Clone, PartialEq)]
+	pub struct VarExpression {
+		pub name: QuToken,
+	} impl VarExpression {
+		pub fn new(variable_name:&str) -> Self {
+			Self {
+				name: QuToken::from(variable_name),
+			}
+		}
+	}
 }
 
 
-#[derive(Debug, Clone, PartialEq)]
-/// Defines an expression in a Qu program tree.
-pub enum QuLeafExpr {
-	/// Call function branch.
-	FnCall(Box<QuToken>, Vec<QuLeafExpr>), // TODO: Implement arguments
-	/// A calculable expression. Contains an operator and two [`QuLeafExpr`]s.
-	Equation(QuOperator, Box<QuLeafExpr>, Box<QuLeafExpr>),
-	/// A literal int value.
-	Number(Box<QuToken>),
-	/// A tuple.
-	Tuple(Vec<QuLeafExpr>),
-	/// A variable name.
-	Var(Box<QuToken>),
-}
+use parsed::*;
 
 
 #[derive(Debug, Clone, PartialEq)]
@@ -117,8 +347,7 @@ pub enum QuOperator {
 	Or,
 
 } impl QuOperator {
-
-	fn from_symbol(symbol:&str) -> Self {
+	pub fn from_symbol(symbol:&str) -> Self {
 		use QuOperator::*;
 		match symbol {
 			OP_EXPR_ADD => Add,
@@ -144,26 +373,29 @@ pub enum QuOperator {
 	}
 
 
-	pub fn get_dunder(&self) -> &'static str {
+	pub fn name(&self) -> &'static str {
 		match self {
-			QuOperator::Add => "__add__",
-			QuOperator::Sub => "__subtract__",
-			QuOperator::Mul => "__multiply__",
-			QuOperator::Div => "__divide__",
-			QuOperator::Mod => "__modular__",
-			QuOperator::Pow => "__power__",
-			QuOperator::Sqrt => "__sqareroot__",
-			QuOperator::Less => "__lesser__",
-			QuOperator::LessEq => "__lesserorequal__",
-			QuOperator::Great => "__greater__",
-			QuOperator::GreatEq => "__greaterorequal__",
-			QuOperator::Eq => "__equal__",
-			QuOperator::NotEq => "__notequal__",
-			QuOperator::And => "__and__",
-			QuOperator::Or => "__or__",
+			QuOperator::Add => "add",
+			QuOperator::Sub => "sub",
+			QuOperator::Mul => "mul",
+			QuOperator::Div => "div",
+			QuOperator::Mod => "mod",
+			QuOperator::Pow => "pow",
+			QuOperator::Sqrt => "sqrt",
+			QuOperator::Less => "lesser",
+			QuOperator::LessEq => "lessereq",
+			QuOperator::Great => "greater",
+			QuOperator::GreatEq => "greatereq",
+			QuOperator::Eq => "eq",
+			QuOperator::NotEq => "neq",
+			QuOperator::And => "and",
+			QuOperator::Or => "or",
 		}
 	}
-
+} impl From<&str> for QuOperator {
+    fn from(value: &str) -> Self {
+        Self::from_symbol(value)
+    }
 }
 
 
@@ -196,13 +428,13 @@ pub struct QuParser {
 
 
 	/// Attempts to parse a code block.
-	fn ck_code_block(&mut self) -> Result<Option<Vec<QuLeaf>>, QuMsg> {
-		let mut leafs = vec![];
+	fn ck_code_block(&mut self) -> Result<Option<CodeBlock>, QuMsg> {
+		let mut leafs:Vec<Statement> = vec![];
 
 		macro_rules! ck_parse {
-			($fn_name:ident) => {
+			($fn_name:ident, $statement:path) => {
 				if let Some(data) = self.$fn_name()? {
-					leafs.push(data);
+					leafs.push($statement(Box::new(data)));
 					continue;
 				}
 			};
@@ -210,27 +442,27 @@ pub struct QuParser {
 
 		while self.tk_idx < self.tokens.len()-1 {
 			// Variable declaration
-			ck_parse!(ck_var_decl);
+			ck_parse!(ck_var_decl, Statement::VarDeclaration);
 
 			// Variable assignment
-			ck_parse!(ck_var_assign);
+			ck_parse!(ck_var_assign, Statement::VarAssign);
 
 			// If Statement
-			ck_parse!(ck_flow_if);
+			ck_parse!(ck_flow_if, Statement::FlowStatement);
 
 			// while Statement
-			ck_parse!(ck_flow_while);
+			ck_parse!(ck_flow_while, Statement::FlowStatement);
 
 			// Return Statement
-			ck_parse!(ch_keyword_return);
+			ck_parse!(ch_keyword_return, Statement::Return);
 
 			// Function declaration
-			ck_parse!(ck_fn_decl);
+			ck_parse!(ck_fn_decl, Statement::FunctionDeclaration);
 
 			// Expressions
 			if !self.utl_statement_start()?.is_none() {
 				if let Some(expr_leaf) = self.ck_expr()? {
-					leafs.push(QuLeaf::Expression(Box::new(expr_leaf)));
+					leafs.push(Statement::Expression(Box::new(expr_leaf)));
 					continue;
 				}
 			}
@@ -244,36 +476,41 @@ pub struct QuParser {
 			);
 		}
 
-		return Ok(Some(leafs));
+		return Ok(Some(CodeBlock {statements: leafs}));
 	}
 
 
 	/// Attempts to pasrse a code scope.
-	fn ck_code_scope(&mut self) -> Result<Option<Vec<QuLeaf>>, QuMsg> {
+	fn ck_code_scope(&mut self) -> Result<Option<CodeScope>, QuMsg> {
 		self.tk_state_save();
 
 		// Check operator
-		let start_tk = self.tk_next()?;
-		if start_tk != OP_BLOCK_START {
+		let colon = self.tk_next()?.clone();
+		if colon != OP_BLOCK_START {
 			self.tk_state_pop();
 			return Ok(None);
 		}
 
 		self.indent += 1;
-		let block_data = self.ck_code_block();
+		let Ok(Some(code_block)) = self.ck_code_block() else {
+			return Err("No code block.".into())
+		};
 		self.indent -= 1;
-		return block_data;
+
+		return Ok(Some(CodeScope {colon, code_block}));
 	}
 
 
 	/// Attempts to parse an expression
-	fn ck_expr(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
+	fn ck_expr(&mut self) -> Result<Option<Expression>, QuMsg> {
 		return self.ck_tuple();
 	}
 
 
 	/// Attempts to parse a flow statement (Exp: if, while, for, etc).
-	fn ck_flow(&mut self, token_type:u8) -> Result<Option<QuLeaf>, QuMsg> {
+	fn ck_flow(
+		&mut self, token_type:u8
+	) -> Result<Option<FlowStatement>, QuMsg> {
 		if self.utl_statement_start()?.is_none() {
 			return Ok(None);
 		}
@@ -286,20 +523,21 @@ pub struct QuParser {
 			FLOW_TYPE_WHILE => KEYWORD_WHILE,
 			_ => unimplemented!(),
 		};
-		let keyword_tk = self.tk_next()
-				.expect("Improper indentation TODO: Bette message");
-		if keyword_tk != keyword {
+		let flow_keyword = self.tk_next()
+				.expect("Improper indentation TODO: Bette message")
+				.clone();
+		if flow_keyword != keyword {
 			self.tk_state_pop();
 			return Ok(None);
 		}
 
 		// Check expression
-		let expr = self.ck_expr()?.ok_or_else(||{
+		let expression = self.ck_expr()?.ok_or_else(||{
 			QuMsg::flow_statement_lacks_expression()
 		})?;
 
 		// Check for code block
-		let scope_data = match self.ck_code_scope() {
+		let code_scope = match self.ck_code_scope() {
 			Ok(leaf) => leaf.ok_or(
 				QuMsg::missing_code_block()
 			)?,
@@ -315,30 +553,28 @@ pub struct QuParser {
 			}
 		};
 
-		return Ok(Some(
-			QuLeaf::FlowStatement(
-				token_type,
-				Box::new(expr),
-				scope_data,
-			)
-		));
+		return Ok(Some(FlowStatement {
+			flow_keyword,
+			condition: expression,
+			body: code_scope,
+		}));
 	}
 
 
 	/// Attempts to parse an if statement.
-	fn ck_flow_if(&mut self) -> Result<Option<QuLeaf>, QuMsg> {
+	fn ck_flow_if(&mut self) -> Result<Option<FlowStatement>, QuMsg> {
 		return self.ck_flow(FLOW_TYPE_IF);
 	}
 
 
 	/// Attempts to parse a while statement.
-	fn ck_flow_while(&mut self) -> Result<Option<QuLeaf>, QuMsg> {
+	fn ck_flow_while(&mut self) -> Result<Option<FlowStatement>, QuMsg> {
 		return self.ck_flow(FLOW_TYPE_WHILE);
 	}
 
 
 	/// Attempts to parse a function call.
-	fn ck_fn_call(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
+	fn ck_fn_call(&mut self) -> Result<Option<CallExpression>, QuMsg> {
 		if self.utl_statement_start()?.is_none() {
 			return Ok(None);
 		}
@@ -350,60 +586,69 @@ pub struct QuParser {
 			else {return Ok(None)};
 
 		// Match an open '('
-		let Ok(Some(_)) = self.ck_str("(")
+		let Ok(Some(open_parenthesy)) = self.ck_str("(")
 			else {
 				self.tk_state_pop();
 				return Ok(None);
 			};
 
 		// Match function parameters
-		let params = match self.ck_expr()? {
+		let parameters = match self.ck_expr()? {
 			Some(l) => {
-				if let QuLeafExpr::Tuple(tup) = l {
-					tup
-				} else {
-					vec![l]
+				match l {
+					Expression::Tuple(tuple_expression)
+						=> *tuple_expression,
+					_ => {
+						TupleExpression {elements: vec![l]}
+					},
 				}
 			},
-			None => vec![],
+			None => TupleExpression::default(),
 		};
 
 		// Match a close ')'
-		let Some(_) = self.ck_str(")")?
+		let Some(close_parenthesy) = self.ck_str(")")?
 			else {return Err(QuMsg::missing_token(")"))};
 
-		return Ok(Some(QuLeafExpr::FnCall(
-			Box::new(fn_name_tk.clone()),
-			params,
-		)));
+		return Ok(Some(CallExpression {
+			name: fn_name_tk,
+			parameters,
+			open_parenthesy,
+			close_parenthesy,
+		}));
 	}
 
 
 	/// Attempts to parse a function definition.
-	fn ck_fn_decl(&mut self) -> Result<Option<QuLeaf>, QuMsg> {
+	fn ck_fn_decl(&mut self) -> Result<Option<FunctionDeclaration>, QuMsg> {
 		if self.utl_statement_start()?.is_none() {
 			return Ok(None);
 		}
 
-		let Some(_) = self.ck_str(KEYWORD_FN)?
+		let Some(fn_keyword) = self.ck_str(KEYWORD_FN)?
 			else {return Ok(None)};
-		let Some(fn_name_tk) = self.ck_fn_name()?
+		let Some(function_name) = self.ck_fn_name()?
 			// TODO: Change to more appropriate message
 			else {return Err(QuMsg::missing_code_block())};
-		let Some(params) = self.ck_fn_parameters()?
+		let Some(parameters) = self.ck_fn_parameters()?
 			else {return Err(QuMsg::general(
 				"Function definition expected parameters. TODO: better msg"
 			))};
-		let Some(scope_leafs) = self.ck_code_scope()?
+		let return_type = self.ck_type_name()?;
+		let Some(code_scope) = self.ck_code_scope()?
 			else {return Err(QuMsg::missing_code_block())};
+		
+		let function_identity = FunctionIdentity {
+			name: function_name,
+			parameters,
+			return_type,
+		};
 
-		return Ok(Some(
-			QuLeaf::FnDecl(
-				Box::new(fn_name_tk.clone()),
-				params,
-				scope_leafs,
-			)
-		));
+		return Ok(Some(FunctionDeclaration {
+			fn_keyword,
+			identity: function_identity,
+			body: code_scope,
+		}));
 	}
 
 
@@ -415,7 +660,9 @@ pub struct QuParser {
 
 
 	/// Attempts to parse function parameters, not including parenthesis.
-	fn ck_fn_parameters(&mut self) -> Result<Option<Vec<QuParamNode>>, QuMsg> {
+	fn ck_fn_parameters(
+		&mut self
+	) -> Result<Option<Vec<FunctionParameterElement>>, QuMsg> {
 		if self.utl_statement_start()?.is_none() {
 			return Ok(None);
 		}
@@ -427,9 +674,17 @@ pub struct QuParser {
 		loop {
 			let Some(param)
 				= self.ck_var_name_type()? else {break};
-			params.push(param);
-			let Some(_) = self.ck_str(",")?
-				else {break};
+			let comma = self.ck_str(",")?.clone();
+			let has_comma = comma.is_some();
+			let element = FunctionParameterElement {
+				name: param.0,
+				static_type: param.1,
+				comma,
+			};
+			params.push(element);
+			if !has_comma {
+				break
+			}
 		}
 
 		let Some(_) = self.ck_str(")")?
@@ -442,7 +697,7 @@ pub struct QuParser {
 
 
 	/// Attempts to return statemente.
-	fn ch_keyword_return(&mut self) -> Result<Option<QuLeaf>, QuMsg> {
+	fn ch_keyword_return(&mut self) -> Result<Option<ReturnStatement>, QuMsg> {
 		if self.utl_statement_start()?.is_none() {
 			return Ok(None);
 		}
@@ -452,18 +707,20 @@ pub struct QuParser {
 			else {return Ok(None)};
 
 		return match self.ck_expr()? {
-			Some(l) => Ok(Some(QuLeaf::Return(Some(Box::new(l))))),
-			None => Ok(Some(QuLeaf::Return(None))),
+			Some(value)
+				=> Ok(Some(ReturnStatement {value:Some(value)})),
+			None => Ok(Some(ReturnStatement {value: None})),
 		};
 	}
 
 
 	/// Attempts to parse a number literal
-	fn ck_number(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
+	fn ck_number(&mut self) -> Result<Option<NumberLiteral>, QuMsg> {
 		let tk = self.tk_spy(0);
 		if tk.tk_type == TOKEN_TYPE_NUMBER {
+			let value = self.tk_next()?.clone();
 			return Ok(Some(
-				QuLeafExpr::Number(Box::new(self.tk_next()?.clone()))
+				NumberLiteral {value}
 			))
 		}
 		return Ok(None);
@@ -471,7 +728,7 @@ pub struct QuParser {
 
 
 	/// Attempts to parse a lesser than expression.
-	fn ck_op_les(&mut self) -> Result<Option<QuLeafExpr>, QuMsg>{
+	fn ck_op_les(&mut self) -> Result<Option<Expression>, QuMsg>{
 		return self.ck_operation(OP_EXPR_LES, &Self::ck_op_grt);
 	}
 
@@ -483,7 +740,7 @@ pub struct QuParser {
 
 
 	/// Attempts to parse a greater than expression.
-	fn ck_op_grt(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
+	fn ck_op_grt(&mut self) -> Result<Option<Expression>, QuMsg> {
 		return self.ck_operation(OP_EXPR_GRT, &Self::ck_op_eql);
 	}
 
@@ -495,44 +752,44 @@ pub struct QuParser {
 
 
 	/// Attempts to parse an equal to expression.
-	fn ck_op_eql(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
+	fn ck_op_eql(&mut self) -> Result<Option<Expression>, QuMsg> {
 		return self.ck_operation(OP_EXPR_EQL, &Self::ck_op_not_eql);
 	}
 
 
 	/// Attempts to parse a not equal to expression.
-	fn ck_op_not_eql(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
+	fn ck_op_not_eql(&mut self) -> Result<Option<Expression>, QuMsg> {
 		return self.ck_operation(OP_EXPR_NEQ, &Self::ck_op_sub);
 	}
 
 
 	/// Attempts to parse a subtraction expression.
-	fn ck_op_sub(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
+	fn ck_op_sub(&mut self) -> Result<Option<Expression>, QuMsg> {
 		return self.ck_operation(OP_EXPR_SUB, &Self::ck_op_add);
 	}
 
 
 	/// Attempts to parse an addition expression.
-	fn ck_op_add(&mut self) -> Result<Option<QuLeafExpr>, QuMsg>  {
+	fn ck_op_add(&mut self) -> Result<Option<Expression>, QuMsg>  {
 		return self.ck_operation(OP_EXPR_ADD, &Self::ck_op_div);
 	}
 
 
 	/// Attempts to parse a division expression.
-	fn ck_op_div(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
+	fn ck_op_div(&mut self) -> Result<Option<Expression>, QuMsg> {
 		return self.ck_operation(OP_EXPR_DIV, &Self::ck_op_mul);
 	}
 
 
 	/// Attempts to parse a multiplication expression.
-	fn ck_op_mul(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
+	fn ck_op_mul(&mut self) -> Result<Option<Expression>, QuMsg> {
 		return self.ck_operation(OP_EXPR_MUL, &Self::ck_op_paren_expr);
 	}
 
 
 	/// Attempts to parse a parenthesized expression.
 	fn ck_op_paren_expr(&mut self
-	) -> Result<Option<QuLeafExpr>, QuMsg> {
+	) -> Result<Option<Expression>, QuMsg> {
 		self.tk_state_save();
 
 		let tk = self.tk_next()?;
@@ -566,9 +823,9 @@ pub struct QuParser {
 
 	/// A helper function for checking operations like addition or equality.
 	fn ck_operation(
-			&mut self, operator:&str,
-			next:&dyn Fn(&mut Self)->Result<Option<QuLeafExpr>, QuMsg>,
-			) -> Result<Option<QuLeafExpr>, QuMsg> {
+		&mut self, operator:&str,
+		next:&dyn Fn(&mut Self)->Result<Option<Expression>, QuMsg>,
+	) -> Result<Option<Expression>, QuMsg> {
 
 		self.tk_state_save();
 
@@ -578,30 +835,28 @@ pub struct QuParser {
 			self.tk_state_pop();
 			return Ok(None);
 		}
-		let data_l = data_l.unwrap();
+		let left = data_l.unwrap();
 
 		// Check operator
-		let tk_op = self.tk_spy(0);
+		let tk_op = self.tk_spy(0).clone();
 		if tk_op != operator {
-			return Ok(Some(data_l));
+			return Ok(Some(left));
 		}
 		self.tk_next().expect("Improper indentation TODO: Bette message");
 
 		// Check right side for expression
-		let data_r = self.ck_operation(operator, next)?;
-		if let None = data_r {
+		let right = self.ck_operation(operator, next)?;
+		if let None = right {
 			self.tk_state_pop();
 			return Ok(None);
 		}
-		let data_r = data_r.unwrap();
+		let right = right.unwrap();
 
-		return Ok(Some(
-			QuLeafExpr::Equation(
-				QuOperator::from_symbol(operator),
-				Box::new(data_l),
-				Box::new(data_r)
-			)
-		));
+		return Ok(Some(Expression::Operation(Box::new(OperationExpression {
+			left,
+			operator: tk_op,
+			right,
+		}))));
 	}
 
 
@@ -610,7 +865,7 @@ pub struct QuParser {
 	/// 
 	/// A tuple is denoted by expressions separated by commas (Ex: "1,2,3").
 	/// Parenthesis technicly have nothing to do with tuples.
-	fn ck_tuple(&mut self) -> Result<Option<QuLeafExpr>, QuMsg>{
+	fn ck_tuple(&mut self) -> Result<Option<Expression>, QuMsg>{
 		match self.ck_op_les()? {
 			// Matched an expression
 			Some(expr) => {
@@ -626,7 +881,9 @@ pub struct QuParser {
 								if self.tk_spy(0) != "," {
 									// No comma found, tuple must have ended.
 									// Return tuple.
-									return Ok(Some(QuLeafExpr::Tuple(elements)));
+									return Ok(Some(Expression::Tuple(
+										Box::new(TupleExpression {elements})
+									)))
 								} else {
 									// Comma found, continue adding to tuple
 									self.tk_next()?;
@@ -634,7 +891,9 @@ pub struct QuParser {
 							},
 							None => {
 								// No more expressions found, return tuple
-								return Ok(Some(QuLeafExpr::Tuple(elements)))
+								return Ok(Some(Expression::Tuple(
+									Box::new(TupleExpression {elements})
+								)))
 							},
 						};
 					}
@@ -651,10 +910,9 @@ pub struct QuParser {
 
 
 	/// Attempts to parse `text`.
-	fn ck_str(&mut self, text:&str) -> Result<Option<()>, QuMsg> {
+	fn ck_str(&mut self, text:&str) -> Result<Option<QuToken>, QuMsg> {
 		if self.tk_spy(0) == text {
-			self.tk_next()?;
-			return Ok(Some(()));
+			return Ok(Some(self.tk_next()?.clone()));
 		}
 		return Ok(None);
 	}
@@ -668,7 +926,7 @@ pub struct QuParser {
 
 
 	/// Attempts to parse a value.
-	fn ck_value(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
+	fn ck_value(&mut self) -> Result<Option<Expression>, QuMsg> {
 		self.tk_state_save();
 		if self.tk_next_option().is_none() {
 			self.tk_state_pop();
@@ -677,32 +935,37 @@ pub struct QuParser {
 		self.tk_state_pop();
 
 		// Check function call
-		if let Some(leaf) = self.ck_fn_call()? {
-			return Ok(Some(leaf));
+		if let Some(call) = self.ck_fn_call()? {
+			return Ok(Some(Expression::Call(Box::new(call))));
 		}
 
 		// Check variable
 		if let Some(leaf) = self.ck_var()? {
-			return Ok(Some(leaf));
+			return Ok(Some(Expression::Var(Box::new(leaf))));
 		}
 
-		return Ok(self.ck_number()?);
+		// Check number
+		if let Some(leaf) = self.ck_number()? {
+			return Ok(Some(Expression::Number(Box::new(leaf))));
+		}
+
+		return Ok(None);
 	}
 
 
 	/// Attempts to parse a variable as an expression.
-	fn ck_var(&mut self) -> Result<Option<QuLeafExpr>, QuMsg> {
-		let Some(var_name) = self.ck_var_name()?
+	fn ck_var(&mut self) -> Result<Option<VarExpression>, QuMsg> {
+		let Some(variable_name) = self.ck_var_name()?
 			else {return Ok(None)};
 
 		return Ok(Some(
-			QuLeafExpr::Var(Box::new(var_name))
+			VarExpression {name: variable_name}
 		));
 	}
 
 
 	/// Attempts to parse a variable assignment.
-	fn ck_var_assign(&mut self) -> Result<Option<QuLeaf>, QuMsg> {
+	fn ck_var_assign(&mut self) -> Result<Option<VarAssignment>, QuMsg> {
 		if self.utl_statement_start()?.is_none() {
 			return Ok(None);
 		}
@@ -711,62 +974,63 @@ pub struct QuParser {
 
 		// Match variable name
 		let name_data_opt = self.ck_var_name()?;
-		let name_tk = match name_data_opt {
+		let name = match name_data_opt {
 			Some(name_data) => name_data,
 			None => {return Ok(None);},
 		};
 		
 		
 		// Match assign operator
-		let assign_op_tk = self.tk_next()?;
-		if assign_op_tk != OP_ASSIGN_SYMBOL {
+		let equals_sign = self.tk_next()?.clone();
+		if equals_sign != OP_ASSIGN_SYMBOL {
 			self.tk_state_pop();
 			return Ok(None);
 		}
 
 		// Match expression
-		let expr_leaf = match self.ck_expr()? {
+		let new_value = match self.ck_expr()? {
 			Some(expr_data) => expr_data,
 			None => {
 				self.tk_state_pop();
 				let false_expr = self.tk_spy(2).clone();
 				return Err(QuMsg::var_assign_invalid_value(
-					&name_tk.slice, &false_expr.slice
+					&name.slice, &false_expr.slice
 				));
 			},
 		};
 
+		
+
 		return Ok(Some(
-			QuLeaf::VarAssign(Box::new(name_tk), Box::new(expr_leaf))
+			VarAssignment { name, equals_sign, new_value }
 		));
 	}
 
 
 	/// Attempts to parse a variable declaration.
-	fn ck_var_decl(&mut self) -> Result<Option<QuLeaf>, QuMsg> {
+	fn ck_var_decl(&mut self) -> Result<Option<VarDeclaration>, QuMsg> {
 		if self.utl_statement_start()?.is_none() {
 			return Ok(None);
 		}
 
-		let Some(_) = self.ck_str(KEYWORD_VAR)?
+		let Some(var_keyword) = self.ck_str(KEYWORD_VAR)?
 			else {return Ok(None);};
 		
 
 		// Match variable name
-		let Some(name_tk) = self.ck_var_name()?
-			else {return Err(QuMsg::general(
-			"QuToken after 'var' does not match a name. 'TODO:Better msg'"
-			))};
-
-		// Match variable type
-		let type_tk_opt = match self.ck_type_name()? {
-			Some(tk) => Some(Box::new(tk)),
-			None => None,
+		let Some(name) = self.ck_var_name()? else {
+			return Err(
+				"QuToken after 'var' does not match a name. 'TODO:Better msg'".into()
+			)
 		};
 
+		// Match variable type
+		let static_type = self.ck_type_name()?;
+		let equals_sign = self.ck_str(OP_ASSIGN_SYMBOL)?;
+
 		// Match optional assignment
-		let assign_leaf_opt
-			= if self.ck_str(OP_ASSIGN_SYMBOL)?.is_some() {
+		let value
+			= if equals_sign.is_some() {
 
 			// Custom error handling
 			let expr_op = self.ck_expr()
@@ -776,26 +1040,19 @@ pub struct QuParser {
 				if msg.title == errors::ERR_TITLE_INVALID_INDENTATION {
 					self.tk_idx -= 1;
 					return Err(QuMsg::var_assign_lacks_value(
-						&name_tk.slice))
+						&name.slice))
 				}
 				// Return normal error
 				return Err(msg);
 			})?;
 
-			// Convert expression from Option to Option<Box>
-			let expr = match expr_op {
-				Some(expr) => Some(Box::new(expr)),
-				None => None,
-			};
-			expr
+			expr_op
 
 		} else {None};
 		
-		return Ok(Some(QuLeaf::VarDecl(
-			Box::new(name_tk),
-			type_tk_opt,
-			assign_leaf_opt,
-		)));
+		return Ok(Some(
+			VarDeclaration {var_keyword, name, static_type, equals_sign, initial_value: value}
+		));
 	}
 
 
@@ -832,7 +1089,7 @@ pub struct QuParser {
 
 
 	/// Parses a Qu script.
-	pub fn parse(&mut self, script:&str) -> Result<Vec<QuLeaf>, QuMsg> {
+	pub fn parse(&mut self, script:&str) -> Result<CodeBlock, QuMsg> {
 		self.tk_idx = 0;
 		self.line = 0;
 		self.indent = u8::MAX;
@@ -852,7 +1109,7 @@ pub struct QuParser {
 				}
 
 				let Some(data) = data_opt
-					else {return Ok(vec![])};
+					else {return Ok(CodeBlock {statements: vec![]})};
 				return Ok(data);
 			}
 
@@ -963,389 +1220,4 @@ pub struct QuParser {
 
 
 #[cfg(test)]
-mod test_qu_matcher {
-    use crate::QuLeaf;
-    use crate::QuLeafExpr;
-    use crate::parser::FLOW_TYPE_IF;
-    use crate::QuParser;
-	use crate::QuMsg;
-	use crate::parser::QuOperator;
-use crate::tokens::QuToken;
-
-	use super::FLOW_TYPE_WHILE;
-
-	// TODO: Make unit test for parsing expression order
-
-	#[test]
-	fn parse_code_example() -> Result<(), QuMsg>{
-		let script = r#"
-			fn add():
-				var left = 2
-				var right = 5
-				return left + right
-		
-			add()
-		"#;
-		let mut p = QuParser::new();
-		let res = p.parse(script)?;
-		
-		let expc = vec![
-			QuLeaf::FnDecl(
-				Box::new(QuToken::from("add")),
-				vec![],
-				vec![
-					QuLeaf::VarDecl(
-						Box::new(QuToken::from("left")),
-						None,
-						Some(Box::new(QuLeafExpr::Number(
-							Box::new(QuToken::from("2"))
-						))),
-					),
-					QuLeaf::VarDecl(
-						Box::new(QuToken::from("right")),
-						None,
-						Some(Box::new(QuLeafExpr::Number(
-							Box::new(QuToken::from("5"))
-						))),
-					),
-					QuLeaf::Return(
-						Some(Box::new(QuLeafExpr::Equation(
-							QuOperator::Add,
-							Box::new(QuLeafExpr::Var(
-								Box::new(QuToken::from("left"))
-							)),
-							Box::new(QuLeafExpr::Var(
-								Box::new(QuToken::from("right"))
-							)),
-						))),
-					),
-				]
-			),
-			QuLeaf::Expression(
-				Box::new(QuLeafExpr::FnCall(
-					Box::new(QuToken::from("add")),
-					vec![]
-				)),
-			),
-		];
-
-		assert_eq!(&res, &expc);
-
-		return Ok(());
-	}
-	
-
-	#[test]
-	fn parse_expression() -> Result<(), QuMsg>{
-		let mut p = QuParser::new();
-		let res = p.parse("2 + 3 - 3")?;
-		dbg!(&res);
-		
-		let expc = vec![
-			QuLeaf::Expression(Box::new(
-				QuLeafExpr::Equation(
-					QuOperator::Sub,
-					Box::new(QuLeafExpr::Equation(
-						QuOperator::Add,
-						Box::new(QuLeafExpr::Number(Box::new(QuToken::from("2")))),
-						Box::new(QuLeafExpr::Number(Box::new(QuToken::from("3")))),
-					)),
-					Box::new(QuLeafExpr::Number(Box::new(QuToken::from("3")))),
-				),
-			)),
-		];
-
-		assert_eq!(res.len(), expc.len());
-		assert_eq!(res, expc);
-
-		return Ok(());
-	}
-
-
-	macro_rules! test_equation {
-		($symbol:expr, $p:ident) => {
-			{
-				let res = $p.parse(&format!("23 {} 18", $symbol))?;
-				let expc = vec![
-					QuLeaf::Expression(
-						Box::new(QuLeafExpr::Equation(
-							QuOperator::from_symbol($symbol),
-							Box::new(QuLeafExpr::Number(
-								Box::new(QuToken::from("23")))
-							),
-							Box::new(QuLeafExpr::Number(
-								Box::new(QuToken::from("18")))
-							),
-						)),
-					),
-				];
-				assert_eq!(res, expc);
-			}
-		};
-	}
-
-	#[test]
-	fn parse_expression_outputs() -> Result<(), QuMsg>{
-		let mut p = QuParser::new();
-		
-		test_equation!("<", p);
-		//test_equation!("<=", p);
-		test_equation!(">", p);
-		//test_equation!(">=", p);
-		test_equation!("==", p);
-		test_equation!("!=", p);
-		test_equation!("-", p);
-		test_equation!("+", p);
-		test_equation!("/", p);
-		test_equation!("*", p);
-
-		return Ok(());
-	}
-
-
-	#[test]
-	fn parse_expression_parenthesies() -> Result<(), QuMsg>{
-		let mut p = QuParser::new();
-		let res = p.parse("2 + 3 * 9")?;
-		let res2 = p.parse("(2 + 3) * 9")?;
-
-		let expt = vec![
-			QuLeaf::Expression(
-				Box::new(QuLeafExpr::Equation(
-					QuOperator::Add,
-					Box::new(QuLeafExpr::Number(
-						Box::new(QuToken::from("2")),
-					)),
-					Box::new(QuLeafExpr::Equation(
-						QuOperator::Mul,
-						Box::new(QuLeafExpr::Number(
-							Box::new(QuToken::from("3")),
-						)),
-						Box::new(QuLeafExpr::Number(
-							Box::new(QuToken::from("9")),
-						)),
-					)),
-				)),
-			),
-		];
-		let expt2 = vec![
-			QuLeaf::Expression(
-				Box::new(QuLeafExpr::Equation(
-					QuOperator::Mul,
-					Box::new(QuLeafExpr::Equation(
-						QuOperator::Add,
-						Box::new(QuLeafExpr::Number(
-							Box::new(QuToken::from("2")),
-						)),
-						Box::new(QuLeafExpr::Number(
-							Box::new(QuToken::from("3")),
-						)),
-					)),
-					Box::new(QuLeafExpr::Number(
-						Box::new(QuToken::from("9")),
-					)),
-				)),
-			),
-		];
-
-		assert_ne!(&res, &res2);
-		assert_eq!(&res, &expt);
-		assert_eq!(&res2, &expt2);
-
-		return Ok(());
-	}
-
-
-	#[test]
-	fn parse_flow_if() -> Result<(), QuMsg>{
-		let mut p = QuParser::new();
-		let res = p.parse(r##"
-		if 1:
-			2
-			3
-		while 4:
-			5
-		"##)?;
-
-		let expected = vec![
-			QuLeaf::FlowStatement(
-				FLOW_TYPE_IF,
-				Box::new(QuLeafExpr::Number(
-					Box::new(QuToken::from("1")),
-				)),
-				vec![
-					QuLeaf::Expression(
-						Box::new(QuLeafExpr::Number(
-							Box::new(QuToken::from("2")),
-						)),
-					),
-					QuLeaf::Expression(
-						Box::new(QuLeafExpr::Number(
-							Box::new(QuToken::from("3")),
-						)),
-					),
-				],
-			),
-			QuLeaf::FlowStatement(
-				FLOW_TYPE_WHILE,
-				Box::new(QuLeafExpr::Number(
-					Box::new(QuToken::from("4")),
-				)),
-				vec![
-					QuLeaf::Expression(
-						Box::new(QuLeafExpr::Number(
-							Box::new(QuToken::from("5")),
-						)),
-					),
-				],
-			),
-		];
-
-		assert_eq!(res, expected);
-
-		return Ok(());
-	}
-
-
-	#[test]
-	fn parse_fn_call() -> Result<(), QuMsg>{
-		let mut p = QuParser::new();
-		let res = p.parse(r##"
-		add() + sub()
-		"##)?;
-
-		let expected = vec![
-			QuLeaf::Expression(
-				Box::new(QuLeafExpr::Equation(
-					QuOperator::Add,
-					Box::new(QuLeafExpr::FnCall(
-						Box::new(QuToken::from("add")),
-						vec![],
-					)),
-					Box::new(QuLeafExpr::FnCall(
-						Box::new(QuToken::from("sub")),
-						vec![],
-					)),
-				)),
-			),
-		];
-
-		assert_eq!(res, expected);
-
-		return Ok(());
-	}
-
-
-	#[test]
-	fn parse_fn_definition() -> Result<(), QuMsg>{
-		let mut p = QuParser::new();
-		let res = p.parse(r##"
-			fn add(a, b):
-				5
-			fn sub(a int, b int):
-				6
-		"##)?;
-
-		let expt = vec![
-			QuLeaf::FnDecl(
-				Box::new(QuToken::from("add")),
-				vec![
-					(
-						QuToken::from("a"),
-						None,
-					),
-					(
-						QuToken::from("b"),
-						None,
-					),
-				],
-				vec![
-					QuLeaf::Expression(
-						Box::new(QuLeafExpr::Number(
-							Box::new(QuToken::from("5")),
-						)),
-					),
-				]
-			),
-			QuLeaf::FnDecl(
-				Box::new(QuToken::from("sub")),
-				vec![
-					(
-						QuToken::from("a"),
-						Some(QuToken::from("int")),
-					),
-					(
-						QuToken::from("b"),
-						Some(QuToken::from("int")),
-					),
-				],
-				vec![
-					QuLeaf::Expression(
-						Box::new(QuLeafExpr::Number(
-							Box::new(QuToken::from("6")),
-						)),
-					),
-				]
-			),
-		];
-
-		assert_eq!(res, expt);
-
-		return Ok(());
-	}
-
-
-	#[test]
-	fn parse_variable_assignment() -> Result<(), QuMsg>{
-		let mut p = QuParser::new();
-		let res = p.parse("count = 3/2")?;
-
-		let expc = vec![
-			QuLeaf::VarAssign(
-				Box::new(QuToken::from("count")),
-				Box::new(QuLeafExpr::Equation(
-					QuOperator::Div,
-					Box::new(QuLeafExpr::Number(
-						Box::new(QuToken::from("3")),
-					)),
-					Box::new(QuLeafExpr::Number(
-						Box::new(QuToken::from("2")),
-					)),
-				)),
-			),
-		];
-
-		assert_eq!(&res, &expc);
-
-		return Ok(());
-	}
-
-
-	#[test]
-	fn parse_variable_declaration() -> Result<(), QuMsg>{
-		let mut p = QuParser::new();
-		let res = p.parse("var count int = 20 * 8")?;
-
-		dbg!(&res);
-		let expc = vec![
-			QuLeaf::VarDecl(
-				Box::new(QuToken::from("count")),
-				Some(Box::new(QuToken::from("int"))),
-				Some(Box::new(QuLeafExpr::Equation(
-					QuOperator::Mul,
-					Box::new(QuLeafExpr::Number(
-						Box::new(QuToken::from("20")),
-					)),
-					Box::new(QuLeafExpr::Number(
-						Box::new(QuToken::from("8")),
-					)),
-				))),
-			),
-		];
-
-		assert_eq!(&res, &expc);
-
-		return Ok(());
-	}
-
-}
+mod test_qu_matcher {}

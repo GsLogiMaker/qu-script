@@ -31,11 +31,12 @@ pub struct QuMsg {
 
 	/// Constructs a new [`QuMsg`]
 	pub fn new() -> Self {
-		Self {
-			title:String::default(),
-			description:String::default(),
-			token:QuCharIndex::default()
-		}
+		let msg = Self {
+			title: String::default(),
+			description: String::default(),
+			token: QuCharIndex::default()
+		};
+		msg
 	}
 
 
@@ -106,7 +107,14 @@ pub struct QuMsg {
 
 	// --- Messages ---
 
-	/// Constructs an `empty code block` message.
+	pub fn done() -> Self {
+		let mut msg = Self::new();
+		msg.title = ERR_TITLE_GENERAL.into();
+		msg.description = "Done".into();
+		return msg;
+	}
+
+
 	pub fn empty_code_block() -> Self{
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_EMPTY_CODE_BLOCK.to_string();
@@ -138,7 +146,10 @@ pub struct QuMsg {
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_GENERAL.to_string();
 		msg.description = description.to_string();
-		return msg;
+		if cfg!(feature = "qu_panic_upon_error") {
+			panic!("{}", msg);
+		}
+		msg
 	}
 
 
@@ -293,13 +304,21 @@ pub struct QuMsg {
 } impl From<&str> for QuMsg {
 
     fn from(msg:&str) -> Self {
-        QuMsg::general(msg)
+        let msg = QuMsg::general(msg);
+		if cfg!(feature = "qu_panic_upon_error") {
+			panic!("{}", msg);
+		}
+		msg
     }
 
 } impl From<String> for QuMsg {
 
     fn from(msg:String) -> Self {
-        QuMsg::general(&msg)
+        let msg = QuMsg::general(&msg);
+		if cfg!(feature = "qu_panic_upon_error") {
+			panic!("{}", msg);
+		}
+		msg
     }
 
 }

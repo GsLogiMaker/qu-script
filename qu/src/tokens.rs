@@ -1,14 +1,15 @@
 
-use std::fmt::{self, Display, Debug};
+use std::fmt;
+use std::fmt::Display;
+use std::fmt::Debug;
 
-use crate::parser::{
-	KEYWORD_VAR,
-	KEYWORD_FN,
-	KEYWORD_CLASS,
-	KEYWORD_IF,
-	KEYWORD_ELSE,
-	KEYWORD_ELIF
-};
+use crate::parser::KEYWORD_VAR;
+use crate::parser::KEYWORD_FN;
+use crate::parser::KEYWORD_CLASS;
+use crate::parser::KEYWORD_IF;
+use crate::parser::KEYWORD_ELSE;
+use crate::parser::KEYWORD_ELIF;
+use crate::parser::QuOperator;
 
 
 pub const TOKEN_TYPE_KEYWORD:u8 = 1;

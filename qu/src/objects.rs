@@ -2,13 +2,28 @@
 //! Defines all types and objects used by Qu.
 
 
-use crate::QuVm;
+use crate::{QuVm, parser::QuOperator, import::ClassId};
+use crate::Qu;
 use crate::QuMsg;
 use crate::vm::QuExtFn;
 use crate::vm::QuVoidExtFn;
 use crate::vm::QuStackId;
-use crate::vm::QuAny;
 use crate::vm::StackValue;
+use std::fmt::Debug;
+
+
+macro_rules! qufn {
+	($name:ident($($param:ident),*) $return:ident $block:expr) => {
+		{
+			ExternalFunction::new(
+				stringify!($name),
+				&$block,
+				[$(<$param as QuRegisterStruct>::name()),*].into(),
+				<$return as QuRegisterStruct>::name(),
+			)
+		}
+	};
+}
 
 
 /// Data for an external function.
@@ -20,82 +35,84 @@ pub type QuVoidFnForm = (String, QuVoidExtFn, Vec<usize>);
 type QuMethodRegistration = (String, &'static dyn Fn(&mut QuVm));
 
 
-#[allow(non_snake_case)]
-fn int_quwrapper__add__(vm:&mut QuVm, parameters:&Vec<QuStackId>
-) -> Result<StackValue, QuMsg> {
-	if parameters.len() != 2 {
-		return Err(QuMsg::general("incorrect parameters quantity"));
+#[derive(Clone)]
+pub struct ExternalFunction {
+	pub name: String,
+	pub pointer: QuExtFn,
+	pub parameters: Vec<&'static str>,
+	pub return_type: &'static str,
+} impl ExternalFunction {
+	pub fn new(
+		name: &str,
+		pointer: QuExtFn,
+		parameters: Vec<&'static str>,
+		return_type: &'static str,
+	) -> Self{
+		Self {
+			name: name.into(),
+			pointer,
+			parameters: parameters,
+			return_type,
+		}
 	}
-	let l = vm.reg_get_as::<isize>(parameters[0])?;
-	let r = vm.reg_get_as::<isize>(parameters[1])?;
 
-	let output = *l+*r;
-	Ok(Box::new(output))
+
+	pub fn call(
+		&self, vm:&mut QuVm, parameters: &Vec<QuStackId>, output_id: QuStackId,
+	) -> Result<(), QuMsg> {
+		(self.pointer)(vm, parameters, output_id)
+	}
+} impl Debug for ExternalFunction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExternalFunction")
+			.field("name", &self.name)
+			.field("parameters", &self.parameters)
+			.field("return_type", &self.return_type)
+			.finish()
+    }
+} impl Default for ExternalFunction {
+    fn default() -> Self {
+        Self {
+			pointer: &|_, _, _| {Ok(())},
+			..Default::default()
+		}
+    }
 }
 
 
-#[allow(non_snake_case)]
-fn int_quwrapper__copy__(vm:&mut QuVm, parameters:&Vec<QuStackId>
-) -> Result<StackValue, QuMsg> {
-	if parameters.len() != 1 {
-		return Err(QuMsg::general("incorrect parameters quantity"));
-	}
-	let s = vm.reg_get_as::<isize>(parameters[0])?;
-	Ok(Box::new(*s))
+#[derive(Debug, Default, Clone)]
+pub struct FunctionPointer {
+	pub pc_target: usize,
 }
 
 
-#[allow(non_snake_case)]
-fn int_quwrapper__greater__(vm:&mut QuVm, parameters:&Vec<QuStackId>
-) -> Result<StackValue, QuMsg> {
-	if parameters.len() != 2 {
-		return Err(QuMsg::general("incorrect parameters quantity"));
-	}
-	let l = vm.reg_get_as::<isize>(parameters[0])?;
-	let r = vm.reg_get_as::<isize>(parameters[1])?;
+/// Defines all the types supported by Qu.
+#[derive(Debug, Default, Clone)]
+pub enum QuType {
+	#[default] Void,
+	Int,
+	Bool,
+	String,
+	Tuple(Vec<QuType>),
+	Array,
+	Dictionary,
+	Object(usize),
+} impl From<u8> for QuType {
 
-	let output = *l>*r;
-	vm.hold_is_true = output;
-	if output {
-		Ok(Box::new(1isize))
-	} else {
-		Ok(Box::new(0isize))
-	}
-}
-
-
-#[allow(non_snake_case)]
-fn int_quwrapper__lesser__(vm:&mut QuVm, parameters:&Vec<QuStackId>
-) -> Result<StackValue, QuMsg> {
-	if parameters.len() != 2 {
-		return Err(QuMsg::general("incorrect parameters quantity"));
-	}
-	let l = vm.reg_get_as::<isize>(parameters[0])?;
-	let r = vm.reg_get_as::<isize>(parameters[1])?;
-
-	let output = *l<*r;
-	vm.hold_is_true = output;
-	if output {
-		Ok(Box::new(1isize))
-	} else {
-		Ok(Box::new(0isize))
+	fn from(f:u8) -> Self { 
+		match f {
+			0 => QuType::Void,
+			1 => QuType::Int,
+			2 => QuType::Bool,
+			3 => QuType::String,
+			4 => panic!(),//QuType::Tuple(Vec::default()),
+			5 => QuType::Array,
+			6 => QuType::Dictionary,
+			7 => QuType::Object(0),
+			_ => panic!(),
+		}
 	}
 }
-
-
-#[allow(non_snake_case)]
-fn int_quwrapper__subtract__(vm:&mut QuVm, parameters:&Vec<QuStackId>
-) -> Result<StackValue, QuMsg> {
-	if parameters.len() != 2 {
-		return Err(QuMsg::general("incorrect parameters quantity"));
-	}
-	let l = vm.reg_get_as::<isize>(parameters[0])?;
-	let r = vm.reg_get_as::<isize>(parameters[1])?;
-
-	let output = *l-*r;
-	Ok(Box::new(output))
-}
-
 
 /// Defines a block of code.
 /// 
@@ -148,97 +165,151 @@ pub struct QuFnObject {
 }
 
 
+impl QuRegisterStruct for bool {
+	
+	fn register_fns() -> Vec<ExternalFunction> {
+		return vec![
+			qufn!(and(Self, Self) Self |vm, args, return_id| {
+				vm.write(return_id, *vm.read::<Self>(args[0])? && *vm.read::<Self>(args[1])?);
+				Ok(())
+			}),
+			qufn!(or(Self, Self) Self |vm, args, return_id| {
+				vm.write(return_id, *vm.read::<Self>(args[0])? || *vm.read::<Self>(args[1])?);
+				Ok(())
+			}),
+			qufn!(eq(Self, Self) Self |vm, args, return_id| {
+				let output = vm.read::<i32>(args[0])? == vm.read::<i32>(args[1])?;
+				vm.hold_is_zero = output;
+				if output {
+					vm.write(return_id, 1i32);
+				} else {
+					vm.write(return_id, 0i32);
+				}
+				Ok(())
+			}),
+			qufn!(neq(Self, Self) Self |vm, args, return_id| {
+				let output = vm.read::<i32>(args[0])? != vm.read::<i32>(args[1])?;
+				vm.hold_is_zero = output;
+				if output {
+					vm.write(return_id, 1i32);
+				} else {
+					vm.write(return_id, 0i32);
+				}
+				Ok(())
+			}),
+			qufn!(copy(Self) Self |vm, args, return_id| {
+				vm.write(return_id, *vm.read::<bool>(args[0])?);
+				Ok(())
+			}),
+		];
+	}
+
+
+	fn name() -> &'static str {"bool"}
+
+}
+
+
+impl QuRegisterStruct for i32 {
+	
+	fn register_fns() -> Vec<ExternalFunction> {
+		return vec![
+			qufn!(add(i32, i32) i32 |vm, args, return_id| {
+				vm.write(return_id, vm.read::<i32>(args[0])? + vm.read::<i32>(args[1])?);
+				Ok(())
+			}),
+			qufn!(sub(i32, i32) i32 |vm, args, return_id| {
+				vm.write(return_id, vm.read::<i32>(args[0])? - vm.read::<i32>(args[1])?);
+				Ok(())
+			}),
+			qufn!(mul(i32, i32) i32 |vm, args, return_id| {
+				vm.write(return_id, vm.read::<i32>(args[0])? * vm.read::<i32>(args[1])?);
+				Ok(())
+			}),
+			qufn!(div(i32, i32) i32 |vm, args, return_id| {
+				vm.write(return_id, vm.read::<i32>(args[0])? / vm.read::<i32>(args[1])?);
+				Ok(())
+			}),
+			qufn!(lesser(i32, i32) bool |vm, args, return_id| {
+				let output = vm.read::<i32>(args[0])? < vm.read::<i32>(args[1])?;
+				vm.hold_is_zero = output;
+				vm.write(return_id, output);
+				Ok(())
+			}),
+			qufn!(lessereq(i32, i32) bool |vm, args, return_id| {
+				let output = vm.read::<i32>(args[0])? <= vm.read::<i32>(args[1])?;
+				vm.hold_is_zero = output;
+				vm.write(return_id, output);
+				Ok(())
+			}),
+			qufn!(greater(i32, i32) bool |vm, args, return_id| {
+				let output = vm.read::<i32>(args[0])? > vm.read::<i32>(args[1])?;
+				vm.hold_is_zero = output;
+				vm.write(return_id, output);
+				Ok(())
+			}),
+			qufn!(greatereq(i32, i32) bool |vm, args, return_id| {
+				let output = vm.read::<i32>(args[0])? >= vm.read::<i32>(args[1])?;
+				vm.hold_is_zero = output;
+				vm.write(return_id, output);
+				Ok(())
+			}),
+			qufn!(eq(i32, i32) bool |vm, args, return_id| {
+				let output = vm.read::<i32>(args[0])? == vm.read::<i32>(args[1])?;
+				vm.hold_is_zero = output;
+				vm.write(return_id, output);
+				Ok(())
+			}),
+			qufn!(neq(i32, i32) bool |vm, args, return_id| {
+				let output = vm.read::<i32>(args[0])? != vm.read::<i32>(args[1])?;
+				vm.hold_is_zero = output;
+				vm.write(return_id, output);
+				Ok(())
+			}),
+			qufn!(copy(i32) i32 |vm, args, return_id| {
+				vm.write(return_id, *vm.read::<i32>(args[0])?);
+				Ok(())
+			}),
+		];
+	}
+
+
+	fn name() -> &'static str {"int"}
+
+}
+
+
+
 #[derive(Debug, Default, Clone, Copy)]
-/// A Qu wrapper defining a void object.
+/// Represents a void type in Qu.
 pub struct QuVoid();
 impl QuRegisterStruct for QuVoid {
 
-	fn get_name() -> String where Self: Sized {
-		"Void".to_owned()
+	fn register_fns() -> Vec<ExternalFunction> {
+		vec![
+			qufn!(copy(Self) Self |_vm, _parameters, _return_id| {
+				Ok(())
+			}),
+		]
 	}
 
-} impl QuAny for QuVoid {}
+
+	fn name() -> &'static str {"void"}
+
+}
 
 
-/// Allows a struct to be imported into the Qu language.
+/// A trait for registering structs into the Qu programming language.
 pub trait QuRegisterStruct {
 
-	/// Returns functions to be called by the [`QuVm`].
-	fn register_fns() -> Vec<QuExtFnData> where Self: Sized {
-		Vec::default()
-	}
-
-
-	/// Returns functions to be called by the [`QuVm`].
-	fn register_void_fns() -> Vec<QuVoidFnForm> where Self: Sized {
-		Vec::default()
-	}
-
-
-	/// Returns functions to be called by the [`QuVm`].
-	fn register_methods() -> Vec<QuMethodRegistration> where Self: Sized {
+	/// Returns functions that are callable by [`QuVm`].
+	fn register_fns() -> Vec<ExternalFunction> where Self: Sized {
 		Vec::default()
 	}
 
 
 	/// Returns the name that identifies the struct being registered.
-	fn get_name() -> String where Self: Sized;
-
-
-//	fn debug_string(a:&dyn Any) -> String {
-//		format!("<debug_string not implemented>")
-//	}
-
-}
-
-
-impl QuRegisterStruct for isize {
-	
-	fn register_fns() -> Vec<QuExtFnData> {
-		return vec![
-			(
-				"__add__".into(),
-				&int_quwrapper__add__,
-				vec![0, 0],
-				0
-			), (
-				"__subtract__".into(),
-				&int_quwrapper__subtract__,
-				vec![0, 0],
-				0
-			), (
-				"__lesser__".into(),
-				&int_quwrapper__lesser__,
-				vec![0, 0],
-				0
-			), (
-				"__greater__".into(),
-				&int_quwrapper__greater__,
-				vec![0, 0],
-				0
-			), (
-				"__copy__".into(),
-				&int_quwrapper__copy__,
-				vec![0, 0],
-				0
-			),
-		];
-	}
-
-
-	fn register_void_fns() -> Vec<QuVoidFnForm> {
-		return vec![];
-	}
-
-
-	fn register_methods() -> Vec<QuMethodRegistration> {
-		return vec![];
-	}
-
-
-	fn get_name() -> String {
-		"int".to_owned()	
-	}
+	fn name() -> &'static str;
 
 }
 

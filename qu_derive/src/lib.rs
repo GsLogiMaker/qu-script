@@ -245,7 +245,7 @@ fn define_fn_wrappers(
 	}
 
 	let impl_register = parse_quote!(
-		impl QuRegisterStruct for QuInt {
+		impl QuRegisterStruct for i32 {
 
 			fn register_fns() -> Vec<QuExtFnData> {
 				return vec![

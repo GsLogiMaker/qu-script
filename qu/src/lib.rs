@@ -41,13 +41,15 @@ mod tokens;
 mod vm;
 
 
-pub use import::QuExtFnId;
-use import::QuImports;
+use std::marker::PhantomData;
+
+use compiler::Definitions;
+use import::QuRegistered;
 use tokens::{TOKEN_TYPE_NAME, QuToken};
 pub use errors::QuMsg;
 pub use compiler::QuCompiler;
 pub use objects::*;
-pub use parser::{QuParser, QuLeaf, QuLeafExpr};
+pub use parser::QuParser;
 pub use vm::QuOp;
 pub use vm::QuVm;
 pub use vm::QuStackId;
@@ -65,21 +67,21 @@ use vm::StackValue;
 /// # fn run_test() -> Result<(), QuMsg>{
 /// let mut qu = Qu::new();
 /// qu.run(r#"
-/// 	fn add():
+/// 	fn adder() int:
 /// 		var left = 2
 /// 		var right = 5
 /// 		return left + right
 /// 
-/// 	add()
+/// 	adder()
 /// "#)?;
 /// # return Ok(());
 /// # }
 /// ```
-pub struct Qu {
-	vm:QuVm,
-	imports:QuImports,
+pub struct Qu<'a> {
+	vm: QuVm,
+	ph: PhantomData<&'a u8>,
 
-} impl Qu {
+} impl<'a> Qu<'a> {
 
 	/// Instantiates a [`Qu`] struct.
 	/// 
@@ -91,13 +93,10 @@ pub struct Qu {
 	/// let qu = Qu::new();
 	/// ```
 	pub fn new() -> Self {
-		let mut qu = Qu {
+		Qu {
 			vm: QuVm::new(),
-			imports: QuImports::default(),
-		};
-		qu.import_struct::<isize>();
-		qu.import_fns();
-		qu
+			ph: PhantomData {},
+		}
 	}
 
 
@@ -115,55 +114,38 @@ pub struct Qu {
 	/// 
 	/// # fn main(){example().unwrap()}
 	/// # fn example() -> Result<(), QuMsg> {
-	/// let qu = Qu::new();
+	/// let mut qu = Qu::new();
 	/// let bytecode = qu.compile("var count = 0")?;
 	/// # return Ok(());
 	/// # }
 	/// ```
-	pub fn compile(&self, code:&str) -> Result<Vec<QuOp>, QuMsg> {
+	pub fn compile(&mut self, code:&str) -> Result<Vec<QuOp>, QuMsg> {
 		// Compile
 		let mut c = QuCompiler::new();
-		return Ok(c.compile(code, &self.imports)?);
+		let code = c.compile(code, &mut self.vm.definitions)?;
+		return Ok(code);
 	}
 
 
-	/// Imports the external functions of all imported structs.
-	/// 
-	/// # Warning
-	/// 
-	/// Likely to panic.
-	pub fn import_fns(&mut self) {
-		self.imports.register_fns()
+	pub fn register_fns(&mut self) {
+		self.vm.definitions.imports.register_fns()
 	}
 
 
-	/// Imports an external struct.
-	/// 
-	/// # Note
-	/// 
-	/// Does not register the methods of the struct. Call
-	/// [`Qu::register_struct`] to register the methods of all registered
-	/// structs.
-	/// 
-	/// # Example
-	/// 
-	/// ```
-	/// use qu::Qu;
-	/// use qu::QuRegisterStruct;
-	/// 
-	/// struct MyStruct();
-	/// impl QuRegisterStruct for MyStruct {
-	/// 	fn get_name() -> String {
-	/// 		"MyStruct".into()
-	/// 	}
-	/// }
-	/// 
-	/// let mut qu = Qu::new();
-	/// 
-	/// qu.import_struct::<MyStruct>();
-	/// ```
-	pub fn import_struct<S:QuRegisterStruct+'static>(&mut self) {
-		self.imports.register_struct::<S>()
+	fn register_fn(&mut self, fn_data:ExternalFunction) -> Result<(), QuMsg> {
+		self.vm.definitions.imports.register_fn(fn_data)
+	}
+
+
+	pub fn register_struct<S:QuRegisterStruct+'static>(&mut self) {
+		self.vm.definitions.imports.register_struct::<S>()
+	}
+
+
+	pub fn reg_get<'b, T:'a>(
+		&self, at_reg:QuStackId
+	) -> Result<&T, QuMsg> {
+		self.vm.read::<T>(at_reg)
 	}
 
 
@@ -188,76 +170,24 @@ pub struct Qu {
 	/// # return Ok(());
 	/// # }
 	/// ```
-	pub fn run(&mut self, script:&str) -> Result<Option<StackValue>, QuMsg> {
+	pub fn run(&mut self, script:&str) -> Result<(), QuMsg> {
 		let code = self.compile(script)?;
-		self.run_ops(&code)?;
-		Ok(self.vm.get_return_value())
+		self.run_ops(&code)
 	}
 
 
-	/// Runs a Qu script and returns the value returned by the script.
-	/// 
-	/// # Errors
-	/// 
-	/// If `code` contains improper Qu syntax, a Qu runtime error occurs,
-	/// there is no return value, or the return value could not be cast to `T`
-	/// then an [`Err`] is returned.
-	/// 
-	/// # Example
-	/// 
-	/// ```
-	/// use qu::Qu;
-	/// use qu::QuMsg;
-	/// 
-	/// # fn main(){example().unwrap()}
-	/// # fn example() -> Result<(), QuMsg> {
-	/// let mut qu = Qu::new();
-	/// 
-	/// let val = qu.run_and_get::<isize>("return 5 + 6")?;
-	/// assert_eq!(val, Box::new(11isize));
-	/// # return Ok(());
-	/// # }
-	/// ```
-	pub fn run_and_get<T:'static>(&mut self, script:&str
-	) -> Result<Box<T>, QuMsg> {
+	pub fn run_and_get<T:'a>(&mut self, script:&str) -> Result<&T, QuMsg> {
 		let code = self.compile(script)?;
 		self.run_ops(&code)?;
-
-		let Some(r) = self.vm.get_return_value() else {
-			return Err("Nothing was returned".into())
-		};
-		let Ok(r) = r.downcast::<T>() else {
-			return Err("Could not convert return type to `T`".into())
-		};
-
-		Ok(r)
+		let return_id = self.vm.return_value_id();
+		self.reg_get(
+			QuStackId::new(0, return_id)
+		)
 	}
 
 
-	/// Runs compiled Qu code.
-	/// 
-	/// # Errors
-	/// 
-	/// If `code` fails the sanity checks or a Qu runtime error occurs
-	/// then an [`Err`] is returned.
-	/// 
-	/// # Example
-	/// 
-	/// ```
-	/// use qu::Qu;
-	/// use qu::QuMsg;
-	/// 
-	/// # fn main(){example().unwrap()}
-	/// # fn example() -> Result<(), QuMsg> {
-	/// let mut qu = Qu::new();
-	/// 
-	/// let code = qu.compile("var count = 5 + 6")?;
-	/// qu.run_ops(&code)?;
-	/// # return Ok(());
-	/// # }
-	/// ```
-	pub fn run_ops(&mut self, code:&[QuOp]) -> Result<(), QuMsg> {
-		return self.vm.run_ops(code, &self.imports);
+	pub fn run_ops(&mut self, instructions:&[QuOp]) -> Result<(), QuMsg> {
+		return self.vm.run_ops(instructions);
 	}
 
 }
@@ -271,13 +201,13 @@ mod lib {
 	fn fibinachi() {
 		let mut qu = Qu::new();
 		let script = r#"
-			var nterms = 9
-			var n1 = 0
-			var n2 = 1
-			var count = 0
+			var nterms int = 9
+			var n1 int = 0
+			var n2 int = 1
+			var count int = 0
 		
 			while count < nterms:
-				var nth = n1 + n2
+				var nth int = n1 + n2
 				n1 = n2
 				n2 = nth
 				count = count + 1
@@ -285,9 +215,8 @@ mod lib {
 			return n1
 		"#;
 
-		let n1 = *qu.run_and_get::<isize>(script).unwrap();
-
-		assert_eq!(n1, 34isize);
+		let n1 = *qu.run_and_get::<i32>(script).unwrap();
+		assert_eq!(n1, 34);
 	}
 
 
@@ -295,7 +224,7 @@ mod lib {
 	fn non_returning_fn() {
 		let mut qu = Qu::new();
 		let script = r#"
-			fn count(to):
+			fn count(to int) void:
 				var i = 0
 				while i < to:
 					i = i + 1
@@ -311,7 +240,7 @@ mod lib {
 	fn recursive_fn_addinate() {
 		let mut qu = Qu::new();
 		let script = r#"
-			fn addinate(val):
+			fn addinate(val int) int:
 				if val < 100:
 					return addinate(val + val)
 				return val
@@ -319,9 +248,8 @@ mod lib {
 			return addinate(1)
 		"#;
 
-		dbg!(qu.compile(script).unwrap());
-		let value:isize = *qu.run_and_get(script).unwrap();
-		assert_eq!(value, 128isize);
+		let value:i32 = *qu.run_and_get(script).unwrap();
+		assert_eq!(value, 128);
 	}
 
 
@@ -330,14 +258,14 @@ mod lib {
 		let script = r#"
 			var l = 1
 			var r = 2
-			fn add(a, b):
+			fn adder(a int, b int) int:
 				return a + b
-			return add(l, r)
+			return adder(l, r)
 		"#;
 		let mut qu = Qu::new();
 
-		let val = *qu.run_and_get::<isize>(script).unwrap();
-		assert_eq!(val, 3isize);
+		let val = *qu.run_and_get::<i32>(script).unwrap();
+		assert_eq!(val, 3);
 	}
 
 
@@ -360,7 +288,7 @@ mod lib {
 		let mut qu = Qu::new();
 		qu.run(r#"
 			var counter = 1
-			if counter:
+			if counter == 1:
 				var value = 25
 			return counter
 		"#).unwrap();
@@ -390,8 +318,8 @@ mod lib {
 			return counter
 		"#;
 
-		let res:isize = *qu.run_and_get(script).unwrap();
-		assert_eq!(res, 0isize);
+		let res:i32 = *qu.run_and_get(script).unwrap();
+		assert_eq!(res, 0);
 	}
 
 
@@ -405,8 +333,119 @@ mod lib {
 			return counter
 		"#;
 
-		let res:isize = *qu.run_and_get(script).unwrap();
-		assert_eq!(res, 10isize);
+		let res:i32 = *qu.run_and_get(script).unwrap();
+		assert_eq!(res, 10);
+	}
+
+
+	#[test]
+	fn static_typing_return_from_run() {
+		let mut qu = Qu::new();
+		let script = r#"
+			var counter int = 100
+			return counter
+		"#;
+
+		let res:i32 = *qu.run_and_get(script).unwrap();
+		assert_eq!(res, 100);
+	}
+
+
+	#[test]
+	#[should_panic]
+	fn static_typing_return_from_run_panic() {
+		let mut qu = Qu::new();
+		let script = r#"
+			var counter void
+			return counter
+		"#;
+
+		let res:i32 = *qu.run_and_get(script).unwrap();
+	}
+
+
+	#[test]
+	#[should_panic]
+	fn static_typing_return_from_run_panic_2() {
+		let mut qu = Qu::new();
+		let script = r#"
+			var counter void = 1
+			return counter
+		"#;
+
+		let res:i32 = *qu.run_and_get(script).unwrap();
+	}
+
+
+	#[test]
+	#[should_panic]
+	fn assign_int_to_bool_panic() {
+		let mut qu = Qu::new();
+		let script = r#"
+			var counter bool = 1
+			return counter
+		"#;
+
+		let res:bool = *qu.run_and_get(script).unwrap();
+	}
+
+
+	#[test]
+	fn function_identity_same_names() {
+		let mut qu = Qu::new();
+		let script = r#"
+			fn grow(item int) int:
+				return item * 2
+			
+			fn grow(item int, times int) int:
+				return item * times
+			
+			return grow(2) + grow(3, 3)
+		"#;
+
+		let res:i32 = *qu.run_and_get(script).unwrap();
+		assert_eq!(res, (2*2) + (3*3));
+	}
+
+
+	#[test]
+	#[should_panic]
+	fn function_identity_same_names_diff_returns_panic() {
+		let mut qu = Qu::new();
+		let script = r#"
+			fn weird(item int) int:
+				return item + 5
+			
+			fn weird(item int) bool:
+				return item > 5
+		"#;
+		qu.run(script).unwrap();
+	}
+
+
+	#[test]
+	fn function_similar_identity_to_add() {
+		let mut qu = Qu::new();
+		let script = r#"
+			fn add(a int, b int, c int) int:
+				return a + b + c
+			
+			return add(1, 2) + add(3, 4, 5)
+		"#;
+		let outcome:i32 = *qu.run_and_get(script).unwrap();
+		assert_eq!(outcome, (1+2) + (3+4+5));
+	}
+
+
+//	#[test]
+	fn function_multiple_parameters_same_name() {
+		let mut qu = Qu::new();
+		// TODO: Prevent this:
+		let script = r#"
+			fn some(a int, a int, c int) int:
+				return a + c
+		"#;
+		qu.run(script).unwrap();
 	}
 
 }

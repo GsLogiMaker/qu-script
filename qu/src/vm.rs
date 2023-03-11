@@ -2,24 +2,41 @@
 use std::any::Any;
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::fmt::Display;
+use std::mem::size_of;
 use std::mem::replace;
 use std::mem::take;
+use std::ops::AddAssign;
+use std::ops::Deref;
+use std::ops::DerefMut;
 
+use lazy_static::__Deref;
+
+use crate::FunctionPointer;
+use crate::QuExtFnData;
 use crate::QuMsg;
 use crate::QuVoid;
-use crate::import::QuExtFnId;
-use crate::import::QuImports;
+use crate::compiler::Definitions;
+use crate::compiler::ExternalFunctionId;
+use crate::compiler::FunctionId;
+use crate::compiler::FunctionMetadata;
+use crate::compiler::ModuleBuilder;
+use crate::import::QuRegistered;
+use crate::import::QuStruct;
+use crate::import::ClassId;
 use crate::objects::QuCodeObject;
 use crate::objects::QuFnObject;
 
+pub const BASE_MODULE:&str = "__base__";
+
 pub type QuExtFn = &'static dyn Fn(
 	&mut QuVm,
-	&Vec<QuStackId>
-	)->Result<StackValue, QuMsg>;
-
+	&[QuStackId],
+	QuStackId,
+	)->Result<(), QuMsg>;
 pub type QuVoidExtFn = &'static dyn Fn(
 	&mut QuVm,
-	&Vec<QuStackId>
+	&Vec<QuStackId>,
 	)->Result<(), QuMsg>;
 
 /// The [QuVm] registers type.
@@ -29,16 +46,10 @@ pub type StackValue = Box<dyn Any>;
 #[derive(Clone, PartialEq)]
 /// The low level operations of [`QuVm`].
 pub enum QuOp {
-	/// Calls a Qu function. Takes a const ID to the function and a stack ID
-	/// for the return value.
-	Call(QuConstId, QuStackId),
-	/// Calls an external function. Takes an external function Id, a [`Vec`] of
-	/// stack IDs for arguments, and a stack ID for the return value.
-	CallExt(QuExtFnId, Vec<QuStackId>, QuStackId),
-	/// Defines a Qu function. Takes the name of the function and the length of
-	/// the function in [`QuOp`]s.
-	DefineFn(String, usize),
-	/// Ends the current scope.
+	Call(FunctionId, QuStackId),
+	CallExt(ExternalFunctionId, Vec<QuStackId>, QuStackId),
+	// Fn name, fn body length.
+	DefineFn(FunctionId, usize),
 	End,
 	/// Moves the program counter by the given [`isize`].
 	JumpBy(isize),
@@ -48,8 +59,7 @@ pub enum QuOp {
 	/// Loads an [`isize`] into the stack. Takes the value being loaded and the
 	/// stack id where it will bestored.
 	Value(isize, QuStackId),
-	/// Moves the value at `0` in the stack to the return value hold.
-	Return,
+	Return(ClassId),
 } impl Debug for QuOp {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		match self {
@@ -71,8 +81,8 @@ pub enum QuOp {
 			write!(f, "JumpByIfNot({:?})", arg0),
 			Self::Value(arg0, arg1) =>
 				write!(f, "Value({:?}, {:?})", arg0, arg1),
-			Self::Return =>
-				write!(f, "Return"),
+			Self::Return(arg0) =>
+				write!(f, "Return({:?})", arg0),
 		}
 	}
 }
@@ -144,34 +154,46 @@ pub struct QuMemId {
 
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-/// The ID to a stack value. 
-/// 
-/// Used to index stack values in [`QuVm`].
-pub struct QuStackId(pub usize);
+pub struct QuStackId(pub usize, ClassId);
+impl QuStackId {
+	pub fn new(index: usize, struct_id: ClassId) -> Self {
+		Self(index, struct_id)
+	}
+
+	fn readable(&self, definitions: &Definitions) -> String {
+		format!(
+			"{}:{}",
+			self.0,
+			definitions.get_class(self.1).unwrap().name,
+		)
+	}
+
+
+	pub fn index(&self) -> usize {
+		self.0
+	}
+
+
+	pub fn class_id(&self) -> ClassId {
+		self.1
+	}
+}
 impl From<usize> for QuStackId {
-
 	fn from(v:usize) -> Self {
-		Self(v)
+		Self(v, ClassId::default())
 	}
-
 } impl From<isize> for QuStackId {
-
 	fn from(v:isize) -> Self {
-		Self(v as usize)
+		Self(v as usize, 0.into())
 	}
-
 } impl From<u8> for QuStackId {
-
 	fn from(v:u8) -> Self {
-		Self(v as usize)
+		Self(v as usize, ClassId::default())
 	}
-
 } impl From<i32> for QuStackId {
-
 	fn from(v:i32) -> Self {
-		Self(v as usize)
+		Self(v as usize, ClassId::default())
 	}
-
 }
 
 
@@ -198,27 +220,29 @@ impl From<QuStackId> for u8 {
 /// 
 /// This struct is not meant to be accessed directly (in most cases). See
 /// [`qu::Qu`] for interfacing with Qu script.
+#[derive(Default)]
 pub struct QuVm {
 	/// Holds the outputed value of the last executed operation.
-	pub hold_is_true:bool,
+	pub hold_is_zero: bool,
 
 	/// Holds defined constants.
-	constants:Vec<Box<dyn Any>>,
+	constants: Vec<Box<dyn Any>>,
 	/// Maps constant names to their index in [`QuMemory::constants`].
 	constant_map:HashMap<String, QuConstId>,
 	/// Holds allocated data types.
-	memory:Vec<Box<dyn Any>>,
+	memory: Vec<Box<dyn Any>>,
 	/// Maps variable names to their index in [`QuMemory::memory`].
-	memory_map:HashMap<String, QuMemId>,
+	memory_map: HashMap<String, QuMemId>,
 	/// Holds the value returned from a Qu script.
-	return_value:Option<StackValue>,
+	return_type: ClassId,
+	pub definitions: Definitions,
 
 	/// The memory registers. Holds all primatives of the VM.
-	stack:Vec<StackValue>,
+	stack: VmStack,
 	/// The offset of reading and writing to registers.
-	stack_offset:usize,
+	stack_offset: usize,
 	/// The program counter.
-	pc:usize,
+	pc: usize,
 
 } impl QuVm {
 
@@ -233,22 +257,24 @@ pub struct QuVm {
 	/// ```
 	pub fn new() -> Self {
 		let mut vm = QuVm { 
-			hold_is_true: false,
-
-			constants: Vec::default(),
-			constant_map: HashMap::default(),
-			memory: Vec::default(),
-			memory_map: HashMap::default(),
-			return_value: None,
-
-			stack:Vec::with_capacity(u8::MAX as usize),
+			hold_is_zero: false,
+			return_type: 0.into(),
+			stack: VmStack::new(u8::MAX as usize),
 			stack_offset: 0,
 			pc: 0,
+			..Default::default()
 		};
-
-		vm.stack.resize_with(u8::MAX as usize, ||{Box::new(QuVoid())});
-
-		return vm;
+		vm.definitions.define_module(
+			BASE_MODULE.into(),
+			&|mut b| {
+				b.register_struct::<QuVoid>()?;
+				b.register_struct::<i32>()?;
+				b.register_struct::<bool>()?;
+				Ok(())
+			},
+		).unwrap();
+		vm.definitions.register_functions();
+		vm
 	}
 
 
@@ -279,19 +305,6 @@ pub struct QuVm {
 	}
 
 
-	/// Defines a Qu function.
-	fn define_fn(&mut self, name:String, code_start:usize) {
-		self.define_const(
-			name,
-			Box::new(QuFnObject::new(
-				vec![],
-				QuCodeObject::new(code_start),
-				"void".into(),
-			))
-		);
-	}
-
-
 	/// Defines a variable in Qu memory.
 	/// 
 	/// # Examples
@@ -319,14 +332,17 @@ pub struct QuVm {
 	}
 
 
-	/// Calls an imported external function.
 	fn external_call_by_id(
 		&mut self,
-		fn_id:QuExtFnId,
-		parameters:&Vec<QuStackId>,
-		imports:&QuImports,
-	) -> Result<StackValue, QuMsg> {
-		Ok((imports.get_fn_data_by_id(fn_id)?).1(self, parameters)?)
+		fn_id: ExternalFunctionId,
+		parameters: &Vec<QuStackId>,
+		output_id: QuStackId,
+	) -> Result<(), QuMsg> {
+		Ok((self.definitions.get_external_function(fn_id)?.pointer)(
+			self,
+			parameters,
+			output_id,
+		)?)
 	}
 
 
@@ -393,7 +409,7 @@ pub struct QuVm {
 	) -> Result<&T, QuMsg> {
 		let Some(any) = self.constants.get(id.0)
 			else {return Err(QuMsg::general(
-				"Can't acsess constant by id {id}. Index is out of range. TODO: Better msg"
+				"Can't access constant by id {id}. Index is out of range. TODO: Better msg"
 			))};
 
 		let Some(cast) = any.downcast_ref::<T>()
@@ -619,14 +635,16 @@ pub struct QuVm {
 	/// # Examples
 	/// 
 	/// //TODO: Example
-	pub fn get_return_value(&mut self) -> Option<StackValue> {
-		return take(&mut self.return_value);
+	pub fn return_value_id(&mut self) -> ClassId {
+		let return_type = self.return_type;
+		self.return_type = 0.into();
+		return_type
 	}
 
 
 	/// Ends the current frame.
 	fn frame_end(&mut self) -> Result<(), QuMsg>{
-		return Err(QuMsg::general("Done"));
+		return Err(QuMsg::done());
 	}
 
 
@@ -639,7 +657,7 @@ pub struct QuVm {
 	#[inline]
 	/// Returns *true* if *hold* is a *true* value.
 	fn is_hold_true(&mut self) -> bool {
-		return self.hold_is_true;
+		return self.hold_is_zero;
 	}
 
 
@@ -652,25 +670,24 @@ pub struct QuVm {
 
 	fn op_call_fn(
 		&mut self,
-		fn_id:QuConstId,
-		ouput:QuStackId,
-		code:&[QuOp],
-		imports:&QuImports,
+		fn_id: usize,
+		ouput: QuStackId,
+		code: &[QuOp],
 	) -> Result<(), QuMsg> {
-		self.stack_offset += usize::from(ouput);
+		*self.stack.offset_mut() += usize::from(ouput);
 		// Assure registers is big enought to fit u8::MAX more values
 		if (self.stack_offset + u8::MAX as usize) > self.stack.len() {
-			self.stack.resize_with(
+			self.stack.data.resize(
 				self.stack_offset + u8::MAX as usize, 
-				||{Box::new(QuVoid())}
+				0
 			);
 		}
 
 		let return_pc = self.pc;
-		let fn_obj:&QuFnObject = self.get_const_by_id(fn_id)?;
-		self.frame_start(fn_obj.body.start_index);
-		self.loop_ops(code, imports)?;
-		self.stack_offset -= usize::from(ouput);
+		let function = self.definitions.get_function(fn_id)?;
+		self.frame_start(function.pc_start);
+		self.loop_ops(code)?;
+		*self.stack.offset_mut() -= usize::from(ouput);
 		self.pc = return_pc;
 
 		return Ok(());
@@ -679,26 +696,26 @@ pub struct QuVm {
 
 	fn op_call_fn_ext(
 		&mut self,
-		func:QuExtFnId,
-		args:&Vec<QuStackId>,
-		output:QuStackId,
-		imports:&QuImports,
+		func: ExternalFunctionId,
+		args: &Vec<QuStackId>,
+		output: QuStackId,
 	) -> Result<(), QuMsg> {
-		let returned = self.external_call_by_id(
+		self.external_call_by_id(
 			func,
 			args,
-			imports,
+			output,
 		)?;
-
-		self.reg_set(output, returned);
 
 		Ok(())
 	}
 
 
-	/// Defines a function from next bytes in the code.
-	fn op_define_fn(&mut self, name:String, length:usize) {
-		self.define_fn(name, self.pc);
+	/// Sets the start of the function with the given function_id to the
+	/// current program counter.
+	fn op_define_fn(&mut self, function_id: usize, length: usize) {
+		self.definitions.get_function_mut(function_id)
+			.unwrap()
+			.pc_start = self.pc;
 		self.pc += length;
 	}
 
@@ -729,54 +746,42 @@ pub struct QuVm {
 
 
 	fn op_load_int(&mut self, value:isize, output:QuStackId) {
-		self.reg_set(output, Box::new(value));
+		// TODO: Make function signature i32
+		self.write(output, value as i32);
 	}
 
 
 	#[inline]
-	/// Returns a shared referance to a stack value.
-	pub fn reg_get(&self, at_reg:QuStackId) -> &StackValue {
-		return &self.stack[self.stack_offset+at_reg.0];
-	}
+	/// Gets a register value.
+	pub fn read<T>(&self, at_reg:QuStackId) -> Result<&T, QuMsg> {
+		let struct_data = self.definitions
+			.get_class(at_reg.class_id())?;
+		if size_of::<T>() != struct_data.size as usize {
+			return Err("Can't get register. Mismatched types. TODO: Better msg".into());
+		}
 
-
-	/// Returns a shared referance to a stack value cast to type `T`.
-	pub fn reg_get_as<'a, T:'a + 'static>(&self, at_reg:QuStackId
-	) -> Result<&T, QuMsg> {
-		let Some(r) = self.stack[self.stack_offset+at_reg.0]
-			.downcast_ref::<T>() else {
-			return Err(QuMsg::general(
-				&format!("reg_get_as could not convert register at index {}", at_reg.0)
-			))
-		};
-		Ok(r)
+		let got = self.stack.read(at_reg);
+		Ok(got)
 	}
 
 
 	#[inline]
-	/// Returns a mutable referance to a stack value.
-	pub fn reg_get_mut(&mut self, at_reg:QuStackId) -> &mut StackValue {
-		return &mut self.stack[self.stack_offset+at_reg.0];
-	}
+	/// Gets a register value.
+	pub fn reg_get_mut<T>(&mut self, at_reg:QuStackId) -> Result<&mut T, QuMsg> {
+		let struct_data = self.definitions
+			.get_class(at_reg.class_id())?;
+		// TODO: Add check if casting to right struct
+		assert_eq!(size_of::<T>(), struct_data.size as usize);
 
-
-	/// Returns a mutable referance to a stack value cast to type `T`.
-	pub fn reg_get_mut_as<'a, T:'a + 'static>(&mut self, at_reg:QuStackId
-	) -> Result<&mut T, QuMsg> {
-		let Some(r) = self.stack[self.stack_offset+at_reg.0]
-			.downcast_mut::<T>() else {
-			return Err(QuMsg::general(
-				&format!("reg_get_mut_as could not convert register at index {}", at_reg.0)
-			))
-		};
-		Ok(r)
+		let got = self.stack.read_mut(at_reg.into());
+		Ok(got)
 	}
 
 
 	#[inline]
 	/// Sets a register value.
-	pub fn reg_set(&mut self, at_reg:QuStackId, to:StackValue) {
-		return self.stack[self.stack_offset+at_reg.0] = to;
+	pub fn write<T>(&mut self, id:QuStackId, value:T) {
+		return self.stack.write(id.into(), value);
 	}
 
 
@@ -819,11 +824,11 @@ pub struct QuVm {
 
 
 	/// Runs inputed bytecode in a loop.
-	fn loop_ops(&mut self, code:&[QuOp], imports:&QuImports
+	fn loop_ops(&mut self, code:&[QuOp]
 	) -> Result<(), QuMsg>{
 		while self.pc != code.len() {
 			let result
-				= self.do_next_op(code, imports);
+				= self.do_next_op(code);
 			if let Err(e) = result {
 				if e.description == "Done" {
 					return Ok(())
@@ -839,30 +844,104 @@ pub struct QuVm {
 
 
 	/// Runs the next command in the given bytecode.
-	fn do_next_op(&mut self, instructions:&[QuOp], imports:&QuImports
+	fn do_next_op(
+		&mut self, instructions:&[QuOp]
 	) -> Result<(), QuMsg> {
 		let op = self.next_op(instructions);
-		//println!("Doing op: {:?}", &op);
+		#[cfg(feature = "qu_print_vm_operations")] {
+			match op {
+				QuOp::Call(function_id, output) => {
+					println!(
+						"Call::{} -> {}",
+						self.definitions
+							.get_function(*function_id)
+							.unwrap()
+							.identity
+							.name,
+						output.as_string(&self.definitions),
+					);
+				},
+				QuOp::CallExt(function_id, args, output) => {
+					let mut arg_string = "".to_owned();
+					for arg in args {
+						arg_string.extend(
+							arg.as_string(&self.definitions).chars()
+						);
+						arg_string.push(',');
+						arg_string.push(' ');
+					}
+					println!(
+						"CallExt::{}({}) -> {}",
+						self.definitions
+							.get_external_function(*function_id)
+							.unwrap()
+							.name,
+						arg_string,
+						output.as_string(&self.definitions),
+					);
+				},
+				QuOp::End => {
+					println!(
+						"End",
+					);
+				},
+				QuOp::DefineFn(function_id, length) => {
+					println!(
+						"DefineFn({}, {})",
+						self.definitions
+							.get_function(*function_id)
+							.unwrap()
+							.identity
+							.name,
+						length,
+					);
+				},
+				QuOp::JumpByIfNot(by) => {
+					println!(
+						"JumpBy({})IfNot hold:{}",
+						by,
+						self.is_hold_true(),
+					);
+				},
+				QuOp::JumpBy(by) => {
+					println!(
+						"JumpBy {by}",
+					);
+				},
+				QuOp::Value(value, output) => {
+					println!(
+						"Value {} -> {}",
+						value,
+						output.as_string(&self.definitions),
+					);
+				},
+				QuOp::Return(return_type) => {
+					println!(
+						"Return:{}",
+						self.definitions.get_class(*return_type).unwrap().name,
+					);
+				},
+			};
+		}
 		match op {
-			QuOp::Call(fn_id, ouput) => self.op_call_fn(*fn_id, *ouput, instructions, imports)?,
-			QuOp::CallExt(fn_id, args, output) => self.op_call_fn_ext(*fn_id, args, *output, imports)?,
+			QuOp::Call(fn_id, ouput) => self.op_call_fn(*fn_id, *ouput, instructions)?,
+			QuOp::CallExt(fn_id, args, output) => self.op_call_fn_ext(*fn_id, args, *output)?,
 			QuOp::End => self.frame_end()?,
-			QuOp::DefineFn(name, length) => self.op_define_fn(name.clone(), *length),
+			QuOp::DefineFn(fn_id, length) => self.op_define_fn(*fn_id, *length),
 			QuOp::JumpByIfNot(by) => self.op_jump_by_if_not(*by),
 			QuOp::JumpBy(by) => self.op_jump_by(*by),
 			QuOp::Value(value, output) => self.op_load_int(*value, *output),
-			QuOp::Return => self.return_value = Some(replace(self.reg_get_mut(0.into()), Box::new(QuVoid()))),
+			QuOp::Return(return_type) => self.return_type = *return_type,
 		};
 		return Ok(());
 	}
 
 
-	/// Runs a [`Vec`] of instructions.
-	pub fn run_ops(&mut self, instructions:&[QuOp], imports:&QuImports
+	pub fn run_ops(&mut self, instructions:&[QuOp]
 	) -> Result<(), QuMsg> {
 		self.pc = 0;
 		while self.pc != instructions.len() {
-			match self.do_next_op(&instructions, &imports) {
+			match self.do_next_op(&instructions) {
 				// No errors, continue running
 				Ok(_) => {/*pass*/},
 				// Encountered error; check if done and finish, otherwise
@@ -882,68 +961,101 @@ pub struct QuVm {
 }
 
 
-pub trait QuAny: Any+Clone {}
+#[derive(Debug, Default, Clone)]
+struct VmStack {
+	data: Vec<u8>,
+	offset: usize,
+} impl VmStack {
+
+	pub fn new(size:usize) -> Self {
+		let mut stack = Self {data: vec![], offset: 0};
+		stack.data.resize(size, 0);
+		stack
+	}
+
+} impl Stack for VmStack {
+	type Indexer = QuStackId;
 
 
-#[cfg(test)]
-mod test_vm {
-	use crate::QuVm;
-	use crate::QuMsg;
-
-	#[test]
-	fn define_and_get_const() -> Result<(), QuMsg> {
-		let mut vm = QuVm::new();
-
-		vm.define_const(
-			"MEANING_OF_LIFE".into(), Box::new(42isize));
-		vm.define_const(
-			"NAME".into(), Box::new("Qu"));
-
-		let meaning = vm.get_const::<isize>("MEANING_OF_LIFE")?;
-		assert_eq!(*meaning, 42isize);
-
-		let name = vm.get_const::<&str>("NAME")?;
-		assert_eq!(*name, "Qu");
-
-		let wrong_type
-			= vm.get_const::<&str>("MEANING_OF_LIFE");
-		assert!(wrong_type.is_err());
-
-		let not_defined
-			= vm.get_const::<isize>("DIVIDE_BY_INF");
-		assert!(not_defined.is_err());
-
-		return Ok(());
+	fn data(&self) -> &Vec<u8> {
+		&self.data
 	}
 
 
-	#[test]
-	fn define_and_get_mem() -> Result<(), QuMsg> {
-		let mut vm = QuVm::new();
-
-		vm.define_mem("health".to_owned(), Box::new(10.0f32));
-		assert_eq!(*vm.get_mem::<f32>("health")?, 10.0f32);
-
-		vm.define_mem("lives".to_owned(), Box::new(3isize));
-		assert_eq!(*vm.get_mem::<isize>("lives")?, 3isize);
-
-		let health = vm.get_mem_mut::<f32>("health")?;
-		*health = 5.0;
-		assert_eq!(*vm.get_mem::<f32>("health")?, 5.0f32);
-
-		let lives = vm.get_mem_mut::<isize>("lives")?;
-		*lives = 2;
-		assert_eq!(*vm.get_mem::<isize>("lives")?, 2isize);
-
-		let bad_type
-			= vm.get_const::<&str>("health");
-		assert!(bad_type.is_err());
-		
-		let not_defined
-			= vm.get_const::<isize>("i_dont_exist");
-		assert!(not_defined.is_err());
-
-		return Ok(());
+	fn data_mut(&mut self) -> &mut Vec<u8> {
+		&mut self.data
 	}
 
+
+	fn offset(&self) -> usize {
+		self.offset
+	}
+
+
+	fn offset_mut(&mut self) -> &mut usize {
+		&mut self.offset
+	}
+}
+
+
+pub trait Stack {
+	type Indexer: Into<usize>;
+
+	fn data(&self) -> &Vec<u8>;
+
+
+	fn data_mut(&mut self) -> &mut Vec<u8>;
+
+
+	fn read<T>(&self, id: Self::Indexer) -> &T {
+		unsafe { self.data()[self.offset() + id.into()..]
+			.as_ptr()
+			.cast::<T>()
+			.as_ref()
+			.unwrap()
+		}
+	}
+
+
+	fn read_mut<T>(&mut self, id: Self::Indexer) -> &mut T {
+		let index = self.offset() + id.into();
+		unsafe { self.data_mut()[index..]
+			.as_mut_ptr()
+			.cast::<T>()
+			.as_mut()
+			.unwrap()
+		}
+	}
+
+
+	fn len(&self) -> usize {
+		self.data().len()
+	}
+
+
+	fn move_offset(&mut self, by:isize) {
+		if by > 0 {
+			*self.offset_mut() += by as usize;
+		// Subtract
+		} else {
+			*self.offset_mut() -= by.abs() as usize;
+		}
+	}
+
+
+	fn offset(&self) -> usize;
+
+
+	fn offset_mut(&mut self) -> &mut usize;
+
+
+	fn write<T>(&mut self, id: Self::Indexer, value: T) {
+		let id = id.into();
+		assert!(&self.offset() + id + &size_of::<T>() <= self.data().len());
+		let index = self.offset() + id;
+		let index_pointer = self.data_mut()
+			.as_mut_slice()[index..]
+			.as_mut_ptr();
+		unsafe { *(index_pointer as *mut T) = value };
+	}
 }
