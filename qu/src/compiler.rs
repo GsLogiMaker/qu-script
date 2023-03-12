@@ -1744,11 +1744,12 @@ pub struct QuCompiler {
 	fn prepass(
 		&mut self, code_block:&CodeBlock, definitions:&mut Definitions,
 	) -> Result<(), QuMsg> {
-		definitions.define_module(
-			"__main__".into(),
-			&|_| {Ok(())},
-		);
-		let module_id = definitions.get_module_id("__main__").unwrap();
+		if !definitions.module_map.contains_key("__main__") {
+			definitions.define_module(
+				"__main__".into(),
+				&|_| {Ok(())},
+			)?;
+		}
 
 		// Function definitions
 		for statement in &code_block.statements {

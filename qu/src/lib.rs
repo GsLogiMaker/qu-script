@@ -439,7 +439,30 @@ mod lib {
 	}
 
 
-//	#[test]
+	#[test]
+	fn repeated_runs() {
+		let mut qu = Qu::new(); // register_fns is called once in new().
+		qu.run("var a = 10").unwrap();
+		qu.run("var b = 13").unwrap();
+	}
+
+
+	//#[test]
+	fn cross_run_accessing() {
+		// TODO: Allow this:
+		let mut qu = Qu::new(); // register_fns is called once in new().
+		qu.run("
+			fn thrice(num int) int:
+				return num * 3
+		").unwrap();
+		let num = *qu.run_and_get::<i32>("
+			return thrice(2)
+		").unwrap();
+		assert_eq!(num, 2*3);
+	}
+
+
+	//#[test]
 	fn function_multiple_parameters_same_name() {
 		let mut qu = Qu::new();
 		// TODO: Prevent this:
