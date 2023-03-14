@@ -452,6 +452,44 @@ mod lib {
 	}
 
 
+	#[test]
+	fn class_dot_notation() {
+		let mut qu = Qu::new();
+		let result:i32 = *qu.run_and_get("return int.sub(5, 8)").unwrap();
+		assert_eq!(result, 5-8);
+	}
+
+
+	#[test]
+	#[should_panic]
+	fn class_dot_notation_panic() {
+		let mut qu = Qu::new();
+		qu.run("return int.foo").unwrap();
+	}
+
+
+	#[test]
+	fn variable_dot_notation() {
+		let mut qu = Qu::new();
+		let result:i32 = *qu.run_and_get("
+			var num int = 20
+			return num.mul(10, 2)
+		").unwrap();
+		assert_eq!(result, 10*2);
+	}
+
+
+	#[test]
+	#[should_panic]
+	fn variable_dot_notation_panic() {
+		let mut qu = Qu::new();
+		qu.run("
+			var num int = 20
+			num.foo
+		").unwrap();
+	}
+
+
 	//#[test]
 	fn cross_run_accessing() {
 		// TODO: Allow this:
