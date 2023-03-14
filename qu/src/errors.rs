@@ -45,6 +45,7 @@ pub struct QuMsg {
 		panic!("{}", self.make_pretty_message(script));
 	}
 
+
 	/// Prints the QuMsg prettily.
 	pub fn print(&self, script:&str) {
 		println!("{}", self.make_pretty_message(script));
@@ -119,6 +120,7 @@ pub struct QuMsg {
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_EMPTY_CODE_BLOCK.to_string();
 		msg.description = "A code block was started, but no code was found.".to_string();
+		#[cfg(feature = "qu_panic_upon_error")] panic!("{}", msg);
 		return msg;
 	}
 
@@ -128,6 +130,7 @@ pub struct QuMsg {
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_INVALID_FLOW_STATEMENT.to_string();
 		msg.description = format!("Flow statement requires an expression but non was given.");
+		#[cfg(feature = "qu_panic_upon_error")] panic!("{}", msg);
 		return msg;
 	}
 
@@ -137,6 +140,7 @@ pub struct QuMsg {
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_PARSER_MATCH_FAILED.to_string();
 		msg.description = "Failed to parse something.".to_string();
+		#[cfg(feature = "qu_panic_upon_error")] panic!("{}", msg);
 		return msg;
 	}
 
@@ -146,9 +150,7 @@ pub struct QuMsg {
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_GENERAL.to_string();
 		msg.description = description.to_string();
-		if cfg!(feature = "qu_panic_upon_error") {
-			panic!("{}", msg);
-		}
+		#[cfg(feature = "qu_panic_upon_error")] panic!("{}", msg);
 		msg
 	}
 
@@ -158,6 +160,7 @@ pub struct QuMsg {
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_MISSING_TOKEN.to_string();
 		msg.description = format!("Epected a '{expected_token}' token, but it was not found.");
+		#[cfg(feature = "qu_panic_upon_error")] panic!("{}", msg);
 		return msg;
 	}
 
@@ -167,6 +170,7 @@ pub struct QuMsg {
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_MISSING_CODE_BLOCK.to_string();
 		msg.description = "A code block was expected, but none was found.".to_string();
+		#[cfg(feature = "qu_panic_upon_error")] panic!("{}", msg);
 		return msg;
 	}
 
@@ -176,6 +180,7 @@ pub struct QuMsg {
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_MISSING_CODE_BLOCK.to_string();
 		msg.description = "Flow statement requires a code block, but none was found.".to_string();
+		#[cfg(feature = "qu_panic_upon_error")] panic!("{}", msg);
 		return msg;
 	}
 
@@ -185,6 +190,7 @@ pub struct QuMsg {
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_INVALID_INDENTATION.to_string();
 		msg.description = "Encountered invalid indentation.".to_string();
+		#[cfg(feature = "qu_panic_upon_error")] panic!("{}", msg);
 		return msg;
 	}
 
@@ -194,6 +200,7 @@ pub struct QuMsg {
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_INVALID_SYNTAX.to_string();
 		msg.description = "A line has an incorrect indentation level.".to_string();
+		#[cfg(feature = "qu_panic_upon_error")] panic!("{}", msg);
 		return msg;
 	}
 
@@ -203,6 +210,7 @@ pub struct QuMsg {
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_INVALID_SYNTAX.to_string();
 		msg.description = format!{"Encountered invalid token '{invalid_tk}'."};
+		#[cfg(feature = "qu_panic_upon_error")] panic!("{}", msg);
 		return msg;
 	}
 
@@ -212,6 +220,7 @@ pub struct QuMsg {
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_INVALID_INDENTATION.to_string();
 		msg.description = "A code block and flow statement are on the same line.".to_string();
+		#[cfg(feature = "qu_panic_upon_error")] panic!("{}", msg);
 		return msg;
 	}
 
@@ -221,6 +230,7 @@ pub struct QuMsg {
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_INVALID_SYNTAX.to_string();
 		msg.description = format!("Parenthesy expression remained unclosed.");
+		#[cfg(feature = "qu_panic_upon_error")] panic!("{}", msg);
 		return msg;
 	}
 
@@ -230,6 +240,7 @@ pub struct QuMsg {
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_UNDEFINED_FN.to_string();
 		msg.description = format!("Can't use '{the_fn}' because it was not previously defined.");
+		#[cfg(feature = "qu_panic_upon_error")] panic!("{}", msg);
 		return msg;
 	}
 
@@ -239,6 +250,7 @@ pub struct QuMsg {
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_UNDEFINED_TYPE.to_string();
 		msg.description = format!("Can't use '{the_type}' because it was not previously defined.");
+		#[cfg(feature = "qu_panic_upon_error")] panic!("{}", msg);
 		return msg;
 	}
 
@@ -250,6 +262,7 @@ pub struct QuMsg {
 		msg.description = format!
 			("Can't use '{the_var}' because it was not previously defined.",
 		);
+		#[cfg(feature = "qu_panic_upon_error")] panic!("{}", msg);
 		return msg;
 	}
 
@@ -259,6 +272,7 @@ pub struct QuMsg {
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_INVALID_VARIABLE_ASSIGNMENT.to_string();
 		msg.description = format!("Can't assign to '{the_var}' because it was not previously defined.");
+		#[cfg(feature = "qu_panic_upon_error")] panic!("{}", msg);
 		return msg;
 	}
 
@@ -269,6 +283,7 @@ pub struct QuMsg {
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_INVALID_VARIABLE_ASSIGNMENT.to_string();
 		msg.description = format!("Can't assign to variable '{the_var}' with '{invalid_value}' because it is not a valid value.");
+		#[cfg(feature = "qu_panic_upon_error")] panic!("{}", msg);
 		return msg;
 	}
 
@@ -278,6 +293,7 @@ pub struct QuMsg {
 			let mut msg = Self::new();
 			msg.title = ERR_TITLE_INVALID_VARIABLE_ASSIGNMENT.to_string();
 			msg.description = format!("Variable assignment for '{the_var}' lacks an expression.");
+			#[cfg(feature = "qu_panic_upon_error")] panic!("{}", msg);
 			return msg;
 		}
 
@@ -287,6 +303,7 @@ pub struct QuMsg {
 		let mut msg = Self::new();
 		msg.title = ERR_TITLE_INVALID_VARIABLE_DEFINITION.to_string();
 		msg.description = format!("Can't define the variable '{the_var}' because it was already defined previously.");
+		#[cfg(feature = "qu_panic_upon_error")] panic!("{}", msg);
 		return msg;
 	}	
 	
@@ -305,9 +322,7 @@ pub struct QuMsg {
 
     fn from(msg:&str) -> Self {
         let msg = QuMsg::general(msg);
-		if cfg!(feature = "qu_panic_upon_error") {
-			panic!("{}", msg);
-		}
+		#[cfg(feature = "qu_panic_upon_error")] panic!("{}", msg);
 		msg
     }
 
@@ -315,9 +330,7 @@ pub struct QuMsg {
 
     fn from(msg:String) -> Self {
         let msg = QuMsg::general(&msg);
-		if cfg!(feature = "qu_panic_upon_error") {
-			panic!("{}", msg);
-		}
+		#[cfg(feature = "qu_panic_upon_error")] panic!("{}", msg);
 		msg
     }
 

@@ -56,15 +56,14 @@ pub use vm::QuStackId;
 /// # Examples
 /// ```
 /// use qu::Qu;
-/// use qu::QuMsg;
 /// 
 /// # fn main() {run_test().unwrap();}
-/// # fn run_test() -> Result<(), QuMsg>{
+/// # fn run_test() -> Result<(), qu::QuMsg>{
 /// let mut qu = Qu::new();
 /// qu.run(r#"
 /// 	fn adder() int:
-/// 		var left = 2
-/// 		var right = 5
+/// 		var left int = 2
+/// 		var right int = 5
 /// 		return left + right
 /// 
 /// 	adder()
@@ -105,12 +104,11 @@ pub struct Qu<'a> {
 	/// 
 	/// ```
 	/// use qu::Qu;
-	/// use qu::QuMsg;
 	/// 
 	/// # fn main(){example().unwrap()}
-	/// # fn example() -> Result<(), QuMsg> {
+	/// # fn example() -> Result<(), qu::QuMsg> {
 	/// let mut qu = Qu::new();
-	/// let bytecode = qu.compile("var count = 0")?;
+	/// let bytecode = qu.compile("var count int = 0")?;
 	/// # return Ok(());
 	/// # }
 	/// ```
@@ -219,7 +217,7 @@ mod lib {
 		let mut qu = Qu::new();
 		let script = r#"
 			fn count(to int) void:
-				var i = 0
+				var i int = 0
 				while i < to:
 					i = i + 1
 			
@@ -250,16 +248,19 @@ mod lib {
 	#[test]
 	fn scoping1(){
 		let script = r#"
-			var l = 1
-			var r = 2
+			var l int = 1
+			var r int = 2
+
 			fn adder(a int, b int) int:
 				return a + b
-			return adder(l, r)
+
+			var last int = 3
+			return adder(1,2) + last
 		"#;
 		let mut qu = Qu::new();
 
 		let val = *qu.run_and_get::<i32>(script).unwrap();
-		assert_eq!(val, 3);
+		assert_eq!(val, 1+2+3);
 	}
 
 
@@ -268,9 +269,9 @@ mod lib {
 	fn scoping1_panic() {
 		let mut qu = Qu::new();
 		qu.run(r#"
-			var l = 1
-			var r = 2
-			fn add(a, b):
+			var l int = 1
+			var r int = 2
+			fn add(a int, b int):
 				return a + b
 			return a
 		"#).unwrap();
@@ -280,12 +281,18 @@ mod lib {
 	#[test]
 	fn scoping2() {
 		let mut qu = Qu::new();
-		qu.run(r#"
-			var counter = 1
+		let result:i32 = *qu.run_and_get(r#"
+			var counter int = 1
 			if counter == 1:
-				var value = 25
+				var value int = 25
+				counter = counter + value
+
+			var next int = 2
+			counter = counter + next
+			
 			return counter
 		"#).unwrap();
+		assert_eq!(result, 1+25+2);
 	}
 
 
@@ -294,9 +301,9 @@ mod lib {
 	fn scoping2_panic() {
 		let mut qu = Qu::new();
 		qu.run(r#"
-			var counter = 1
-			if counter:
-				var value = 25
+			var counter int = 1
+			if counter == 1:
+				var value int = 25
 			return value
 		"#).unwrap();
 	}
@@ -306,7 +313,7 @@ mod lib {
 	fn while_count_down() {
 		let mut qu = Qu::new();
 		let script = r#"
-			var counter = 10
+			var counter int = 10
 			while 0 < counter:
 				counter = counter - 1
 			return counter
@@ -321,7 +328,7 @@ mod lib {
 	fn while_count_up() {
 		let mut qu = Qu::new();
 		let script = r#"
-			var counter = 0
+			var counter int = 0
 			while 10 > counter:
 				counter = counter + 1
 			return counter
@@ -364,10 +371,9 @@ mod lib {
 		let mut qu = Qu::new();
 		let script = r#"
 			var counter void = 1
-			return counter
 		"#;
 
-		let res:i32 = *qu.run_and_get(script).unwrap();
+		qu.run(script).unwrap();
 	}
 
 
@@ -377,10 +383,9 @@ mod lib {
 		let mut qu = Qu::new();
 		let script = r#"
 			var counter bool = 1
-			return counter
 		"#;
 
-		let res:bool = *qu.run_and_get(script).unwrap();
+		qu.run(script).unwrap();
 	}
 
 
@@ -433,7 +438,7 @@ mod lib {
 
 	#[test]
 	fn repeated_register_functions() {
-		let mut qu = Qu::new(); // register_fns is called once in new().
+		let mut qu = Qu::new();
 		qu.register_fns().unwrap();
 		qu.register_fns().unwrap();
 	}
@@ -441,9 +446,9 @@ mod lib {
 
 	#[test]
 	fn repeated_runs() {
-		let mut qu = Qu::new(); // register_fns is called once in new().
-		qu.run("var a = 10").unwrap();
-		qu.run("var b = 13").unwrap();
+		let mut qu = Qu::new();
+		qu.run("var a int = 10").unwrap();
+		qu.run("var b int = 13").unwrap();
 	}
 
 

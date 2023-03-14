@@ -9,7 +9,7 @@ use crate::compiler::ExternalFunctionId;
 use crate::compiler::FunctionId;
 use crate::import::ClassId;
 
-pub const BASE_MODULE:&str = "__base__";
+pub const BASE_MODULE:&str = "__main__";
 
 pub type QuExtFn = &'static dyn Fn(
 	&mut QuVm,
@@ -230,10 +230,10 @@ pub struct QuVm {
 				b.register_struct::<QuVoid>()?;
 				b.register_struct::<i32>()?;
 				b.register_struct::<bool>()?;
+				b.register_functions()?;
 				Ok(())
 			},
 		).unwrap();
-		vm.definitions.register_functions();
 		vm
 	}
 
@@ -440,14 +440,14 @@ pub struct QuVm {
 							.unwrap()
 							.identity
 							.name,
-						output.as_string(&self.definitions),
+						output.readable(&self.definitions),
 					);
 				},
 				QuOp::CallExt(function_id, args, output) => {
 					let mut arg_string = "".to_owned();
 					for arg in args {
 						arg_string.extend(
-							arg.as_string(&self.definitions).chars()
+							arg.readable(&self.definitions).chars()
 						);
 						arg_string.push(',');
 						arg_string.push(' ');
@@ -459,7 +459,7 @@ pub struct QuVm {
 							.unwrap()
 							.name,
 						arg_string,
-						output.as_string(&self.definitions),
+						output.readable(&self.definitions),
 					);
 				},
 				QuOp::End => {
@@ -494,7 +494,7 @@ pub struct QuVm {
 					println!(
 						"Value {} -> {}",
 						value,
-						output.as_string(&self.definitions),
+						output.readable(&self.definitions),
 					);
 				},
 				QuOp::Return(return_type) => {

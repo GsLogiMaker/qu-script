@@ -39,7 +39,7 @@ criterion = "0.4.0"
 
 [features]
 qu_panic_upon_error = []
-qu_debug_vm_operations = []
+qu_print_vm_operations = []
 
 default = [
 	"qu_panic_upon_error",

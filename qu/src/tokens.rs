@@ -23,7 +23,7 @@ pub const RULES:&Rules = &[
 	(&tokenrule_keyword, TOKEN_TYPE_KEYWORD),
 	(&tokenrule_symbols, TOKEN_TYPE_SYMBOL),
 	(&tokenrule_number, TOKEN_TYPE_NUMBER),
-	(&tokenrule_name, TOKEN_TYPE_NAME),
+	(&tokenrule_identity, TOKEN_TYPE_NAME),
 ];
 
 
@@ -32,7 +32,7 @@ pub type Rules<'a> = [(&'a dyn Fn(&[char])->bool, u8)];
 
 
 /// Returns *true* if the passed characters match to a name.
-pub fn tokenrule_name(added_so_far:&[char]) -> bool {
+pub fn tokenrule_identity(added_so_far:&[char]) -> bool {
 	for char in  added_so_far {
 		if *char == ' ' {
 			return false
@@ -304,12 +304,15 @@ pub struct QuToken {
 		return self.slice == *other;
 	}
 } impl PartialEq<String> for QuToken {
-
 	fn eq(&self, other:&String) -> bool {
 		if self.tk_type == u8::MAX {
 			return false;
 		}
 		return &self.slice == other;
+	}
+} impl From<&str> for QuToken {
+	fn from(value: &str) -> Self {
+		QuToken::from(value)
 	}
 }
 
