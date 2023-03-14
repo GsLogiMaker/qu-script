@@ -49,12 +49,11 @@ pub fn tokenrule_identity(added_so_far:&[char]) -> bool {
 /// Returns *true* if the passed characters match to a number (like *int* or
 /// *float*).
 pub fn tokenrule_number(added_so_far:&[char]) -> bool {
-	
 	for char in  added_so_far {
 		if char == &' ' {
 			return false
 		}
-		if !(char.is_numeric() || char == &'.') {
+		if !(char.is_numeric()) {
 			return false;
 		}
 	}
@@ -92,6 +91,7 @@ pub fn tokenrule_keyword(added_so_far:&[char]) -> bool {
 /// Returns *true* if the passed characters match to a symbol.
 pub fn tokenrule_symbols(added_so_far:&[char]) -> bool {
 	return match added_so_far {
+		['.',] => true,
 		['*',] => true,
 		['/',] => true,
 		['\\',] => true, // This is just '\'

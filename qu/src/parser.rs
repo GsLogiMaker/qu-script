@@ -214,6 +214,17 @@ pub mod parsed {
 		}
 
 
+		pub fn len(&self) -> usize {
+			let length = 0;
+			match self {
+				Identity::Item(_) => {1},
+    			Identity::Index(index) => {
+					1 + &index.right.len()
+				},
+			}
+		}
+
+
 		pub fn name(&self) -> &str {
 			&self.last().token.slice
 		}

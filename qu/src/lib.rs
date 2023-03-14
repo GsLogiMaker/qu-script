@@ -472,10 +472,22 @@ mod lib {
 	fn variable_dot_notation() {
 		let mut qu = Qu::new();
 		let result:i32 = *qu.run_and_get("
-			var num int = 20
-			return num.mul(10, 2)
+			var num int = 10
+			return num.mul(2)
 		").unwrap();
 		assert_eq!(result, 10*2);
+	}
+
+
+	#[test]
+	fn variable_dot_notation_2() {
+		let mut qu = Qu::new();
+		let result:bool = *qu.run_and_get("
+			var count int = 5
+			return count.add(1) == add(count, 1)
+		").unwrap();
+		
+		assert!(result);
 	}
 
 
@@ -487,6 +499,33 @@ mod lib {
 			var num int = 20
 			num.foo
 		").unwrap();
+	}
+
+
+	#[test]
+	fn variable_dot_notation_custom_function() {
+		let mut qu = Qu::new();
+		let result:i32 = *qu.run_and_get("
+			fn move(number int) int:
+				return number + 1
+			
+			var location int = 5
+			return location.move()
+		").unwrap();
+		assert_eq!(result, 5+1);
+	}
+
+
+	//#[test]
+	fn variable_dot_notation_custom_function_3() {
+		// TODO: Make expressions indexable
+		let mut qu = Qu::new();
+		let result:i32 = *qu.run_and_get("
+			fn move(number int) int:
+				return number + 1
+			return 5.move()
+		").unwrap();
+		assert_eq!(result, 5+1);
 	}
 
 

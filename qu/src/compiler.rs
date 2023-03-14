@@ -1374,6 +1374,27 @@ pub struct QuCompiler {
 	) -> Result<ClassId, QuMsg> {
 		// Construct function identity
 		let mut parameters = vec![];
+		{
+			// Make dot indexer the first parameter
+			let mut dot_path:DotPath = (&call_expression.name).into();
+			if dot_path.vec.len() > 1 {
+				let len = dot_path.vec.len()-1;
+				let (first_parameter_slice_path, _) = dot_path.vec
+					.split_at_mut(len);
+				let param_path = DotPath {
+					vec: first_parameter_slice_path.into()
+				};
+				let item = definitions.path_index(
+					&param_path, &self.context
+				)?;
+				if let ItemId::Variable(id) = item {
+					let var_stack_id = self.context
+						.get_variable(id)?
+						.stack_id;
+					parameters.push(var_stack_id.class_id());
+				}
+			}
+		}
 		for parameter in &call_expression.parameters.elements {
 			let object_id = self.get_expr_type(
 				parameter,
@@ -1387,7 +1408,7 @@ pub struct QuCompiler {
 			..Default::default()
 		};
 
-		// Get function identity
+		// Get function group
 		let item = definitions.path_index(
 			&(&call_expression.name).into(),
 			&self.context,
@@ -1753,20 +1774,55 @@ pub struct QuCompiler {
 		let mut parameter_ids = vec![];
 		self.context.open_scope();
 		{
+			let mut dot_path:DotPath = (&call_expression.name).into();
+			if dot_path.vec.len() > 1 {
+				let len = dot_path.vec.len()-1;
+				let (first_parameter_slice_path, _) = dot_path.vec
+					.split_at_mut(len);
+				let param_path = DotPath {
+					vec: first_parameter_slice_path.into()
+				};
+				let item = definitions.path_index(
+					&param_path, &self.context
+				)?;
+				if let ItemId::Variable(id) = item {
+					let var_stack_id = self.context
+						.get_variable(id)?
+						.stack_id;
+					let parameter_stack_id = self.context.allocate(
+						var_stack_id.class_id(),
+						definitions,
+					)?;
+
+					builder.add_op(QuOp::CallExt(
+						definitions.get_external_function_id_by_identity(
+							&FunctionIdentity {
+								name: "copy".into(),
+								parameters: vec![var_stack_id.class_id()],
+								return_type: var_stack_id.class_id(),
+							}
+						)?,
+						vec![var_stack_id],
+						parameter_stack_id,
+					));
+
+					function_identity.parameters.push(var_stack_id.class_id());
+					parameter_ids.push(var_stack_id);
+				}
+			}
+
 			for parameter in &call_expression.parameters.elements {
 				let object_id = self.get_expr_type(parameter, definitions)?;
-				function_identity.parameters.push(object_id);
-				let var_stack_id = self.context.define_variable(
-					"".into(),
+				let var_stack_id = self.context.allocate(
 					object_id,
 					definitions,
-				)?.stack_id;
-
+				)?;
 				let parameter_expr = self.cmp_expr(
 					parameter,
 					var_stack_id,
 					definitions,
 				)?;
+				function_identity.parameters.push(object_id);
 				builder.add_builder(parameter_expr);
 				parameter_ids.push(var_stack_id);
 			}
