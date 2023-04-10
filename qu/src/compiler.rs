@@ -187,6 +187,40 @@ struct Context {
 	}
 
 
+	fn current_context_frame(&self) -> &ContextFrame {
+		self.frames
+			.last()
+			.unwrap()
+	}
+
+
+	fn find_item_id(
+		&self,
+		identity: &str,
+		definitions: &Definitions,
+	) -> Result<ItemId, QuMsg> {
+		if let Some(var_id) = self.find_variable_id(identity) {
+			return Ok(ItemId::Variable(var_id))
+		}
+
+		let item = match self.current_context_frame() {
+			ContextFrame::Module(module_id, _) => {
+				let module = definitions.get_module(*module_id)?;
+				module.get_item_id(identity)?
+			},
+			ContextFrame::Class(class_id, _) => {
+				let class = definitions.get_class(*class_id)?;
+				class.get_item_id(identity)?
+			},
+			ContextFrame::Function(function_id, _) => {
+				todo!();
+			},
+		};
+
+		Ok(item)
+	}
+
+
 	fn find_variable_id(&self, name: &str) -> Option<VariableId> {
 		let frame = match self.frames.last().unwrap() {
 			ContextFrame::Module(_, frame) => frame,
@@ -211,6 +245,37 @@ struct Context {
 			.ok_or_else(||{format!(
 				"Context does not have a variable with id '{id}'"
 			).into()})
+	}
+
+
+	fn has_item(
+		&self,
+		identity: &str,
+		definitions: &Definitions,
+	) -> bool {
+		if let None = self.find_variable_id(identity) {
+			return false;
+		}
+
+		let has_item = match self.current_context_frame() {
+			ContextFrame::Module(module_id, _) => {
+				let module = definitions
+					.get_module(*module_id)
+					.unwrap();
+				module.has_item(identity)
+			},
+			ContextFrame::Class(class_id, _) => {
+				let class = definitions
+					.get_class(*class_id)
+					.unwrap();
+				class.has_item(identity)
+			},
+			ContextFrame::Function(function_id, _) => {
+				todo!();
+			},
+		};
+
+		has_item
 	}
 
 
@@ -845,6 +910,7 @@ pub struct Definitions {
 				},
 				ItemId::Function(_) => todo!(),
 				ItemId::ExternalFunction(_) => todo!(),
+				_ => todo!(),
 			}
 		}
 		return Ok(true);
@@ -932,6 +998,7 @@ pub struct Definitions {
 				},
 				ItemId::Function(_) => {todo!()},
 				ItemId::ExternalFunction(_) => todo!(),
+				_ => todo!(),
 			}
 		}
 		Ok(item_id)
@@ -1094,23 +1161,31 @@ pub struct DotPath<'a> {
 	vec: Vec<&'a str>,
 }
 impl<'a> DotPath<'a> {
-	fn add_identity(&mut self, identity: &'a Identity) {
-		match identity {
-			Identity::Item(item) => {
-				self.vec.push(&item.token.slice);
-			},
-			Identity::Index(index) => {
-				self.vec.push(&index.left.token.slice);
-				self.add_identity(&index.right);
-			},
-		}
+	fn add_identity(&mut self, identity: &'a DotIndex) {
+		unimplemented!()
+//		match identity {
+//			DotIndex::Expression(item) => {
+//				self.vec.push(&item.token.slice);
+//			},
+//			DotIndex::Index(index) => {
+//				self.vec.push(&index.left.token.slice);
+//				self.add_identity(&index.right);
+//			},
+//		}
 	}
-} impl<'a> From<&'a Identity> for DotPath<'a> {
-    fn from(value: &'a Identity) -> Self {
-        let mut dotpath = DotPath {..Default::default()};
+} impl<'a> From<&'a DotIndex> for DotPath<'a> {
+	fn from(value: &'a DotIndex) -> Self {
+		let mut dotpath = DotPath {..Default::default()};
 		dotpath.add_identity(value);
 		dotpath
-    }
+	}
+} impl<'a> From<&str> for DotPath<'a> {
+	fn from(value: &str) -> Self {
+		let mut dotpath = DotPath {..Default::default()};
+		todo!();
+//		dotpath.add_identity(value);
+		dotpath
+	}
 }
 
 
@@ -1194,11 +1269,13 @@ enum ModuleItem {
 #[derive(Debug, Clone)]
 pub enum ItemId {
 	Class(ClassId),
-	Variable(VariableId),
+	Constant(ConstantId),
+	ExternalFunction(ExternalFunctionId),
 	Function(FunctionId),
 	FunctionGroup(FunctionGroupId),
-	ExternalFunction(ExternalFunctionId),
 	Module(ModuleId),
+	StaticVariable(VariableId),
+	Variable(VariableId),
 } impl Default for ItemId {
 	fn default() -> Self {
 		Self::Module(0)
@@ -1229,7 +1306,32 @@ pub struct ModuleMetadata {
 	/// The ID of this module.
 	id: ModuleId,
 } impl ModuleMetadata {
+	fn has_item(&self, identity: &str) -> bool {
+		self.constants_map.contains_key(identity)
+			|| self.class_map.contains_key(identity)
+			|| self.function_groups_map.contains_key(identity)
+			|| self.static_variables_map.contains_key(identity)
+	}
 
+
+	fn get_item_id(&self, identity: &str) -> Result<ItemId, QuMsg> {
+		if let Some(id) = self.constants_map.get(identity) {
+			return Ok(ItemId::Constant(*id));
+		}
+		if let Some(id) = self.class_map.get(identity) {
+			return Ok(ItemId::Class(*id));
+		}
+		if let Some(id) = self.function_groups_map.get(identity) {
+			return Ok(ItemId::FunctionGroup(*id));
+		}
+		if let Some(id) = self.static_variables_map.get(identity) {
+			return Ok(ItemId::StaticVariable(*id));
+		}
+
+		Err(format!(
+			"Modules '{}' has no item by name '{}'.", self.name, identity,
+		).into())
+	}
 } impl Default for ModuleMetadata {
 	fn default() -> Self {
 		Self {
@@ -1372,54 +1474,58 @@ pub struct QuCompiler {
 		call_expression: &CallExpression,
 		definitions: &mut Definitions,
 	) -> Result<ClassId, QuMsg> {
-		// Construct function identity
-		let mut parameters = vec![];
-		{
-			// Make dot indexer the first parameter
-			let mut dot_path:DotPath = (&call_expression.name).into();
-			if dot_path.vec.len() > 1 {
-				let len = dot_path.vec.len()-1;
-				let (first_parameter_slice_path, _) = dot_path.vec
-					.split_at_mut(len);
-				let param_path = DotPath {
-					vec: first_parameter_slice_path.into()
-				};
-				let item = definitions.path_index(
-					&param_path, &self.context
-				)?;
-				if let ItemId::Variable(id) = item {
-					let var_stack_id = self.context
-						.get_variable(id)?
-						.stack_id;
-					parameters.push(var_stack_id.class_id());
+		let caller_id = match &call_expression.caller {
+			Some(caller_expression) => {
+				// Caller is inferred by dot notation
+				self.get_expr_type(caller_expression, definitions)?
+			},
+			None => {
+				if call_expression.parameters.len() != 0 {
+					// Caller is inferred by first parameter
+					self.get_expr_type(
+						&call_expression.parameters.elements[0],
+						definitions,
+					)?
+				} else {
+					// Caller is inferred by first parameter
+					definitions.class_id::<QuVoid>()?
 				}
+			},
+		};
+		
+		call_expression.caller.as_ref().and_then(|caller|{
+			self.get_expr_type(&caller, definitions).ok()
+		});
+
+		let parameters = {
+			let mut parameters = vec![];
+			// Make dot caller the first parameter
+			if let Some(_) = &call_expression.caller {
+				parameters.push(caller_id);
 			}
-		}
-		for parameter in &call_expression.parameters.elements {
-			let object_id = self.get_expr_type(
-				parameter,
-				definitions,
-			)?;
-			parameters.push(object_id);
-		}
+			// Add other parameters
+			for parameter in &call_expression.parameters.elements {
+				let object_id = self.get_expr_type(
+					parameter,
+					definitions,
+				)?;
+				parameters.push(object_id);
+			}
+			parameters
+		};
+		
+		// Construct function identity
 		let function_identity = FunctionIdentity {
-			name: call_expression.name.last().token.slice.clone(),
+			name: call_expression.name.slice.clone(),
 			parameters,
 			..Default::default()
 		};
 
 		// Get function group
-		let item = definitions.path_index(
-			&(&call_expression.name).into(),
-			&self.context,
-		)?;
-		let ItemId::FunctionGroup(group_id) = item else {
-			return Err(format!(
-				"'{}' is not a function.", &call_expression.name,
-			).into())
-		};
+		let function_group = definitions.get_class(caller_id)?
+			.get_function_group_id(&call_expression.name.slice)?;
 		let group = &definitions
-			.function_groups[group_id];
+			.function_groups[function_group];
 		
 		let some_id = group.get(&function_identity)
 			.ok_or_else(|| -> QuMsg { format!(
@@ -1451,26 +1557,41 @@ pub struct QuCompiler {
 
 	fn class_id_from_option_identity(
 		&self,
-		option_identity: &Option<Identity>,
+		option_identity: &Option<QuToken>,
 		definitions: &mut Definitions,
 	) -> Result<ClassId, QuMsg> {
-		let class_id = match &option_identity {
-			Some(identity) => {
-				let item_id = &definitions.path_index(
-					&identity.into(),
-					&self.context,
-				)?;
-				let ItemId::Class(class_id) = item_id
-				else { return Err(format!(
-					"'{}' is not a class.", identity,
-				).into()) };
-				*class_id
-			},
-			None => {
-				definitions.class_id::<QuVoid>()?
-			},
+		let Some(identity) = option_identity else {
+			return definitions.class_id::<QuVoid>();
 		};
+		let class_id = definitions.find_class_id(
+			&identity.slice
+		)?;
+		
 		Ok(class_id)
+	}
+
+
+	/// Compiles a copy from one register to another.
+	fn cmp_copy_register(
+		&self,
+		from: QuStackId,
+		to: QuStackId,
+		definitions: &mut Definitions
+	) -> Result<QuAsmBuilder, QuMsg>{
+		let identity = &FunctionIdentity {
+			name: "copy".into(),
+			parameters: vec![from.class_id()],
+			return_type: to.class_id(),
+		};
+		let mut b = QuAsmBuilder::new();
+		b.add_op(QuOp::CallExt(
+			definitions.get_external_function_id_by_identity(identity)?,
+			vec![from],
+			to,
+		));
+		b.return_type = to.class_id();
+
+		Ok(b)
 	}
 
 
@@ -1495,6 +1616,13 @@ pub struct QuCompiler {
 					definitions,
 				)
 			}
+			Expression::DotIndex(
+				dot_index,
+			) => self.cmp_expr_dot_index(
+				dot_index,
+				output_reg,
+				definitions,
+			),
 			Expression::Operation(
 				operation_expression,
 			) => self.cmp_expr_operation(
@@ -1504,16 +1632,19 @@ pub struct QuCompiler {
 				output_reg,
 				definitions,
 			),
-			Expression::Number(number)
-				=> self.cmp_expr_int(&number.value, output_reg, definitions),
-			Expression::Tuple(tuple)
-				=> self.cmp_expr_tuple(
+			Expression::Number(
+				number,
+			) => self.cmp_expr_int(&number.value, output_reg, definitions),
+			Expression::Tuple(
+				tuple,
+			) => self.cmp_expr_tuple(
 					&tuple.elements,
 					output_reg,
 					definitions,
 				),
-			Expression::Var(var_expression)
-				=> self.cmp_expr_var(
+			Expression::Var(
+				var_expression,
+			) => self.cmp_expr_var(
 					&var_expression,
 					output_reg,
 					definitions,
@@ -1531,6 +1662,45 @@ pub struct QuCompiler {
 				).into());
 			}
 		}
+
+		Ok(builder)
+	}
+
+
+	/// Compiles a dot index. (Ex: foo.bar).
+	fn cmp_expr_dot_index(
+		&self,
+		dot_index: &DotIndex,
+		output_reg: QuStackId,
+		definitions: &mut Definitions,
+	)-> Result<QuAsmBuilder, QuMsg> {
+		let left_type = self.get_expr_type(
+			&dot_index.left,
+			definitions,
+		)?;
+		let left_class = definitions.get_class(left_type)?;
+		let indexed_item = left_class.get_item_id(
+			&dot_index.right.slice
+		)?;
+
+		let builder = match indexed_item {
+			ItemId::Class(_) => todo!(),
+			ItemId::Constant(_) => todo!(),
+			ItemId::ExternalFunction(_) => todo!(),
+			ItemId::Function(_) => todo!(),
+			ItemId::FunctionGroup(_) => todo!(),
+			ItemId::Module(_) => todo!(),
+			ItemId::StaticVariable(_) => todo!(),
+			ItemId::Variable(variable_id) => {
+				let variable = self.context
+					.get_variable(variable_id)?;
+				self.cmp_copy_register(
+					variable.stack_id,
+					output_reg,
+					definitions
+				)?
+			},
+		};
 
 		Ok(builder)
 	}
@@ -1613,15 +1783,15 @@ pub struct QuCompiler {
 	) -> Result<QuAsmBuilder, QuMsg> {
 
 		// TODO: Error handling
-		
-		let ItemId::Variable(var_id) = definitions.path_index(
-			&(&var_expression.ident).into(),
-			&self.context
-		)? else { return Err(format!(
-			"'{}' is not a variable.", var_expression.ident,
-		).into()); };
-		let variable = self.context
-			.get_variable(var_id)?;
+
+		let Some(var_id) = self.context.find_variable_id(
+			&var_expression.name.slice
+		) else {
+			return Err(format!(
+				"Err in cmp_expr_var. TODO"
+			).into())
+		};
+		let variable = self.context.get_variable(var_id)?;
 		
 		if variable.stack_id == output_reg {
 			// Output and variable locations are the same, do nothing
@@ -1635,7 +1805,6 @@ pub struct QuCompiler {
 			parameters: vec![variable.stack_id.class_id()],
 			return_type: variable.stack_id.class_id(),
 		};
-
 		let mut b = QuAsmBuilder::new();
 		b.add_op(QuOp::CallExt(
 			definitions.get_external_function_id_by_identity(identity)?,
@@ -1763,56 +1932,40 @@ pub struct QuCompiler {
 	) -> Result<QuAsmBuilder, QuMsg> {
 		let mut builder = QuAsmBuilder::new();
 
-		let name = call_expression.name.last().token.slice.clone();
+		let name = &call_expression.name.slice;
 		let mut function_identity = FunctionIdentity {
-			name,
+			name: name.to_owned(),
 			return_type: store_to.class_id(),
 			..Default::default()
 		};
 
 		// Compile parameter expressions
 		let mut parameter_ids = vec![];
-		self.context.open_scope();
-		{
-			let mut dot_path:DotPath = (&call_expression.name).into();
-			if dot_path.vec.len() > 1 {
-				let len = dot_path.vec.len()-1;
-				let (first_parameter_slice_path, _) = dot_path.vec
-					.split_at_mut(len);
-				let param_path = DotPath {
-					vec: first_parameter_slice_path.into()
-				};
-				let item = definitions.path_index(
-					&param_path, &self.context
+		self.context.open_scope(); {
+			if let Some(caller) = &call_expression.caller {
+				// Maker caller the first parameter
+				let object_id = self.get_expr_type(
+					caller,
+					definitions,
 				)?;
-				if let ItemId::Variable(id) = item {
-					let var_stack_id = self.context
-						.get_variable(id)?
-						.stack_id;
-					let parameter_stack_id = self.context.allocate(
-						var_stack_id.class_id(),
-						definitions,
-					)?;
-
-					builder.add_op(QuOp::CallExt(
-						definitions.get_external_function_id_by_identity(
-							&FunctionIdentity {
-								name: "copy".into(),
-								parameters: vec![var_stack_id.class_id()],
-								return_type: var_stack_id.class_id(),
-							}
-						)?,
-						vec![var_stack_id],
-						parameter_stack_id,
-					));
-
-					function_identity.parameters.push(var_stack_id.class_id());
-					parameter_ids.push(var_stack_id);
-				}
+				let var_stack_id = self.context.allocate(
+					object_id,
+					definitions,
+				)?;
+				let parameter_expr = self.cmp_expr(
+					caller,
+					var_stack_id,
+					definitions,
+				)?;
+				builder.add_builder(parameter_expr);
+				parameter_ids.push(var_stack_id);
 			}
 
 			for parameter in &call_expression.parameters.elements {
-				let object_id = self.get_expr_type(parameter, definitions)?;
+				let object_id = self.get_expr_type(
+					parameter,
+					definitions,
+				)?;
 				let var_stack_id = self.context.allocate(
 					object_id,
 					definitions,
@@ -1822,26 +1975,22 @@ pub struct QuCompiler {
 					var_stack_id,
 					definitions,
 				)?;
-				function_identity.parameters.push(object_id);
 				builder.add_builder(parameter_expr);
 				parameter_ids.push(var_stack_id);
 			}
 			Ok::<(), QuMsg>(())
 		}?;
 		self.context.close_scope();
+		function_identity.parameters = parameter_ids
+			.iter()
+			.map(|x| -> ClassId {
+				x.class_id()
+			})
+			.collect();
 
-		// Find function id by the current context
-		use ItemId::FunctionGroup;
-		let FunctionGroup(group_id) = definitions
-			.path_index(&(&call_expression.name).into(), &self.context,)?
-		else { return Err(format!(
-			"'{}' is not a function.", call_expression.name
-		).into()) };
-		let group = &definitions
-			.function_groups[group_id];
-		let id = group
-			.get(&function_identity)
-			.unwrap();
+		// Find function id in the current context
+		let id = &definitions
+			.get_some_function_id_by_identity(&function_identity)?;
 
 		// Compile the function call
 		match id {
@@ -1884,13 +2033,10 @@ pub struct QuCompiler {
 			for param in &parsed_identity.parameters {
 				match &param.static_type {
 					Some(identity) => {
-						let item_id = &definitions.path_index(
-							&identity.into(),
-							&self.context,
-						)?;
+						let item_id = self.context.find_item_id(&identity.slice, definitions)?;
 						let ItemId::Class(id) = item_id else {panic!()};
-						parameters_types.push(*id);
-						parameters_names.push((param.name().to_owned(), *id))
+						parameters_types.push(id);
+						parameters_names.push((param.name().to_owned(), id))
 					},
 					None => {
 						let id = definitions.class_id::<QuVoid>()?;
@@ -1904,7 +2050,7 @@ pub struct QuCompiler {
 				definitions,
 			)?;
 			let identity = FunctionIdentity {
-				name: parsed_identity.name.last().token.slice.clone(),
+				name: parsed_identity.name.slice.clone(),
 				parameters: parameters_types,
 				return_type,
 			};
@@ -2085,9 +2231,9 @@ pub struct QuCompiler {
 		var_assignment: &VarAssignment,
 		definitions: &mut Definitions,
 	) -> Result<QuAsmBuilder, QuMsg> {
-		let item = definitions.path_index(
-			&(&var_assignment.name).into(),
-			&self.context,
+		let item = self.context.find_item_id(
+			&var_assignment.name.slice,
+			definitions,
 		)?;
 		let ItemId::Variable(id) = item else { return Err(format!(
 			"'{}' is not a variable.", var_assignment.name
@@ -2111,7 +2257,10 @@ pub struct QuCompiler {
 		let ident = &var_declaration.name;
 
 		// Check if the variable is already defined
-		if definitions.has_path_index(&ident.into(), &self.context)? {
+		if self.context.has_item(
+			&var_declaration.name.slice,
+			definitions,
+		) {
 			return Err(format!(
 				"An item by '{}' is already defined.", ident,
 			).into());
@@ -2122,7 +2271,7 @@ pub struct QuCompiler {
 			definitions
 		)?;
 		let var_stack_id = self.context.define_variable(
-			ident.last().token.slice.clone(),
+			ident.slice.clone(),
 			static_type,
 			definitions
 		)?.stack_id;
@@ -2207,7 +2356,7 @@ pub struct QuCompiler {
 	fn get_expr_reg(
 		&mut self, expr_leaf:&Expression, definitions: &mut Definitions
 	) -> Result<QuStackId, QuMsg> {
-		return  match expr_leaf {
+		return match expr_leaf {
 			Expression::Operation(operation) => {
 				// TODO: reimplement without cloning
 				let call_expression = CallExpression {
@@ -2235,18 +2384,23 @@ pub struct QuCompiler {
 					definitions.class_id::<i32>()?, definitions
 				)
 			},
-			Expression::Tuple(_) => panic!(),
+			Expression::Tuple(_) => {
+				todo!()
+			},
 			Expression::Var(var) => {
-				let item = definitions.path_index(
-					&(&var.ident).into(),
-					&self.context,
+				let item = self.context.find_item_id(
+					&var.name.slice,
+					definitions,
 				)?;
 				let ItemId::Variable(id) = item else { return Err(format!(
-					"'{}' is not a variable", var.ident,
+					"'{}' is not a variable", var.name,
 				).into()) };
 				let var = self.context.get_variable(id)?;
 				Ok(var.stack_id)
 			}
+			Expression::DotIndex(_) => {
+				todo!()
+			},
 		};
 	}
 
@@ -2276,16 +2430,23 @@ pub struct QuCompiler {
 				unimplemented!()
 			},
 			Expression::Var(var) => {
-				let item = definitions.path_index(
-					&(&var.ident).into(),
-					&self.context,
+				let item = self.context.find_item_id(
+					&var.name.slice,
+					definitions,
 				)?;
 				let ItemId::Variable(id) = item else { return Err(format!(
-					"'{}' is not a variable.", &var.ident,
+					"'{}' is not a variable.", &var.name,
 				).into()) };
 				let var = self.context.get_variable(id)?;
 				var.stack_id.class_id()
 			}
+			Expression::DotIndex(dot_index) => {
+				self.cmp_expr_dot_index(
+					dot_index,
+					QuStackId::default(),
+					definitions,
+				)?.return_type
+			},
 		};
 		Ok(object_id)
 	}
@@ -2322,7 +2483,7 @@ pub struct QuCompiler {
 						&signature.return_type, definitions,
 					)?;
 					let function_identity = FunctionIdentity {
-						name: signature.name.last().token.slice.clone(),
+						name: signature.name.slice.clone(),
 						parameters,
 						return_type,
 					};

@@ -1,4 +1,5 @@
 
+use std::convert::identity;
 use std::vec;
 
 use crate::errors;
@@ -24,6 +25,7 @@ pub const KEYWORD_WHILE:&str = "while";
 
 pub const OP_ASSIGN_SYMBOL:&str = "=";
 pub const OP_BLOCK_START:&str = ":";
+pub const OP_DOT_INDEX:&str = ".";
 pub const OP_EXPR_ADD:&str = "+";
 pub const OP_EXPR_AND:&str = "and";
 pub const OP_EXPR_DIV:&str = "/";
@@ -40,7 +42,7 @@ pub const OP_EXPR_POW:&str = "**";
 pub const OP_EXPR_SUB:&str = "-";
 pub const OP_EXPR_SQRT:&str = "//";
 
-pub type QuParamNode = (Identity, Option<Identity>);
+pub type QuParamNode = (QuToken, Option<QuToken>);
 
 pub mod parsed {
 	use std::fmt::Display;
@@ -54,6 +56,7 @@ pub mod parsed {
 	pub enum Expression {
 		/// Call function branch.
 		Call(Box<CallExpression>),
+		DotIndex(Box<DotIndex>),
 		/// A calculable expression. Contains an operator and two [`QuLeafExpr`]s.
 		Operation(Box<OperationExpression>),
 		/// A literal int value.
@@ -62,6 +65,21 @@ pub mod parsed {
 		Tuple(Box<TupleExpression>),
 		/// A variable name.
 		Var(Box<VarExpression>),
+	} impl Default for Expression {
+		fn default() -> Self {
+			unreachable!()
+		}
+	} impl Display for Expression {
+		fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+			match self {
+				Expression::Call(a) => write!(f, "{:?}", **a),
+				Expression::DotIndex(a) => write!(f, "{:?}", **a),
+				Expression::Operation(a) => write!(f, "{:?}", **a),
+				Expression::Number(a) => write!(f, "{:?}", **a),
+				Expression::Tuple(a) => write!(f, "{:?}", **a),
+				Expression::Var(a) => write!(f, "{:?}", **a),
+			}
+		}
 	}
 
 
@@ -88,7 +106,8 @@ pub mod parsed {
 
 	#[derive(Debug, Default, Clone, PartialEq)]
 	pub struct CallExpression {
-		pub name: Identity,
+		pub caller: Option<Expression>,
+		pub name: QuToken,
 		pub parameters: TupleExpression,
 		pub open_parenthesy: QuToken,
 		pub close_parenthesy: QuToken,
@@ -96,19 +115,20 @@ pub mod parsed {
 		fn from(value: &OperationExpression) -> Self {
 			// TODO: Don't use this function anymore
 			CallExpression {
-				name: Identity::Item(Box::new(
-					QuOperator::from(value.operator.slice.as_str()).name().into()
-				)),
-				parameters: vec![value.left.clone(), value.right.clone()].into(),
+				name: QuOperator::from(value.operator.slice.as_str())
+					.name()
+					.into(),
+				parameters: vec![value.left.clone(), value.right.clone()]
+					.into(),
 				..Default::default()
 			}
 		}
 	} impl From<OperationExpression> for CallExpression {
 		fn from(value: OperationExpression) -> Self {
 			CallExpression {
-				name: Identity::Item(Box::new(
-					QuOperator::from(value.operator.slice.as_str()).name().into()
-				)),
+				name: QuOperator::from(value.operator.slice.as_str())
+					.name()
+					.into(),
 				parameters: vec![value.left, value.right].into(),
 				..Default::default()
 			}
@@ -180,95 +200,52 @@ pub mod parsed {
 
 	#[derive(Debug, Default, Clone, PartialEq)]
 	pub struct FunctionIdentity {
-		pub name: Identity,
+		pub name: QuToken,
 		pub parameters: Vec<FunctionParameterElement>,
-		pub return_type: Option<Identity>,
+		pub return_type: Option<QuToken>,
 	}
 
 
 	#[derive(Debug, Default, Clone, PartialEq)]
 	pub struct FunctionParameterElement {
-		pub name: Identity,
-		pub static_type: Option<Identity>,
+		pub name: QuToken,
+		pub static_type: Option<QuToken>,
 		pub comma: Option<QuToken>,
 	} impl FunctionParameterElement {
 		pub fn name(&self) -> &str {
-			self.name.name()
+			&self.name.slice
 		}
 	}
 
 
-	#[derive(Debug, Clone, PartialEq)]
-	/// Defines an expression in a Qu program tree.
-	pub enum Identity {
-		/// A named item. (Ex: Class, variable, CONSTANT)
-		Item(Box<IdentityItem>),
-		/// Indexes an identity with dot notation. (Ex: foo.bar)
-		Index(Box<IdentityIndex>),
-	} impl Identity {
-		pub fn last(&self) -> &IdentityItem{
-			match self {
-				Identity::Item(item) => item,
-				Identity::Index(index) => index.right.last(),
-			}
-		}
+	#[derive(Debug, Default, Clone, PartialEq)]
+	pub struct DotIndex {
+		pub left: Expression,
+		pub dot: QuToken,
+		pub right: QuToken,
+	}
 
 
-		pub fn len(&self) -> usize {
-			let length = 0;
-			match self {
-				Identity::Item(_) => {1},
-    			Identity::Index(index) => {
-					1 + &index.right.len()
-				},
-			}
-		}
-
-
-		pub fn name(&self) -> &str {
-			&self.last().token.slice
-		}
-	} impl Default for Identity {
-		fn default() -> Self {
-			Identity::Item(Box::new(
-				IdentityItem {token: QuToken::from("_")}
-			))
-		}
-	} impl From<&str> for Identity {
-		fn from(value: &str) -> Self {
-			Identity::Item(Box::new(IdentityItem {token: value.into()}))
-		}
-	} impl Display for Identity {
+	#[derive(Debug, Default, Clone, PartialEq)]
+	pub struct IdentityExpression {
+		pub value: Expression,
+	} impl Display for IdentityExpression {
 		fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-			match self {
-				Identity::Item(item) => {
-					write!(f, "{}", *item)
-				},
-				Identity::Index(index) => {
-					write!(f, "{}", *index)
-				},
-			}
-		}
-	}
-
-	impl From<Identity> for String {
-		fn from(value: Identity) -> Self {
-			match value {
-				Identity::Item(item) => (*item).into(),
-				Identity::Index(index) => (*index).into(),
-			}
+			write!(f, "{}", &self.value)
 		}
 	}
 
 
 	#[derive(Debug, Clone, PartialEq)]
 	pub struct IdentityIndex {
-		pub left: IdentityItem,
+		pub left: Expression,
 		pub dot: QuToken,
-		pub right: Identity,
+		pub right: QuToken,
 	} impl IdentityIndex {
 		pub fn new(
-			left: IdentityItem, dot: QuToken, right: Identity,
+			left: Expression,
+			dot: QuToken,
+			right: QuToken,
 		) -> Self {
 			Self {
 				left,
@@ -286,29 +263,9 @@ pub mod parsed {
 		fn from(value: IdentityIndex) -> Self {
 			format!(
 				"{}.{}",
-				String::from(value.left),
-				String::from(value.right),
+				value.left,
+				value.right,
 			)
-		}
-	}
-
-
-	#[derive(Debug, Default, Clone, PartialEq)]
-	pub struct IdentityItem {
-		pub token: QuToken,
-	} impl From<&str> for IdentityItem {
-		fn from(value: &str) -> Self {
-			IdentityItem {token: value.into()}
-		}
-	} impl Display for IdentityItem {
-		fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-			write!(f, "{}", &self.token.slice)
-		}
-	}
-
-	impl From<IdentityItem> for String {
-		fn from(value: IdentityItem) -> Self {
-			value.token.slice.clone()
 		}
 	}
 
@@ -362,6 +319,10 @@ pub mod parsed {
 				elements,
 			}
 		}
+
+		pub fn len(&self) -> usize {
+			self.elements.len()
+		}
 	} impl From<Vec<Expression>> for TupleExpression {
 		fn from(elements: Vec<Expression>) -> Self {
 			Self { elements }
@@ -371,7 +332,7 @@ pub mod parsed {
 
 	#[derive(Debug, Clone, PartialEq)]
 	pub struct VarAssignment {
-		pub name: Identity,
+		pub name: QuToken,
 		pub equals_sign: QuToken,
 		pub new_value: Expression,
 	}
@@ -380,8 +341,8 @@ pub mod parsed {
 	#[derive(Debug, Clone, PartialEq)]
 	pub struct VarDeclaration {
 		pub var_keyword: QuToken,
-		pub name: Identity,
-		pub static_type: Option<Identity>,
+		pub name: QuToken,
+		pub static_type: Option<QuToken>,
 		pub equals_sign: Option<QuToken>,
 		pub initial_value: Option<Expression>,
 	}
@@ -389,7 +350,7 @@ pub mod parsed {
 
 	#[derive(Debug, Default, Clone, PartialEq)]
 	pub struct VarExpression {
-		pub ident: Identity,
+		pub name: QuToken,
 	}
 }
 
@@ -586,6 +547,49 @@ pub struct QuParser {
 	}
 
 
+	/// Attempts to parse a dot indexing (Ex: foo.bar). If it doesn't it
+	/// then attempts to parse a value. 
+	fn ck_dot_index(&mut self) -> Result<Option<Expression>, QuMsg> {
+		// Parse any expression
+		let Some(left) = self.ck_value()? else {
+			return Ok(None);
+		};
+
+		// Parse a dot indexing
+		let Some(dot) = self.ck_str(OP_DOT_INDEX)? else {
+			// Does not match dot index, return expression
+			return Ok(Some(left));
+		};
+		let Some(right) = self.ck_identity()? else { return Err(
+			format!(
+				"Expected an identity after '.', but found something else. TODO",
+			).into()
+		) };
+
+		// Parse a function call
+		let Some(open_parenthesy) = self.ck_str("(")? else {
+			// Does not match function call, return dot index
+			return Ok(Some(Expression::DotIndex(Box::new( DotIndex {
+				left,
+				dot,
+				right,
+			} ))));
+		};
+		let parameters = self.ck_fn_call_parameters()?;
+		let Some(close_parenthesy) = self.ck_str(")")? else {
+			return Err(QuMsg::missing_token(")"))
+		};
+
+		Ok(Some(Expression::Call(Box::new( CallExpression {
+			caller: Some(left),
+			name: right,
+			parameters,
+			open_parenthesy,
+			close_parenthesy,
+		} ))))
+	}
+
+
 	/// Attempts to parse an expression
 	fn ck_expr(&mut self) -> Result<Option<Expression>, QuMsg> {
 		return self.ck_tuple();
@@ -671,13 +675,32 @@ pub struct QuParser {
 			else {return Ok(None)};
 
 		// Match an open '('
-		let Ok(Some(open_parenthesy)) = self.ck_str("(")
-			else {
-				self.tk_state_pop();
-				return Ok(None);
-			};
+		let Some(open_parenthesy) = self.ck_str("(")? else {
+			self.tk_state_pop();
+			return Ok(None);
+		};
 
 		// Match function parameters
+		let parameters = self.ck_fn_call_parameters()?;
+
+		// Match a close ')'
+		let Some(close_parenthesy) = self.ck_str(")")? else {
+			return Err(QuMsg::missing_token(")"))
+		};
+
+		return Ok(Some(CallExpression {
+			caller: None,
+			name: fn_name_tk.clone(), // TODO: Remove clones
+			parameters,
+			open_parenthesy,
+			close_parenthesy,
+		}));
+	}
+
+
+	fn ck_fn_call_parameters(
+		&mut self,
+	) -> Result<TupleExpression, QuMsg> {
 		let parameters = match self.ck_expr()? {
 			Some(l) => {
 				match l {
@@ -690,17 +713,7 @@ pub struct QuParser {
 			},
 			None => TupleExpression::default(),
 		};
-
-		// Match a close ')'
-		let Some(close_parenthesy) = self.ck_str(")")?
-			else {return Err(QuMsg::missing_token(")"))};
-
-		return Ok(Some(CallExpression {
-			name: fn_name_tk,
-			parameters,
-			open_parenthesy,
-			close_parenthesy,
-		}));
+		Ok(parameters)
 	}
 
 
@@ -738,7 +751,7 @@ pub struct QuParser {
 
 
 	/// Attempts to parse a function name.
-	fn ck_fn_name(&mut self) -> Result<Option<Identity>, QuMsg> {
+	fn ck_fn_name(&mut self) -> Result<Option<QuToken>, QuMsg> {
 		// TODO: Implement function specific check for names
 		return self.ck_var_name();
 	}
@@ -800,27 +813,13 @@ pub struct QuParser {
 
 
 	/// Attempts to parse an identity tree.
-	fn ck_identity(&mut self) -> Result<Option<Identity>, QuMsg> {
-		let Some(left) = self.ck_identity_item()? else {
-			return Ok(None);
-		};
-		let Some(dot) = self.ck_str(".")? else {
-			return Ok(Some(
-				Identity::Item(Box::new(left))
-			));
-		};
-		let Some(right) = self.ck_identity()? else {
-			return Err(format!(
-				"Expected an identity after '.'"
-			).into());
-		};
-
-		Ok(Some(Identity::Index(Box::new(IdentityIndex {left, dot, right}))))
+	fn ck_identity(&mut self) -> Result<Option<QuToken>, QuMsg> {
+		self.ck_identity_item()
 	}
 
 
 	/// Attempts to parse individual identity item.
-	fn ck_identity_item(&mut self) -> Result<Option<IdentityItem>, QuMsg> {
+	fn ck_identity_item(&mut self) -> Result<Option<QuToken>, QuMsg> {
 		self.tk_state_save();
 		
 		let identity_option = self.tk_next_option();
@@ -828,7 +827,7 @@ pub struct QuParser {
 			Some(identity) => {
 				if identity.tk_type == TOKEN_TYPE_NAME {
 					return Ok(Some(
-						IdentityItem {token: identity.clone()}
+						identity.clone()
 					));
 				}
 				self.tk_state_pop();
@@ -926,7 +925,7 @@ pub struct QuParser {
 			self.tk_state_save();
 
 			// Match for a value if no parenthesis expression is matched.
-			let data = self.ck_value()?;
+			let data = self.ck_dot_index()?;
 			if let None = data {
 				self.tk_state_pop();
 				return Ok(None);
@@ -1047,7 +1046,7 @@ pub struct QuParser {
 
 
 	/// Attempts to parse a type name.
-	fn ck_type_name(&mut self) -> Result<Option<Identity>, QuMsg> {
+	fn ck_type_name(&mut self) -> Result<Option<QuToken>, QuMsg> {
 		// TODO: Implement type specific check for names
 		return self.ck_identity();
 	}
@@ -1087,7 +1086,7 @@ pub struct QuParser {
 			else {return Ok(None)};
 
 		return Ok(Some(
-			VarExpression {ident: variable_name}
+			VarExpression {name: variable_name}
 		));
 	}
 
@@ -1182,7 +1181,7 @@ pub struct QuParser {
 
 
 	/// Attempts to parse a variable name.
-	fn ck_var_name(&mut self) -> Result<Option<Identity>, QuMsg> {
+	fn ck_var_name(&mut self) -> Result<Option<QuToken>, QuMsg> {
 		return self.ck_identity();
 	}
 

@@ -316,6 +316,18 @@ pub struct QuToken {
 	}
 }
 
+impl From<QuToken> for String {
+	fn from(value: QuToken) -> Self {
+		value.slice
+	}
+}
+
+impl<'a> From<&'a QuToken> for &'a str {
+	fn from(value: &'a QuToken) -> &'a str {
+		&value.slice
+	}
+}
+
 
 #[derive(Clone, Debug, Default)]
 /// Stores human readable information the location of a text character.

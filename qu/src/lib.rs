@@ -452,7 +452,8 @@ mod lib {
 	}
 
 
-	#[test]
+	// TODO: implement accessing classes like variables
+	//#[test]
 	fn class_dot_notation() {
 		let mut qu = Qu::new();
 		let result:i32 = *qu.run_and_get("return int.sub(5, 8)").unwrap();
@@ -516,7 +517,7 @@ mod lib {
 	}
 
 
-	//#[test]
+	#[test]
 	fn variable_dot_notation_custom_function_3() {
 		// TODO: Make expressions indexable
 		let mut qu = Qu::new();
@@ -529,6 +530,7 @@ mod lib {
 	}
 
 
+	// TODO: Allow accessing global items from between invocations of Qu::run
 	//#[test]
 	fn cross_run_accessing() {
 		// TODO: Allow this:
@@ -544,10 +546,11 @@ mod lib {
 	}
 
 
+	// TODO: Prevent functions definitions from having multiple parameters of
+	// 	the same name 
 	//#[test]
 	fn function_multiple_parameters_same_name() {
 		let mut qu = Qu::new();
-		// TODO: Prevent this:
 		let script = r#"
 			fn some(a int, a int, c int) int:
 				return a + c

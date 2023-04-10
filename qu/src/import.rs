@@ -13,6 +13,7 @@ use crate::compiler::ExternalFunctionId;
 use crate::compiler::FunctionGroupId;
 use crate::compiler::FunctionId;
 use crate::compiler::FunctionIdentity;
+use crate::compiler::ItemId;
 use crate::compiler::SomeFunctionGroup;
 use crate::compiler::SomeFunctionId;
 
@@ -200,6 +201,43 @@ pub struct QuStruct {
 			functions_map: Default::default(),
 			function_groups_map: Default::default(),
 		}
+	}
+
+
+	pub fn has_item(&self, identity: &str) -> bool {
+		self.constants_map.contains_key(identity)
+			|| self.function_groups_map.contains_key(identity)
+	}
+
+
+	pub fn get_item_id(&self, identity: &str) -> Result<ItemId, QuMsg> {
+		if let Some(id) = self.constants_map.get(identity) {
+			return Ok(ItemId::Constant(*id));
+		}
+		if let Some(id) = self.function_groups_map.get(identity) {
+			return Ok(ItemId::FunctionGroup(*id));
+		}
+
+		Err(format!(
+			"Class '{}' has no item by name '{}'.", self.name, identity,
+		).into())
+	}
+
+
+	pub fn get_function_group_id(
+		&self,
+		function_name: &str,
+	) -> Result<FunctionGroupId, QuMsg> {
+		self.function_groups_map
+			.get(function_name)
+			.ok_or_else(||->QuMsg {
+				format!(
+					"Class '{}' has no function named '{}'",
+					self.name,
+					function_name
+				).into()
+			})
+			.map(|id| {*id})
 	}
 } impl Debug for QuStruct {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
