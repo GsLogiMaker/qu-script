@@ -47,7 +47,6 @@ pub type QuParamNode = (QuToken, Option<QuToken>);
 pub mod parsed {
 	use std::fmt::Display;
 	use crate::tokens::QuToken;
-	use crate::compiler::DotPath;
 	use super::OP_ASSIGN_SYMBOL;
 	use super::QuOperator;
 
