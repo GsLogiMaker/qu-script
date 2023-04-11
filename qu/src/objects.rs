@@ -4,6 +4,8 @@
 
 use crate::QuVm;
 use crate::QuMsg;
+use crate::compiler::ModuleId;
+use crate::import::ClassId;
 use crate::vm::QuExtFn;
 use crate::vm::QuVoidExtFn;
 use crate::vm::QuStackId;
@@ -29,6 +31,19 @@ pub type QuExtFnData = (String, QuExtFn, Vec<usize>, usize);
 
 /// Data for a void external function.
 pub type QuVoidFnForm = (String, QuVoidExtFn, Vec<usize>);
+
+
+pub struct Class {
+	id: ClassId,
+} impl QuRegisterStruct for Class {
+	fn register_fns() -> Vec<ExternalFunction> where Self: Sized {
+		vec![
+		]
+	}
+
+
+	fn name() -> &'static str {"__Class__"}
+}
 
 
 #[derive(Clone)]
@@ -79,6 +94,19 @@ pub struct ExternalFunction {
 #[derive(Debug, Default, Clone)]
 pub struct FunctionPointer {
 	pub pc_target: usize,
+}
+
+
+pub struct Module {
+	id: ModuleId,
+} impl QuRegisterStruct for Module {
+	fn register_fns() -> Vec<ExternalFunction> where Self: Sized {
+		vec![
+		]
+	}
+
+
+	fn name() -> &'static str {"__Module__"}
 }
 
 
@@ -307,6 +335,28 @@ pub trait QuRegisterStruct {
 	/// Returns the name that identifies the struct being registered.
 	fn name() -> &'static str;
 
+}
+
+
+pub struct Vector2 {
+	x: i32,
+	y: i32,
+} impl QuRegisterStruct for Vector2 {
+	fn register_fns() -> Vec<ExternalFunction> where Self: Sized {
+		vec![
+			qufn!( foo(i32) i32 |vm, args, return_id| {
+				let value = *vm.read::<i32>(args[0])?;
+				vm.write(
+					return_id,
+					value,
+				);
+				Ok(())
+			}),
+		]
+	}
+
+
+	fn name() -> &'static str {"Vector2"}
 }
 
 

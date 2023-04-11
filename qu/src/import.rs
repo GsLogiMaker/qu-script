@@ -14,7 +14,7 @@ use crate::compiler::FunctionGroupId;
 use crate::compiler::FunctionId;
 use crate::compiler::FunctionIdentity;
 use crate::compiler::ItemId;
-use crate::compiler::SomeFunctionGroup;
+use crate::compiler::FunctionGroup;
 use crate::compiler::SomeFunctionId;
 
 
@@ -50,7 +50,6 @@ pub struct QuRegistered {
 	pub structs:Vec<QuStruct>,
 	pub structs_map:HashMap<String, ClassId>,
 } impl QuRegistered {
-
 	/// Constructs a new [`QuImports`].
 	pub fn new() -> Self {
 		Self {
@@ -144,7 +143,6 @@ pub struct QuRegistered {
 		self.structs.push(r_struct);
 
 	}
-
 }
 
 

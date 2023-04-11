@@ -519,7 +519,6 @@ mod lib {
 
 	#[test]
 	fn variable_dot_notation_custom_function_3() {
-		// TODO: Make expressions indexable
 		let mut qu = Qu::new();
 		let result:i32 = *qu.run_and_get("
 			fn move(number int) int:
@@ -558,4 +557,35 @@ mod lib {
 		qu.run(script).unwrap();
 	}
 
+
+	#[test]
+	fn import() {
+		let mut qu = Qu::new();
+		let result:i32 = *qu.run_and_get("
+			import math
+			return math.foo(3)
+		").unwrap();
+		assert_eq!(result, 3);
+	}
+
+
+	#[test]
+	#[should_panic]
+	fn not_imported_panic() {
+		let mut qu = Qu::new();
+		let result:i32 = *qu.run_and_get("
+			return math.foo(1)
+		").unwrap();
+		dbg!(result);
+	}
+
+	#[test]
+	#[should_panic]
+	fn not_imported_panic_2() {
+		let mut qu = Qu::new();
+		let result = qu.run("
+			return foo(3)
+		").unwrap();
+		dbg!(result);
+	}
 }

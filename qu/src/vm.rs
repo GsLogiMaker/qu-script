@@ -2,14 +2,18 @@
 use std::fmt::Debug;
 use std::mem::size_of;
 
+use crate::Class;
+use crate::Module;
 use crate::QuMsg;
 use crate::QuVoid;
+use crate::Vector2;
 use crate::compiler::Definitions;
 use crate::compiler::ExternalFunctionId;
 use crate::compiler::FunctionId;
 use crate::import::ClassId;
 
-pub const BASE_MODULE:&str = "__main__";
+pub const BASE_MODULE:&str = "__base__";
+pub const MAIN_MODULE:&str = "__main__";
 
 pub type QuExtFn = &'static dyn Fn(
 	&mut QuVm,
@@ -230,10 +234,27 @@ pub struct QuVm {
 				b.register_struct::<QuVoid>()?;
 				b.register_struct::<i32>()?;
 				b.register_struct::<bool>()?;
+				b.register_struct::<Class>()?;
+				b.register_struct::<Module>()?;
 				b.register_functions()?;
 				Ok(())
 			},
 		).unwrap();
+
+		vm.definitions.define_module(
+			MAIN_MODULE.into(),
+			&|mut b| {Ok(())},
+		).unwrap();
+
+		vm.definitions.define_module(
+			"math".into(),
+			&|mut b| {
+				b.register_struct::<Vector2>()?;
+				b.register_functions()?;
+				Ok(())
+			},
+		).unwrap();
+
 		vm
 	}
 

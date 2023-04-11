@@ -1,5 +1,6 @@
 
 use std::convert::identity;
+use std::fmt::format;
 use std::vec;
 
 use crate::errors;
@@ -19,6 +20,7 @@ pub const KEYWORD_ELSE:&str = "else";
 pub const KEYWORD_ELIF:&str = "elif";
 pub const KEYWORD_FN:&str = "fn";
 pub const KEYWORD_IF:&str = "if";
+pub const KEYWORD_IMPORT:&str = "import";
 pub const KEYWORD_RETURN:&str = "return";
 pub const KEYWORD_VAR:&str = "var";
 pub const KEYWORD_WHILE:&str = "while";
@@ -64,6 +66,21 @@ pub mod parsed {
 		Tuple(Box<TupleExpression>),
 		/// A variable name.
 		Var(Box<VarExpression>),
+	} impl Expression {
+		/// Attempts to convert an expression into an identity, and panics if
+		/// it can't.
+		pub fn into_identity(&self) -> &str {
+			match self {
+				Expression::Call(_) => todo!(),
+				Expression::DotIndex(dot_index) => {
+					&dot_index.right.slice
+				},
+				Expression::Operation(_) => todo!(),
+				Expression::Number(_) => todo!(),
+				Expression::Tuple(_) => todo!(),
+				Expression::Var(var) => &var.name.slice,
+			}
+		}
 	} impl Default for Expression {
 		fn default() -> Self {
 			unreachable!()
@@ -93,6 +110,8 @@ pub mod parsed {
 		/// A function declaration branch. Contains the function name,
 		/// parameters, and instructions.
 		FunctionDeclaration(Box<FunctionDeclaration>),
+		/// An import statement.
+		Import(Box<Import>),
 		/// A return statement for a function
 		Return(Box<ReturnStatement>),
 		/// A variable assignment. Contains a var name and a [`QuLeafExpr`].
@@ -236,36 +255,28 @@ pub mod parsed {
 
 
 	#[derive(Debug, Clone, PartialEq)]
-	pub struct IdentityIndex {
-		pub left: Expression,
-		pub dot: QuToken,
-		pub right: QuToken,
-	} impl IdentityIndex {
-		pub fn new(
-			left: Expression,
-			dot: QuToken,
-			right: QuToken,
-		) -> Self {
-			Self {
-				left,
-				dot,
-				right,
-			}
-		}
-	} impl Display for IdentityIndex {
-		fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-			write!(f, "{}.{}", &self.left, &self.right)
+	pub enum Identity {
+		Single(Box<QuToken>),
+		Index(Box<IdentityIndex>),
+	} impl Default for Identity {
+		fn default() -> Self {
+			unreachable!()
 		}
 	}
 
-	impl From<IdentityIndex> for String {
-		fn from(value: IdentityIndex) -> Self {
-			format!(
-				"{}.{}",
-				value.left,
-				value.right,
-			)
-		}
+
+	#[derive(Debug, Default, Clone, PartialEq)]
+	pub struct IdentityIndex {
+		pub left: QuToken,
+		pub dot: QuToken,
+		pub right: Identity,
+	}
+
+
+	#[derive(Debug, Default, Clone, PartialEq)]
+	pub struct Import {
+		pub import: QuToken,
+		pub identity_path: Identity,
 	}
 
 
@@ -488,6 +499,9 @@ pub struct QuParser {
 		while self.tk_idx < self.tokens.len()-1 {
 			// Variable declaration
 			ck_parse!(ck_var_decl, Statement::VarDeclaration);
+
+			// Import
+			ck_parse!(ck_import, Statement::Import);
 
 			// Variable assignment
 			ck_parse!(ck_var_assign, Statement::VarAssign);
@@ -817,6 +831,30 @@ pub struct QuParser {
 	}
 
 
+	/// Attempts to parse identities as a path (Ex: foo.bar). Note that this is
+	/// mainly used for the import statement, not expressions. See
+	/// `[Parser::ck_dot_index]` for expressions.
+	fn ck_identity_index(&mut self) -> Result<Option<Identity>, QuMsg> {
+		let Some(left) = self.ck_identity()? else {
+			return Ok(None);
+		};
+		let Some(dot) = self.ck_str(OP_DOT_INDEX)? else {
+			return Ok(Some( Identity::Single(Box::new(left)) ));
+		};
+		let Some(right) = self.ck_identity_index()? else {
+			return Err(format!(
+				"Expected an identity after '.'. TODO",
+			).into());
+		};
+
+		Ok(Some(Identity::Index(Box::new( IdentityIndex {
+			left,
+			dot,
+			right
+		} ))))
+	}
+
+
 	/// Attempts to parse individual identity item.
 	fn ck_identity_item(&mut self) -> Result<Option<QuToken>, QuMsg> {
 		self.tk_state_save();
@@ -837,6 +875,30 @@ pub struct QuParser {
 				return Ok(None);
 			},
 		}
+	}
+
+
+	/// Attempts to parse an import statement.
+	fn ck_import(&mut self) -> Result<Option<Import>, QuMsg> {
+		if self.utl_statement_start()?.is_none() {
+			return Ok(None);
+		}
+
+		let Some(import) = self.ck_str(KEYWORD_IMPORT)? else {
+			return Ok(None)
+		};
+
+		let Some(identity_path) = self.ck_identity_index()? else {
+			return Err(format!(
+				"Expected an indentity path after '{}'. TODO",
+				KEYWORD_IMPORT,
+			).into())
+		};
+
+		Ok(Some( Import {
+			import,
+			identity_path,
+		} ))
 	}
 
 
