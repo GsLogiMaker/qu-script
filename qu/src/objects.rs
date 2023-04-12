@@ -33,11 +33,16 @@ pub type QuExtFnData = (String, QuExtFn, Vec<usize>, usize);
 pub type QuVoidFnForm = (String, QuVoidExtFn, Vec<usize>);
 
 
+#[derive(Debug, Default, Clone, Copy)]
 pub struct Class {
 	id: ClassId,
 } impl QuRegisterStruct for Class {
 	fn register_fns() -> Vec<ExternalFunction> where Self: Sized {
 		vec![
+			qufn!(copy(Self) Self |vm, args, return_id| {
+				vm.write(return_id, *vm.read::<Class>(args[0])?);
+				Ok(())
+			}),
 		]
 	}
 
@@ -97,11 +102,16 @@ pub struct FunctionPointer {
 }
 
 
+#[derive(Debug, Default, Clone, Copy)]
 pub struct Module {
 	id: ModuleId,
 } impl QuRegisterStruct for Module {
 	fn register_fns() -> Vec<ExternalFunction> where Self: Sized {
 		vec![
+			qufn!(copy(Self) Self |vm, args, return_id| {
+				vm.write(return_id, *vm.read::<Module>(args[0])?);
+				Ok(())
+			}),
 		]
 	}
 

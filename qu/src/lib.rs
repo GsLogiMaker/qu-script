@@ -187,7 +187,7 @@ pub struct Qu<'a> {
 
 #[cfg(test)]
 mod lib {
-    use crate::Qu;
+    use crate::{Qu, Module};
 
 	#[test]
 	fn fibinachi() {
@@ -604,6 +604,8 @@ mod lib {
 
 	#[test]
 	#[should_panic]
+	/// Panic if an item from another module is accessed without importing that
+	/// item.
 	fn not_imported_panic_2() {
 		let mut qu = Qu::new();
 		let result = qu.run("
@@ -615,10 +617,25 @@ mod lib {
 
 	#[test]
 	#[should_panic]
+	/// Panic if a specific function is imported, but not the module, then that
+	/// function accessed through the module.
 	fn not_imported_panic_3() {
 		let mut qu = Qu::new();
 		let result:i32 = *qu.run_and_get("
-			return foo(1)
+			import math.foo
+			return math.foo(1)
+		").unwrap();
+		dbg!(result);
+	}
+
+
+	#[test]
+	/// Return an imported module.
+	fn return_module() {
+		let mut qu = Qu::new();
+		let result:&Module = qu.run_and_get("
+			import math
+			return math
 		").unwrap();
 		dbg!(result);
 	}
@@ -626,13 +643,11 @@ mod lib {
 
 	#[test]
 	#[should_panic]
-	/// Panic if a specific function is imported, but not the module, then that
-	/// function accessed through the module.
-	fn not_imported_panic_4() {
+	/// Panic when a module is referenced without being imported.
+	fn return_module_panic() {
 		let mut qu = Qu::new();
-		let result:i32 = *qu.run_and_get("
-			import math.foo
-			return math.foo(1)
+		let result:&Module = qu.run_and_get("
+			return math
 		").unwrap();
 		dbg!(result);
 	}
