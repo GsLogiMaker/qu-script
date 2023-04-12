@@ -25,42 +25,8 @@ use core::panic;
 use std::collections::HashMap;
 use std::mem::size_of;
 use std::hash::Hash;
-use std::path::Iter;
 
 // TODO: Fix compiler's documentation
-
-#[derive(Debug, Default, Clone)]
-pub struct GrowingStack {
-	allocated: usize,
-	data: Vec<u8>,
-} impl GrowingStack {
-
-	fn allocate(&mut self, size: usize) -> usize {
-		let index = self.allocated;
-		self.allocated += size;
-		if self.allocated > self.data.len() {
-			self.data.resize(self.allocated, 0);
-		}
-		index
-	}
-
-} impl Stack for GrowingStack {
-	type Indexer = usize;
-
-
-	fn data(&self) -> &Vec<u8> {
-		&self.data
-	}
-
-	fn data_mut(&mut self) -> &mut Vec<u8> {
-		&mut self.data
-	}
-
-	fn offset(&self) -> usize {0}
-
-	fn offset_mut(&mut self) -> &mut usize {todo!()}
-}
-
 
 #[derive(Debug, Clone)]
 pub struct ClassMetadata {
@@ -76,7 +42,38 @@ pub struct ClassMetadata {
 	fn default() -> Self {
 		Self {
 			name: "void".to_owned(),
-			..Default::default()
+			constants_map: Default::default(),
+			external_functions_map: Default::default(),
+			functions_map: Default::default(),
+			id: Default::default(),
+		}
+	}
+}
+
+
+#[derive(Debug, Clone)]
+enum CodeItem<'a> {
+	Class(&'a ClassMetadata),
+	Constant,
+	ExternalFunction(&'a ExternalFunction),
+	ExternalClass(&'a QuStruct),
+	Function(&'a FunctionMetadata),
+	Variable,
+} impl<'a> From<&'a ModuleItem> for CodeItem<'a> {
+	fn from(value: &'a ModuleItem) -> Self {
+		match value {
+			ModuleItem::Class(class_metadata) => {
+				CodeItem::Class(&class_metadata)
+			},
+			ModuleItem::Constant => {
+				CodeItem::Constant
+			},
+			ModuleItem::Function(function_metadata) => {
+				CodeItem::Function(&function_metadata)
+			},
+			ModuleItem::StaticVariable => {
+				CodeItem::Variable
+			},
 		}
 	}
 }
@@ -135,7 +132,7 @@ struct Context {
 		match self.frames.last_mut().unwrap() {
 			ContextFrame::Module(_, frame_data) => {
 				let scope = frame_data.scopes.last_mut().unwrap();
-				scope.define_variable(name.clone(), self.variables.len());
+				scope.define_variable(name.clone(), self.variables.len())?;
 
 				let stack_id = self.allocate(
 					static_type, definitions,
@@ -152,9 +149,8 @@ struct Context {
 				panic!()
 			},
 			ContextFrame::Function(_, frame_data) => {
-				let var_id = self.variables.len();
 				let scope = frame_data.scopes.last_mut().unwrap();
-				scope.define_variable(name.clone(), self.variables.len());
+				scope.define_variable(name.clone(), self.variables.len())?;
 
 				let stack_id = self.allocate(
 					static_type, definitions,
@@ -276,7 +272,7 @@ struct Context {
 
 		let group = &definitions
 			.function_groups[function_group];
-		let some_fn_id = group[identity];
+		let some_fn_id = group.map[identity];
 
 		Ok(some_fn_id)
 	}
@@ -324,6 +320,25 @@ struct Context {
 		};
 
 		has_item
+	}
+
+
+	fn import_function(
+		&mut self,
+		id: FunctionGroupId,
+		alias: Option<String>,
+		definitions: &Definitions,
+	) -> Result<(), QuMsg> {
+		self.frames
+			.last_mut()
+			.unwrap()
+			.get_frame_mut();
+		let scope = self.get_current_context_frame_mut()
+			.get_frame_mut()
+			.get_current_scope_mut();
+		scope.import_function(id, alias, definitions)?;
+
+		Ok(())
 	}
 
 
@@ -460,7 +475,9 @@ pub struct Definitions {
 				class.function_groups_map.insert(
 					name.into(), id,
 				);
-				self.function_groups.push(HashMap::default());
+				let mut group = FunctionGroup::default();
+				group.name = name.clone();
+				self.function_groups.push(group);
 				id
 			}
 		};
@@ -468,9 +485,11 @@ pub struct Definitions {
 			.function_groups[group_id];
 
 		// Add to mappings
-		assert!(!group.contains_key(&signature));
-		group.insert(signature.clone(), SomeFunctionId::External(id)); // TODO: Remove cloning
-		self.get_class_mut(class_id)?.external_functions_map.insert(signature, id);
+		assert!(!group.map.contains_key(&signature));
+		group.map.insert(signature.clone(), SomeFunctionId::External(id)); // TODO: Remove cloning
+		self.get_class_mut(class_id)?
+			.external_functions_map
+			.insert(signature, id);
 		Ok(())
 	}
 
@@ -493,7 +512,9 @@ pub struct Definitions {
 				class.function_groups_map.insert(
 					name.into(), id,
 				);
-				self.function_groups.push(HashMap::default());
+				let mut group = FunctionGroup::default();
+				group.name = name.clone();
+				self.function_groups.push(group);
 				id
 			}
 		};
@@ -501,8 +522,8 @@ pub struct Definitions {
 			.function_groups[group_id];
 
 		// Add to mappings
-		assert!(!group.contains_key(&signature));
-		group.insert(signature.clone(), SomeFunctionId::Qu(id)); // TODO: Remove cloning
+		assert!(!group.map.contains_key(&signature));
+		group.map.insert(signature.clone(), SomeFunctionId::Qu(id)); // TODO: Remove cloning
 		self.get_class_mut(class_id)?.functions_map.insert(signature, id);
 
 		Ok(())
@@ -527,7 +548,9 @@ pub struct Definitions {
 				module.function_groups_map.insert(
 					name.into(), id,
 				);
-				self.function_groups.push(HashMap::default());
+				let mut group = FunctionGroup::default();
+				group.name = name.clone();
+				self.function_groups.push(group);
 				id
 			}
 		};
@@ -535,9 +558,11 @@ pub struct Definitions {
 			.function_groups[group_id];
 
 		// Add to mappings
-		assert!(!group.contains_key(&signature));
-		group.insert(signature.clone(), SomeFunctionId::External(id)); // TODO: Remove cloning
-		self.get_module_mut(module_id)?.external_functions_map.insert(signature, id);
+		assert!(!group.map.contains_key(&signature));
+		group.map.insert(signature.clone(), SomeFunctionId::External(id)); // TODO: Remove cloning
+		self.get_module_mut(module_id)?
+			.external_functions_map
+			.insert(signature, id);
 		Ok(())
 	}
 
@@ -560,7 +585,9 @@ pub struct Definitions {
 				module.function_groups_map.insert(
 					name.into(), id,
 				);
-				self.function_groups.push(HashMap::default());
+				let mut group = FunctionGroup::default();
+				group.name = name.clone();
+				self.function_groups.push(group);
 				id
 			}
 		};
@@ -568,8 +595,8 @@ pub struct Definitions {
 			.function_groups[group_id];
 
 		// Add to module's group mappings
-		assert!(!group.contains_key(&signature));
-		group.insert(signature.clone(), SomeFunctionId::Qu(id)); // TODO: Remove cloning
+		assert!(!group.map.contains_key(&signature));
+		group.map.insert(signature.clone(), SomeFunctionId::Qu(id)); // TODO: Remove cloning
 		// Add to module's function mappings
 		self.get_module_mut(module_id)?.functions_map.insert(signature.clone(), id);// TODO: Remove cloning
 		// Add to class's mappings
@@ -782,6 +809,19 @@ pub struct Definitions {
 				"There's no function with id '{:?}' defined.", id,
 			).into()})?;
 		Ok(function)
+	}
+
+
+	pub fn get_function_group(
+		&self,
+		id: FunctionGroupId,
+	) -> Result<&FunctionGroup, QuMsg> {
+		let group = self.function_groups
+			.get(usize::from(id))
+			.ok_or_else(|| -> QuMsg { format!(
+				"There's no function with id '{:?}' defined.", id,
+			).into()})?;
+		Ok(group)
 	}
 
 
@@ -1120,6 +1160,7 @@ struct FrameData {
 
 #[derive(Debug, Clone)]
 enum FrameImport {
+	Function(FunctionGroupId),
 	Module(ModuleId),
 } impl Default for FrameImport {
 	fn default() -> Self {
@@ -1128,16 +1169,98 @@ enum FrameImport {
 }
 
 
+#[derive(Debug, Default, Clone)]
+pub struct FunctionGroup {
+	map: HashMap<FunctionIdentity, SomeFunctionId>,
+	name: String,
+}
+
+pub type FunctionGroupId = usize;
+
 pub type FunctionId = usize;
 
 
-pub type FunctionGroupId = usize;
+#[derive(Clone, Debug, Default, Eq, Ord)]
+pub struct FunctionIdentity {
+	pub name: String,
+	pub parameters: Vec<ClassId>,
+	pub return_type: ClassId,
+} impl FunctionIdentity {
+	fn id_self_class(&self) -> ClassId {
+		match self.parameters.first() {
+			Some(id) => *id,
+			None => ClassId(0),
+		}
+	}
+} impl Hash for FunctionIdentity {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+        self.parameters.hash(state);
+    }
+} impl PartialEq for FunctionIdentity {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+			&& self.parameters == other.parameters
+    }
+} impl PartialOrd for FunctionIdentity {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match self.name.partial_cmp(&other.name) {
+            Some(core::cmp::Ordering::Equal) => {}
+            ord => return ord,
+        }
+        self.parameters.partial_cmp(&other.parameters)
+    }
+}
+
+
+#[derive(Debug, Default, Clone)]
+pub struct FunctionMetadata {
+	id: FunctionId,
+	pub identity: FunctionIdentity,
+	/// The value that the VM's program counter should be set to in order to
+	/// start this function.
+	pub pc_start: usize,
+}
+
 
 #[derive(Debug, Default, Clone)]
 pub struct FunctionIdentityMap {
 	map: HashMap<String, HashMap<ClassId, Vec<FunctionIdentity>>>,
 } impl FunctionIdentityMap {
 }
+
+
+
+#[derive(Debug, Default, Clone)]
+pub struct GrowingStack {
+	allocated: usize,
+	data: Vec<u8>,
+} impl GrowingStack {
+	fn allocate(&mut self, size: usize) -> usize {
+		let index = self.allocated;
+		self.allocated += size;
+		if self.allocated > self.data.len() {
+			self.data.resize(self.allocated, 0);
+		}
+		index
+	}
+} impl Stack for GrowingStack {
+	type Indexer = usize;
+
+
+	fn data(&self) -> &Vec<u8> {
+		&self.data
+	}
+
+	fn data_mut(&mut self) -> &mut Vec<u8> {
+		&mut self.data
+	}
+
+	fn offset(&self) -> usize {0}
+
+	fn offset_mut(&mut self) -> &mut usize {todo!()}
+}
+
 
 
 pub struct ModuleBuilder<'a>(&'a mut Definitions, ModuleId);
@@ -1168,32 +1291,6 @@ enum ModuleItem {
 	Function(Box<FunctionMetadata>),
 	StaticVariable,
 }
-
-
-#[derive(Debug, Clone)]
-pub enum ItemId {
-	Class(ClassId),
-	Constant(ConstantId),
-	ExternalFunction(ExternalFunctionId),
-	Function(FunctionId),
-	FunctionGroup(FunctionGroupId),
-	Module(ModuleId),
-	StaticVariable(VariableId),
-	Variable(VariableId),
-} impl Default for ItemId {
-	fn default() -> Self {
-		Self::Module(0)
-	}
-} impl From<&ContextFrame> for ItemId {
-    fn from(value: &ContextFrame) -> Self {
-        match value {
-            ContextFrame::Module(id, _) => ItemId::Module(*id),
-            ContextFrame::Class(id, _) => ItemId::Class(*id),
-            ContextFrame::Function(id, _) => ItemId::Function(*id),
-        }
-    }
-}
-
 
 #[derive(Debug, Clone)]
 /// Reresents a Qu module.
@@ -1269,76 +1366,30 @@ pub struct ModuleMetadata {
 }
 
 
+
 #[derive(Debug, Clone)]
-enum CodeItem<'a> {
-	Class(&'a ClassMetadata),
-	Constant,
-	ExternalFunction(&'a ExternalFunction),
-	ExternalClass(&'a QuStruct),
-	Function(&'a FunctionMetadata),
-	Variable,
-} impl<'a> From<&'a ModuleItem> for CodeItem<'a> {
-	fn from(value: &'a ModuleItem) -> Self {
-		match value {
-			ModuleItem::Class(class_metadata) => {
-				CodeItem::Class(&class_metadata)
-			},
-			ModuleItem::Constant => {
-				CodeItem::Constant
-			},
-			ModuleItem::Function(function_metadata) => {
-				CodeItem::Function(&function_metadata)
-			},
-			ModuleItem::StaticVariable => {
-				CodeItem::Variable
-			},
-		}
+pub enum ItemId {
+	Class(ClassId),
+	Constant(ConstantId),
+	ExternalFunction(ExternalFunctionId),
+	Function(FunctionId),
+	FunctionGroup(FunctionGroupId),
+	Module(ModuleId),
+	StaticVariable(VariableId),
+	Variable(VariableId),
+} impl Default for ItemId {
+	fn default() -> Self {
+		Self::Module(0)
 	}
-}
-
-
-#[derive(Clone, Debug, Default, Eq, Ord)]
-pub struct FunctionIdentity {
-	pub name: String,
-	pub parameters: Vec<ClassId>,
-	pub return_type: ClassId,
-} impl FunctionIdentity {
-	fn id_self_class(&self) -> ClassId {
-		match self.parameters.first() {
-			Some(id) => *id,
-			None => ClassId(0),
-		}
-	}
-} impl Hash for FunctionIdentity {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.name.hash(state);
-        self.parameters.hash(state);
-    }
-} impl PartialEq for FunctionIdentity {
-    fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
-			&& self.parameters == other.parameters
-    }
-} impl PartialOrd for FunctionIdentity {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        match self.name.partial_cmp(&other.name) {
-            Some(core::cmp::Ordering::Equal) => {}
-            ord => return ord,
+} impl From<&ContextFrame> for ItemId {
+    fn from(value: &ContextFrame) -> Self {
+        match value {
+            ContextFrame::Module(id, _) => ItemId::Module(*id),
+            ContextFrame::Class(id, _) => ItemId::Class(*id),
+            ContextFrame::Function(id, _) => ItemId::Function(*id),
         }
-        self.parameters.partial_cmp(&other.parameters)
     }
 }
-
-
-#[derive(Debug, Default, Clone)]
-pub struct FunctionMetadata {
-	id: FunctionId,
-	pub identity: FunctionIdentity,
-	/// The value that the VM's program counter should be set to in order to
-	/// start this function.
-	pub pc_start: usize,
-}
-
 
 #[derive(Debug, Default, Clone)]
 struct Scope {
@@ -1380,6 +1431,30 @@ struct Scope {
 	}
 
 
+	fn import_function(
+		&mut self,
+		id: FunctionGroupId,
+		alias: Option<String>,
+		definitions: &Definitions
+	) -> Result<(), QuMsg>{
+		let name = match alias {
+			Some(name) => name,
+			None => {
+				let group = definitions
+					.get_function_group(id)?;
+				group.name.clone()
+			},
+		};
+
+		self.definitions_map.insert(
+			name,
+			ItemId::FunctionGroup(id),
+		);
+
+		Ok(())
+	}
+
+
 	fn import_module(
 		&mut self,
 		module_id: ModuleId,
@@ -1403,9 +1478,6 @@ struct Scope {
 		Ok(())
 	}
 }
-
-
-pub type FunctionGroup = HashMap<FunctionIdentity, SomeFunctionId>;
 
 
 #[derive(Debug, Clone, Copy)]
@@ -1515,7 +1587,7 @@ pub struct QuCompiler {
 		let group = &definitions
 			.function_groups[function_group];
 		
-		let some_id = group.get(&function_identity)
+		let some_id = group.map.get(&function_identity)
 			.ok_or_else(|| -> QuMsg { format!(
 				"No function with that signature. TODO",
 			).into() })?;
@@ -2023,6 +2095,7 @@ pub struct QuCompiler {
 						&function_identity.name
 					)?;
 					*definitions.function_groups[fn_group]
+						.map
 						.get(&function_identity)
 						.unwrap() // TODO: Handle none
 				},
@@ -2032,6 +2105,7 @@ pub struct QuCompiler {
 						&function_identity.name
 					)?;
 					*definitions.function_groups[fn_group]
+						.map
 						.get(&function_identity)
 						.unwrap() // TODO: Handle none
 				},
@@ -2160,19 +2234,95 @@ pub struct QuCompiler {
 		import: &Import,
 		definitions: &mut Definitions,
 	) -> Result<QuAsmBuilder, QuMsg> {
-		match &import.identity_path {
-			Identity::Single(identity) => {
-				let module_id = definitions.get_module_id(
-					&identity.slice,
-				).unwrap();
+		let next_index= |
+			item: ItemId,
+			indexer: &str,
+			definitions: &Definitions,
+		| -> Result<ItemId, QuMsg> {
+			Ok(match item {
+				ItemId::Class(id) => {
+					definitions
+						.get_class(id)?
+						.get_item_id(indexer)?
+				},
+				ItemId::Constant(_) => todo!(),
+				ItemId::ExternalFunction(_) => todo!(),
+				ItemId::Function(_) => todo!(),
+				ItemId::FunctionGroup(_) => todo!(),
+				ItemId::Module(id) => {
+					definitions
+						.get_module(id)?
+						.get_item_id(indexer)?
+				},
+				ItemId::StaticVariable(_) => todo!(),
+				ItemId::Variable(_) => todo!(),
+			})
+		};
 
-				self.context.import_module(
-					module_id,
+		let mut identity = &import.identity_path;
+		let mut item:Option<ItemId> = None;
+		loop {
+			match identity {
+				Identity::Single(token) => {
+					if item.is_none() {
+						// First iteration
+						let module_id = definitions.get_module_id(
+							&token.slice,
+						).unwrap();
+						item = Some(ItemId::Module(module_id));
+						break;
+					}
+
+					item = Some(next_index(
+						item.unwrap(),
+						&token.slice,
+						&definitions
+					)?);
+
+					break;
+				},
+				Identity::Index(index) => {
+					if item.is_none() {
+						// First iteration
+						let module_id = definitions.get_module_id(
+							&index.left.slice,
+						).unwrap();
+						item = Some(ItemId::Module(module_id));
+						identity = &index.right;
+						continue;
+					}
+
+					item = Some(next_index(
+						item.unwrap(),
+						&index.left.slice,
+						&definitions
+					)?);
+					identity = &index.right;
+				},
+			}
+		}
+
+		match item.unwrap() {
+			ItemId::Class(_) => todo!(),
+			ItemId::Constant(_) => todo!(),
+			ItemId::ExternalFunction(_) => todo!(),
+			ItemId::Function(_) => todo!(),
+			ItemId::FunctionGroup(id) => {
+				self.context.import_function(
+					id,
 					None,
 					definitions
 				)?;
 			},
-			Identity::Index(_) => todo!(),
+			ItemId::Module(id) => {
+				self.context.import_module(
+					id,
+					None,
+					definitions
+				)?;
+			},
+			ItemId::StaticVariable(_) => todo!(),
+			ItemId::Variable(_) => todo!(),
 		}
 
 		Ok(QuAsmBuilder::new())

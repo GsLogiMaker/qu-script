@@ -570,6 +570,29 @@ mod lib {
 
 
 	#[test]
+	fn import_2() {
+		let mut qu = Qu::new();
+		let result:i32 = *qu.run_and_get("
+			import math.foo
+			return foo(3)
+		").unwrap();
+		assert_eq!(result, 3);
+	}
+
+
+	#[test]
+	fn import_3() {
+		let mut qu = Qu::new();
+		let result:i32 = *qu.run_and_get("
+			import math
+			import math.foo
+			return math.foo(3) + foo(3)
+		").unwrap();
+		assert_eq!(result, 3+3);
+	}
+
+
+	#[test]
 	#[should_panic]
 	fn not_imported_panic() {
 		let mut qu = Qu::new();
@@ -585,6 +608,31 @@ mod lib {
 		let mut qu = Qu::new();
 		let result = qu.run("
 			return foo(3)
+		").unwrap();
+		dbg!(result);
+	}
+
+
+	#[test]
+	#[should_panic]
+	fn not_imported_panic_3() {
+		let mut qu = Qu::new();
+		let result:i32 = *qu.run_and_get("
+			return foo(1)
+		").unwrap();
+		dbg!(result);
+	}
+
+
+	#[test]
+	#[should_panic]
+	/// Panic if a specific function is imported, but not the module, then that
+	/// function accessed through the module.
+	fn not_imported_panic_4() {
+		let mut qu = Qu::new();
+		let result:i32 = *qu.run_and_get("
+			import math.foo
+			return math.foo(1)
 		").unwrap();
 		dbg!(result);
 	}
