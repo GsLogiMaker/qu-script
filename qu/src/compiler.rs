@@ -203,31 +203,41 @@ struct Context {
 		}
 		
 
-		let item = match self.get_current_context_frame() {
-			ContextFrame::Module(module_id, _) => {
-				let module = definitions.get_module(
-					*module_id
-				)?;
-				let item = if !module.has_item(identity) {
-					None
-				} else {
-					Some(module.get_item_id(identity)?)
-				};
-				item
-			},
-			ContextFrame::Class(class_id, _) => {
-				let class = definitions.get_class(*class_id)?;
-				let item = if !class.has_item(identity) {
-					None
-				} else {
-					Some(class.get_item_id(identity)?)
-				};
-				item
-				
-			},
-			ContextFrame::Function(function_id, _) => {
-				todo!();
-			},
+		let item = 'frames: {
+			for frame in self.frames.iter().rev() {
+				match frame {
+					ContextFrame::Module(module_id, _) => {
+						let module = definitions.get_module(
+							*module_id
+						)?;
+						let item = if
+							!module.has_item(identity)
+						{
+							None
+						} else {
+							Some(module.get_item_id(identity)?)
+						};
+						break 'frames item;
+					},
+					ContextFrame::Class(class_id, _) => {
+						let class = definitions
+							.get_class(*class_id)?;
+						let item = if
+							!class.has_item(identity)
+						{
+							None
+						} else {
+							Some(class.get_item_id(identity)?)
+						};
+						break 'frames item;
+					},
+					ContextFrame::Function(function_id, _) => {
+						continue;
+					},
+				}
+			}
+
+			None
 		};
 
 		let Some(item) = item else {
@@ -297,29 +307,52 @@ struct Context {
 		let scope = self.get_current_context_frame()
 			.get_frame()
 			.get_current_scope();
-		if let Some(var_id) = scope.find_item(identity) {
+		if let Some(_) = scope.find_item(identity) {
 			return true;
 		}
 
-		let has_item = match self.get_current_context_frame() {
-			ContextFrame::Module(module_id, _) => {
-				let module = definitions
-					.get_module(*module_id)
-					.unwrap();
-				module.has_item(identity)
-			},
-			ContextFrame::Class(class_id, _) => {
-				let class = definitions
-					.get_class(*class_id)
-					.unwrap();
-				class.has_item(identity)
-			},
-			ContextFrame::Function(function_id, _) => {
-				todo!();
-			},
+		let has_item = 'frames: {
+			for frame in self.frames.iter().rev() {
+				match frame {
+					ContextFrame::Module(module_id, _) => {
+						let Ok(module) = definitions
+							.get_module(*module_id) else { return false };
+						break 'frames module.has_item(identity);
+					},
+					ContextFrame::Class(class_id, _) => {
+						let Ok(class) = definitions
+							.get_class(*class_id) else { return false };
+						break 'frames class.has_item(identity);
+					},
+					ContextFrame::Function(_, _) => {
+						continue;
+					},
+				}
+			}
+
+			false
 		};
 
 		has_item
+	}
+
+
+	fn import_class(
+		&mut self,
+		id: ClassId,
+		alias: Option<String>,
+		definitions: &Definitions,
+	) -> Result<(), QuMsg> {
+		self.frames
+			.last_mut()
+			.unwrap()
+			.get_frame_mut();
+		let scope = self.get_current_context_frame_mut()
+			.get_frame_mut()
+			.get_current_scope_mut();
+		scope.import_class(id, alias, definitions)?;
+
+		Ok(())
 	}
 
 
@@ -1158,17 +1191,6 @@ struct FrameData {
 }
 
 
-#[derive(Debug, Clone)]
-enum FrameImport {
-	Function(FunctionGroupId),
-	Module(ModuleId),
-} impl Default for FrameImport {
-	fn default() -> Self {
-		unimplemented!()
-	}
-}
-
-
 #[derive(Debug, Default, Clone)]
 pub struct FunctionGroup {
 	map: HashMap<FunctionIdentity, SomeFunctionId>,
@@ -1431,6 +1453,30 @@ struct Scope {
 	}
 
 
+	fn import_class(
+		&mut self,
+		id: ClassId,
+		alias: Option<String>,
+		definitions: &Definitions
+	) -> Result<(), QuMsg>{
+		let name = match alias {
+			Some(name) => name,
+			None => {
+				let data = definitions
+					.get_class(id)?;
+				data.name.clone()
+			},
+		};
+
+		self.definitions_map.insert(
+			name,
+			ItemId::Class(id),
+		);
+
+		Ok(())
+	}
+
+
 	fn import_function(
 		&mut self,
 		id: FunctionGroupId,
@@ -1553,7 +1599,7 @@ pub struct QuCompiler {
 				if caller_id != definitions.class_id::<Module>()?
 					&& caller_id != definitions.class_id::<Class>()?
 				{
-					parameters.push(caller_id);parameters.push(caller_id);
+					parameters.push(caller_id);
 				}
 			}
 			// Add other parameters
@@ -2300,7 +2346,13 @@ pub struct QuCompiler {
 		}
 
 		match item.unwrap() {
-			ItemId::Class(_) => todo!(),
+			ItemId::Class(id) => {
+				self.context.import_class(
+					id,
+					None,
+					definitions
+				)?;
+			},
 			ItemId::Constant(_) => todo!(),
 			ItemId::ExternalFunction(_) => todo!(),
 			ItemId::Function(_) => todo!(),
@@ -2565,11 +2617,16 @@ pub struct QuCompiler {
 					definitions,
 				)?;
 			}
-			// self.context.import_module(
-			// 	base_id,
-			// 	None,
-			// 	definitions,
-			// )?;
+			for 
+				class_id
+				in base_module.class_map.values()
+			{
+				self.context.import_class(
+					*class_id,
+					None,
+					definitions,
+				)?;
+			}
 		}
 		self.prepass(&code_block, definitions)?;
 		let compiled = self.compile_code(&code_block, definitions)?;
