@@ -1778,9 +1778,6 @@ pub struct QuCompiler {
 	)-> Result<QuAsmBuilder, QuMsg> {
 		// TODO: reimplment without copying
 		let call_expression = CallExpression {
-			caller: Some(Expression::Var(Box::new( VarExpression {
-				name: "__base__".into()
-			} ))),
 			name: QuOperator::from(operator.slice.as_str()).name().into(),
 			parameters: TupleExpression {elements: vec![left.clone(), right.clone()]},
 			..Default::default()
@@ -2546,8 +2543,6 @@ pub struct QuCompiler {
 	) -> Result<Vec<QuOp>, QuMsg> {
 		let mut p = QuParser::new();
 		let code_block = p.parse(code)?;
-
-		
 		
 		let base_id = *definitions.module_map
 			.get(BASE_MODULE)
@@ -2557,11 +2552,25 @@ pub struct QuCompiler {
 			.unwrap();
 
 		self.context.open_frame(ContextFrame::module(main_id));
-		self.context.import_module(
-			base_id,
-			None,
-			definitions,
-		)?;
+		{
+			// Import base module
+			let base_module = definitions.get_module(base_id)?;
+			for 
+				fn_group_id
+				in base_module.function_groups_map.values()
+			{
+				self.context.import_function(
+					*fn_group_id,
+					None,
+					definitions,
+				)?;
+			}
+			// self.context.import_module(
+			// 	base_id,
+			// 	None,
+			// 	definitions,
+			// )?;
+		}
 		self.prepass(&code_block, definitions)?;
 		let compiled = self.compile_code(&code_block, definitions)?;
 		self.context.close_frame();
