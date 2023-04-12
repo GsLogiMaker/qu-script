@@ -186,13 +186,26 @@ struct Context {
 		identity: &str,
 		definitions: &Definitions,
 	) -> Result<ItemId, QuMsg> {
+		self.find_item_filtered(identity, &|_| {true}, definitions)
+	}
+
+
+	fn find_item_filtered(
+		&self,
+		identity: &str,
+		filter: &dyn Fn(ItemId) -> bool,
+		definitions: &Definitions,
+	) -> Result<ItemId, QuMsg> {
 		let item = 'scopes: {
 			for frame in self.frames.iter().rev() {
 				let frame_data = frame.get_frame();
 				for scope in frame_data.scopes.iter().rev() {
-					let item = scope.find_item(identity);
-					if let Some(_) = item {
-						break 'scopes item 
+					let item_opt = scope
+						.find_item(identity);
+					if let Some(item) = item_opt {
+						if filter(item) {
+							break 'scopes Some(item);
+						}
 					}
 				}
 			}
@@ -210,26 +223,36 @@ struct Context {
 						let module = definitions.get_module(
 							*module_id
 						)?;
-						let item = if
+						let item_opt = if
 							!module.has_item(identity)
 						{
 							None
 						} else {
 							Some(module.get_item_id(identity)?)
 						};
-						break 'frames item;
+
+						if let Some(item) = item_opt {
+							if filter(item) {
+								break 'frames Some(item);
+							}
+						}
 					},
 					ContextFrame::Class(class_id, _) => {
 						let class = definitions
 							.get_class(*class_id)?;
-						let item = if
+						let item_opt = if
 							!class.has_item(identity)
 						{
 							None
 						} else {
 							Some(class.get_item_id(identity)?)
 						};
-						break 'frames item;
+
+						if let Some(item) = item_opt {
+							if filter(item) {
+								break 'frames Some(item);
+							}
+						}
 					},
 					ContextFrame::Function(function_id, _) => {
 						continue;
@@ -250,7 +273,6 @@ struct Context {
 		Ok(item)
 	}
 
-
 	fn get_current_context_frame(&self) -> &ContextFrame {
 		self.frames
 			.last()
@@ -270,8 +292,17 @@ struct Context {
 		identity: &FunctionIdentity,
 		definitions: &Definitions,
 	) -> Result<SomeFunctionId, QuMsg> {
-		let item = self.find_item(
+		let item = self.find_item_filtered(
 			&identity.name,
+			&|item| {
+				let ItemId::FunctionGroup(id) = item else {
+					return false;
+				};
+				let group = definitions
+					.get_function_group(id)
+					.unwrap();
+				group.map.contains_key(identity)
+			},
 			definitions,
 		)?;
 		let ItemId::FunctionGroup(function_group) = item else {
@@ -1389,7 +1420,7 @@ pub struct ModuleMetadata {
 
 
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum ItemId {
 	Class(ClassId),
 	Constant(ConstantId),
@@ -2130,7 +2161,11 @@ pub struct QuCompiler {
 				.as_ref()
 				.unwrap()
 				.into_identity();
-			let item = self.context.find_item(identity, definitions)?;
+			let item = self.context.find_item(
+				identity,
+				definitions,
+			)?;
+
 			match item {
 				ItemId::Class(id) => {
 					let class = definitions.get_class(id)?;
