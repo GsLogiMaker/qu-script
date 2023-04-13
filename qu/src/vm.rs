@@ -1,10 +1,12 @@
 
 use std::fmt::Debug;
 use std::mem::size_of;
+use std::rc::Rc;
 
 use crate::Class;
 use crate::Module;
 use crate::QuMsg;
+use crate::QuRegisterStruct;
 use crate::QuVoid;
 use crate::Vector2;
 use crate::compiler::Definitions;
@@ -15,22 +17,26 @@ use crate::import::ClassId;
 pub const BASE_MODULE:&str = "__base__";
 pub const MAIN_MODULE:&str = "__main__";
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Literal {
+	Int(i32),
+	Float(f32),
+	Bool(bool),
+}
+
+
 pub type QuExtFn = &'static dyn Fn(
 	&mut QuVm,
-	&[QuStackId],
-	QuStackId,
-	)->Result<(), QuMsg>;
-pub type QuVoidExtFn = &'static dyn Fn(
-	&mut QuVm,
-	&Vec<QuStackId>,
+	&[VmStackPointer],
+	VmStackPointer,
 	)->Result<(), QuMsg>;
 
 
 #[derive(Clone, PartialEq)]
 /// The low level operations of [`QuVm`].
 pub enum QuOp {
-	Call(FunctionId, QuStackId),
-	CallExt(ExternalFunctionId, Vec<QuStackId>, QuStackId),
+	Call(FunctionId, VmStackPointer),
+	CallExt(ExternalFunctionId, VmStackPointers, VmStackPointer),
 	// Fn name, fn body length.
 	DefineFn(FunctionId, usize),
 	End,
@@ -39,34 +45,37 @@ pub enum QuOp {
 	/// Moves the program counter by the given [`isize`] if the last expression
 	/// was false.
 	JumpByIfNot(isize),
-	/// Loads an [`isize`] into the stack. Takes the value being loaded and the
-	/// stack id where it will bestored.
-	Value(isize, QuStackId),
+	Literal(Literal, VmStackPointer),
+	/// Loads a value of type [`ClassId`] into the stack. Takes the value being
+	/// loaded and the stack id where it will bestored.
+	Value(ClassId, VmStackPointer),
 	/// Specifies to the Vm what class can be retrieved from the API.
 	Return(ClassId),
 } impl Debug for QuOp {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		match self {
-			Self::Call(arg0, arg1) =>
+			QuOp::Call(arg0, arg1) =>
 				write!(f, "Call({:?}, {:?})", arg0, arg1),
-			Self::CallExt(
+			QuOp::CallExt(
 				arg0,
 				arg1,
 				arg2
 			) =>
 				write!(f, "CallExt({:?}, {:?}, {:?})", arg0, arg1, arg2),
-			Self::DefineFn(arg0, arg1) => 
+			QuOp::DefineFn(arg0, arg1) => 
 				write!(f, "DefineFn({:?}, {:?})", arg0, arg1),
-			Self::End =>
+			QuOp::End =>
 				write!(f, "End"),
-			Self::JumpBy(arg0) =>
+			QuOp::JumpBy(arg0) =>
 				write!(f, "JumpBy({:?})", arg0),
-			Self::JumpByIfNot(arg0) =>
+			QuOp::JumpByIfNot(arg0) =>
 			write!(f, "JumpByIfNot({:?})", arg0),
-			Self::Value(arg0, arg1) =>
+			QuOp::Value(arg0, arg1) =>
 				write!(f, "Value({:?}, {:?})", arg0, arg1),
-			Self::Return(arg0) =>
+			QuOp::Return(arg0) =>
 				write!(f, "Return({:?})", arg0),
+    		QuOp::Literal(arg0, arg1) =>
+				write!(f, "Literal({:?}, {:?})", arg0, arg1),
 		}
 	}
 }
@@ -262,8 +271,8 @@ pub struct QuVm {
 	fn external_call_by_id(
 		&mut self,
 		fn_id: ExternalFunctionId,
-		parameters: &Vec<QuStackId>,
-		output_id: QuStackId,
+		parameters: &Vec<VmStackPointer>,
+		output_id: VmStackPointer,
 	) -> Result<(), QuMsg> {
 		Ok((self.definitions.get_external_function(fn_id)?.pointer)(
 			self,
@@ -314,7 +323,7 @@ pub struct QuVm {
 	fn op_call_fn(
 		&mut self,
 		fn_id: usize,
-		ouput: QuStackId,
+		ouput: VmStackPointer,
 		code: &[QuOp],
 	) -> Result<(), QuMsg> {
 		*self.stack.offset_mut() += usize::from(ouput);
@@ -340,8 +349,8 @@ pub struct QuVm {
 	fn op_call_fn_ext(
 		&mut self,
 		func: ExternalFunctionId,
-		args: &Vec<QuStackId>,
-		output: QuStackId,
+		args: &Vec<VmStackPointer>,
+		output: VmStackPointer,
 	) -> Result<(), QuMsg> {
 		self.external_call_by_id(
 			func,
@@ -388,43 +397,38 @@ pub struct QuVm {
 	}
 
 
-	fn op_load_int(&mut self, value:isize, output:QuStackId) {
+	fn op_literal(&mut self, literal: Literal, output: VmStackPointer) {
+		match literal {
+			Literal::Int(value) => self.write(output, value),
+			Literal::Float(value) => self.write(output, value),
+			Literal::Bool(value) => self.write(output, value),
+		}
+	}
+
+
+	fn op_load_int(
+		&mut self,
+		class: ClassId,
+		output: VmStackPointer,
+	) {
 		// TODO: Make function signature i32
-		self.write(output, value as i32);
+		unimplemented!();
+		// self.write(output, value as i32);
 	}
 
 
 	#[inline]
 	/// Gets a register value.
-	pub fn read<T>(&self, at_reg:QuStackId) -> Result<&T, QuMsg> {
-		let struct_data = self.definitions
-			.get_class(at_reg.class_id())?;
-		if size_of::<T>() != struct_data.size as usize {
-			return Err("Can't get register. Mismatched types. TODO: Better msg".into());
-		}
-
+	pub fn read<T>(&self, at_reg:VmStackPointer) -> Result<&T, QuMsg> {
 		let got = self.stack.read(at_reg);
 		Ok(got)
 	}
 
 
 	#[inline]
-	/// Gets a register value.
-	pub fn reg_get_mut<T>(&mut self, at_reg:QuStackId) -> Result<&mut T, QuMsg> {
-		let struct_data = self.definitions
-			.get_class(at_reg.class_id())?;
-		// TODO: Add check if casting to right struct
-		assert_eq!(size_of::<T>(), struct_data.size as usize);
-
-		let got = self.stack.read_mut(at_reg.into());
-		Ok(got)
-	}
-
-
-	#[inline]
 	/// Sets a register value.
-	pub fn write<T>(&mut self, id:QuStackId, value:T) {
-		return self.stack.write(id.into(), value);
+	pub fn write<T>(&mut self, id:VmStackPointer, value:T) {
+		return self.stack.write(id, value);
 	}
 
 
@@ -528,13 +532,14 @@ pub struct QuVm {
 		}
 		match op {
 			QuOp::Call(fn_id, ouput) => self.op_call_fn(*fn_id, *ouput, instructions)?,
-			QuOp::CallExt(fn_id, args, output) => self.op_call_fn_ext(*fn_id, args, *output)?,
+			QuOp::CallExt(fn_id, args, output) => self.op_call_fn_ext(*fn_id, args.into(), *output)?,
 			QuOp::End => self.frame_end()?,
 			QuOp::DefineFn(fn_id, length) => self.op_define_fn(*fn_id, *length),
 			QuOp::JumpByIfNot(by) => self.op_jump_by_if_not(*by),
 			QuOp::JumpBy(by) => self.op_jump_by(*by),
 			QuOp::Value(value, output) => self.op_load_int(*value, *output),
 			QuOp::Return(return_type) => self.return_type = *return_type,
+    		QuOp::Literal(literal, output) => self.op_literal(*literal, *output),
 		};
 		return Ok(());
 	}
@@ -563,6 +568,22 @@ pub struct QuVm {
 }
 
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+/// Note: The safety of this pointer relies on the VM's memory nevery moving.
+pub struct VmHeapPointer {
+	ptr: *mut[u8],
+}
+
+
+#[derive(Debug, Clone)]
+pub struct VmRc {
+	rc: Rc<dyn VmRcTrait>,
+}
+
+
+trait VmRcTrait: QuRegisterStruct + Debug {}
+
+
 #[derive(Debug, Default, Clone)]
 struct VmStack {
 	data: Vec<u8>,
@@ -574,7 +595,7 @@ struct VmStack {
 		stack
 	}
 } impl Stack for VmStack {
-	type Indexer = QuStackId;
+	type Indexer = VmStackPointer;
 
 
 	fn data(&self) -> &Vec<u8> {
@@ -594,6 +615,51 @@ struct VmStack {
 
 	fn offset_mut(&mut self) -> &mut usize {
 		&mut self.offset
+	}
+}
+
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+/// Note: The safety of this pointer relies on the VM's memory nevery moving.
+pub struct VmStackPointer {
+	offset: usize,
+} impl From<usize> for VmStackPointer {
+	fn from(offset: usize) -> Self {
+		VmStackPointer { offset }
+	}
+} impl From<QuStackId> for VmStackPointer {
+	fn from(value: QuStackId) -> Self {
+		VmStackPointer { offset: value.0 }
+	}
+}
+
+impl From<VmStackPointer> for usize {
+	fn from(value: VmStackPointer) -> Self {
+		value.offset
+	}
+}
+
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VmStackPointers {
+	pointers: Vec<VmStackPointer>,
+} impl From<Vec<QuStackId>> for VmStackPointers {
+    fn from(value: Vec<QuStackId>) -> Self {
+        VmStackPointers {
+			pointers: value.iter()
+				.map(|x|{(*x).into()})
+				.collect()
+		}
+    }
+}
+
+impl From<VmStackPointers> for Vec<VmStackPointer> {
+	fn from(value: VmStackPointers) -> Self {
+		value.pointers
+	}
+} impl<'a> From<&'a VmStackPointers> for &'a Vec<VmStackPointer> {
+	fn from(value: &'a VmStackPointers) -> &'a Vec<VmStackPointer> {
+		&value.pointers
 	}
 }
 

@@ -7,8 +7,8 @@ use crate::QuMsg;
 use crate::compiler::ModuleId;
 use crate::import::ClassId;
 use crate::vm::QuExtFn;
-use crate::vm::QuVoidExtFn;
 use crate::vm::QuStackId;
+use crate::vm::VmStackPointer;
 use std::fmt::Debug;
 
 
@@ -28,9 +28,6 @@ macro_rules! qufn {
 
 /// Data for an external function.
 pub type QuExtFnData = (String, QuExtFn, Vec<usize>, usize);
-
-/// Data for a void external function.
-pub type QuVoidFnForm = (String, QuVoidExtFn, Vec<usize>);
 
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -74,7 +71,10 @@ pub struct ExternalFunction {
 
 
 	pub fn call(
-		&self, vm:&mut QuVm, parameters: &Vec<QuStackId>, output_id: QuStackId,
+		&self,
+		vm:&mut QuVm,
+		parameters: &Vec<VmStackPointer>,
+		output_id: VmStackPointer,
 	) -> Result<(), QuMsg> {
 		(self.pointer)(vm, parameters, output_id)
 	}
@@ -343,7 +343,7 @@ pub trait QuRegisterStruct {
 
 
 	/// Returns the name that identifies the struct being registered.
-	fn name() -> &'static str;
+	fn name() -> &'static str where Self: Sized;
 
 }
 

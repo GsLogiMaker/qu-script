@@ -49,6 +49,7 @@ pub use parser::QuParser;
 pub use vm::QuOp;
 pub use vm::QuVm;
 pub use vm::QuStackId;
+use vm::VmStackPointer;
 
 
 /// The interface for the Qu programming language.
@@ -136,7 +137,7 @@ pub struct Qu<'a> {
 
 
 	pub fn read<'b, T:'a>(
-		&self, at_reg:QuStackId
+		&self, at_reg: VmStackPointer,
 	) -> Result<&T, QuMsg> {
 		self.vm.read::<T>(at_reg)
 	}
@@ -173,7 +174,7 @@ pub struct Qu<'a> {
 		self.run(script)?;
 		let return_id = self.vm.return_value_id();
 		self.read(
-			QuStackId::new(0, return_id)
+			0.into()
 		)
 	}
 

@@ -18,8 +18,10 @@ use crate::parser::parsed::*;
 use crate::QuMsg;
 use crate::QuToken;
 use crate::vm::BASE_MODULE;
+use crate::vm::Literal;
 use crate::vm::MAIN_MODULE;
 use crate::vm::Stack;
+use crate::vm::VmStackPointer;
 
 use core::panic;
 use std::collections::HashMap;
@@ -1723,8 +1725,8 @@ pub struct QuCompiler {
 		let mut b = QuAsmBuilder::new();
 		b.add_op(QuOp::CallExt(
 			definitions.get_external_function_id_by_identity(identity)?,
-			vec![from],
-			to,
+			vec![from.into()].into(),
+			to.into(),
 		));
 		b.return_type = to.class_id();
 
@@ -1881,12 +1883,12 @@ pub struct QuCompiler {
 	) -> Result<QuAsmBuilder, QuMsg> {
 		// TODO: Support other int sizes
 		
-		let Ok(val) = value.slice.parse::<isize>() else {
+		let Ok(val) = value.slice.parse::<i32>() else {
 			panic!("Could not convert text '{}' to number!", value.slice);
 		};
 
 		let mut b = QuAsmBuilder::new();
-		b.add_op(Value(val, output_reg));
+		b.add_op(Literal(Literal::Int(val), output_reg.into()));
 		b.return_type = definitions.class_id::<i32>()?;
 
 		return Ok(b);
@@ -2200,13 +2202,13 @@ pub struct QuCompiler {
 		// Compile the function call
 		match id {
 			SomeFunctionId::Qu(function_id) => {
-				builder.add_op(QuOp::Call(function_id, store_to));
+				builder.add_op(QuOp::Call(function_id, store_to.into()));
 			},
 			SomeFunctionId::External(external_function_id) => {
 				builder.add_op(QuOp::CallExt(
 					external_function_id,
-					parameter_ids,
-					store_to
+					parameter_ids.into(),
+					store_to.into(),
 				));
 			},
 		}
@@ -2602,7 +2604,7 @@ pub struct QuCompiler {
 			None => {
 				// No default value, compile fallback to zero
 				let mut code = QuAsmBuilder::new();
-				code.add_op(Value(0, var_stack_id));
+				code.add_op(Literal(Literal::Int(0), var_stack_id.into()));
 				Ok(code)
 			},
 		};
