@@ -43,12 +43,12 @@ use std::marker::PhantomData;
 use tokens::TOKEN_TYPE_NAME;
 use tokens::QuToken;
 pub use errors::QuMsg;
-pub use compiler::QuCompiler;
-pub use objects::*;
-pub use parser::QuParser;
-pub use vm::QuOp;
-pub use vm::QuVm;
-pub use vm::QuStackId;
+use compiler::QuCompiler;
+use objects::*;
+use parser::QuParser;
+use vm::QuOp;
+use vm::QuVm;
+use vm::QuStackId;
 use vm::VmStackPointer;
 
 
@@ -160,7 +160,7 @@ pub struct Qu<'a> {
 	/// # fn example() -> Result<(), QuMsg> {
 	/// let mut qu = Qu::new();
 	/// 
-	/// qu.run("var count = 5 + 6")?;
+	/// qu.run("var count int = 5 + 6")?;
 	/// # return Ok(());
 	/// # }
 	/// ```
@@ -399,7 +399,7 @@ mod lib {
 			
 			fn grow(item int, times int) int:
 				return item * times
-			
+
 			return grow(2) + grow(3, 3)
 		"#;
 
@@ -651,5 +651,35 @@ mod lib {
 			return math
 		").unwrap();
 		dbg!(result);
+	}
+
+
+	#[test]
+	fn call_class_constructor() {
+		let mut qu = Qu::new();
+		let result:i32 = *qu.run_and_get("
+			return int()
+		").unwrap();
+		assert_eq!(result, 0);
+	}
+
+
+	#[test]
+	fn call_class_constructor_2() {
+		let mut qu = Qu::new();
+		let result:i32 = *qu.run_and_get("
+			return int(5).add(1)
+		").unwrap();
+		assert_eq!(result, 5+1);
+	}
+
+
+	#[test]
+	fn call_class_constructor_3() {
+		let mut qu = Qu::new();
+		let result:i32 = *qu.run_and_get("
+			return int(1 == 1)
+		").unwrap();
+		assert_eq!(result, 1);
 	}
 }

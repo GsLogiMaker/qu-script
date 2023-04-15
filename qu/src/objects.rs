@@ -4,6 +4,7 @@
 
 use crate::QuVm;
 use crate::QuMsg;
+use crate::compiler::FunctionGroupId;
 use crate::compiler::ModuleId;
 use crate::import::ClassId;
 use crate::vm::QuExtFn;
@@ -34,7 +35,16 @@ pub type QuExtFnData = (String, QuExtFn, Vec<usize>, usize);
 pub struct Class {
 	id: ClassId,
 } impl QuRegisterStruct for Class {
-	fn register_fns() -> Vec<ExternalFunction> where Self: Sized {
+	fn new(
+		vm: &mut QuVm,
+		args: &[VmStackPointer],
+		output: VmStackPointer,
+	) -> Result<(), QuMsg> where Self: Sized {
+		Err(format!("Type 'class' cannot be instantiated.").into())
+	}
+
+
+	fn register_functions() -> Vec<ExternalFunction> where Self: Sized {
 		vec![
 			qufn!(copy(Self) Self |vm, args, return_id| {
 				vm.write(return_id, *vm.read::<Class>(args[0])?);
@@ -96,6 +106,29 @@ pub struct ExternalFunction {
 }
 
 
+#[derive(Debug, Default, Clone, Copy)]
+pub struct FunctionGroup {
+	id: FunctionGroupId,
+} impl QuRegisterStruct for FunctionGroup {
+	fn new(
+		vm: &mut QuVm,
+		args: &[VmStackPointer],
+		output: VmStackPointer,
+	) -> Result<(), QuMsg> where Self: Sized {
+		Err(format!("Type 'FunctionGroup' cannot be instantiated.").into())
+	}
+
+
+	fn register_functions() -> Vec<ExternalFunction> where Self: Sized {
+		vec![
+		]
+	}
+
+
+	fn name() -> &'static str {"__FunctionGroup__"}
+}
+
+
 #[derive(Debug, Default, Clone)]
 pub struct FunctionPointer {
 	pub pc_target: usize,
@@ -106,7 +139,16 @@ pub struct FunctionPointer {
 pub struct Module {
 	id: ModuleId,
 } impl QuRegisterStruct for Module {
-	fn register_fns() -> Vec<ExternalFunction> where Self: Sized {
+	fn new(
+		vm: &mut QuVm,
+		args: &[VmStackPointer],
+		output: VmStackPointer,
+	) -> Result<(), QuMsg> where Self: Sized {
+		Err(format!("Type 'module' cannot be instantiated.").into())
+	}
+
+
+	fn register_functions() -> Vec<ExternalFunction> where Self: Sized {
 		vec![
 			qufn!(copy(Self) Self |vm, args, return_id| {
 				vm.write(return_id, *vm.read::<Module>(args[0])?);
@@ -157,20 +199,9 @@ pub struct QuCodeObject {
 	/// `END` VM instruction.
 	pub start_index:usize,
 } impl QuCodeObject {
-
-	/// Constructs a new [`QuCodeObject`].
-	/// 
-	/// # Examples
-	/// 
-	/// ```
-	/// use qu::QuCodeObject;
-	/// 
-	/// let codeobj = QuCodeObject::new(0);
-	/// ```
 	pub fn new(start_index:usize) -> Self {
 		return Self{start_index};
 	}
-
 }
 
 
@@ -200,8 +231,16 @@ pub struct QuFnObject {
 
 
 impl QuRegisterStruct for bool {
+	fn new(
+		vm: &mut QuVm,
+		args: &[VmStackPointer],
+		output: VmStackPointer,
+	) -> Result<(), QuMsg> where Self: Sized {
+		vm.write(output, true);
+		Ok(())
+	}
 	
-	fn register_fns() -> Vec<ExternalFunction> {
+	fn register_functions() -> Vec<ExternalFunction> {
 		return vec![
 			qufn!(and(Self, Self) Self |vm, args, return_id| {
 				vm.write(return_id, *vm.read::<Self>(args[0])? && *vm.read::<Self>(args[1])?);
@@ -240,14 +279,47 @@ impl QuRegisterStruct for bool {
 
 
 	fn name() -> &'static str {"bool"}
-
 }
 
 
 impl QuRegisterStruct for i32 {
+	fn new(
+		vm: &mut QuVm,
+		args: &[VmStackPointer],
+		output: VmStackPointer,
+	) -> Result<(), QuMsg> where Self: Sized {
+		vm.write(output, 0);
+		Ok(())
+	}
+
 	
-	fn register_fns() -> Vec<ExternalFunction> {
+	fn register_functions() -> Vec<ExternalFunction> {
 		return vec![
+			ExternalFunction::new(
+				":new",
+				&|vm, args, return_id| {
+					let result = *vm.read::<i32>(args[0])?;
+					vm.write(return_id, result);
+					Ok(())
+				},
+				vec![Self::name()],
+				Self::name(),
+			),
+			ExternalFunction::new(
+				":new",
+				&|vm, args, return_id| {
+					let result = if *vm.read::<bool>(args[0])? {
+						1
+					} else {
+						0
+					};
+					vm.write(return_id, result);
+					Ok(())
+				},
+				vec![<bool as QuRegisterStruct>::name()],
+				Self::name(),
+			),
+
 			qufn!(add(i32, i32) i32 |vm, args, return_id| {
 				vm.write(return_id, vm.read::<i32>(args[0])? + vm.read::<i32>(args[1])?);
 				Ok(())
@@ -309,7 +381,6 @@ impl QuRegisterStruct for i32 {
 
 
 	fn name() -> &'static str {"int"}
-
 }
 
 
@@ -318,43 +389,76 @@ impl QuRegisterStruct for i32 {
 /// Represents a void type in Qu.
 pub struct QuVoid();
 impl QuRegisterStruct for QuVoid {
-
-	fn register_fns() -> Vec<ExternalFunction> {
-		vec![
-			qufn!(copy(Self) Self |_vm, _parameters, _return_id| {
-				Ok(())
-			}),
-		]
+	fn new(
+		vm: &mut QuVm,
+		args: &[VmStackPointer],
+		output: VmStackPointer,
+	) -> Result<(), QuMsg> where Self: Sized {
+		Err(format!("Type 'void' cannot be instantiated.").into())
 	}
 
 
 	fn name() -> &'static str {"void"}
-
 }
 
 
 /// A trait for registering structs into the Qu programming language.
-pub trait QuRegisterStruct {
+pub trait QuRegisterStruct : Debug {
+	/// A wrapper function to create a new instance.
+	fn new(
+		vm: &mut QuVm,
+		args: &[VmStackPointer],
+		output: VmStackPointer,
+	) -> Result<(), QuMsg> where Self: Sized;
+
 
 	/// Returns functions that are callable by [`QuVm`].
-	fn register_fns() -> Vec<ExternalFunction> where Self: Sized {
+	fn register_functions() -> Vec<ExternalFunction> where Self: Sized {
 		Vec::default()
+	}
+
+
+	/// Returns functions that are callable by [`QuVm`].
+	fn private_register_functions(
+	) -> Vec<ExternalFunction> where Self: 'static+ Sized {
+		let mut registered = vec![
+			ExternalFunction::new(
+				":new",
+				&Self::new,
+				vec![],
+				Self::name(),
+			)
+		];
+
+		registered.extend(Self::register_functions());
+
+		registered
 	}
 
 
 	/// Returns the name that identifies the struct being registered.
 	fn name() -> &'static str where Self: Sized;
-
 }
 
 
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Vector2 {
 	x: i32,
 	y: i32,
 } impl QuRegisterStruct for Vector2 {
-	fn register_fns() -> Vec<ExternalFunction> where Self: Sized {
+	fn new(
+		vm: &mut QuVm,
+		args: &[VmStackPointer],
+		output: VmStackPointer,
+	) -> Result<(), QuMsg> where Self: Sized {
+		vm.write(output, Vector2::default());
+		Ok(())
+	}
+
+
+	fn register_functions() -> Vec<ExternalFunction> where Self: Sized {
 		vec![
-			qufn!( foo(i32) i32 |vm, args, return_id| {
+			qufn!(foo(i32) i32 |vm, args, return_id| {
 				let value = *vm.read::<i32>(args[0])?;
 				vm.write(
 					return_id,

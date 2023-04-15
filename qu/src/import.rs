@@ -132,7 +132,7 @@ pub struct QuRegistered {
 	pub fn register_struct<S:QuRegisterStruct+'static>(&mut self) {
 		let r_struct = QuStruct::new(
 			<S as QuRegisterStruct>::name(),
-			&<S as QuRegisterStruct>::register_fns,
+			&<S as QuRegisterStruct>::private_register_functions,
 			size_of::<S>(),
 		);
 		
@@ -205,6 +205,23 @@ pub struct QuStruct {
 	pub fn has_item(&self, identity: &str) -> bool {
 		self.constants_map.contains_key(identity)
 			|| self.function_groups_map.contains_key(identity)
+	}
+
+
+	pub fn get_external_function_id(
+		&self,
+		identity: FunctionIdentity,
+	) -> Result<ExternalFunctionId, QuMsg> {
+		self.external_functions_map
+			.get(&identity)
+			.ok_or_else(||->QuMsg {
+				format!(
+					"Class '{}' has no external function with identity '{:?}'",
+					self.name,
+					identity,
+				).into()
+			})
+			.map(|id| {*id})
 	}
 
 

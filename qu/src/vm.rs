@@ -11,8 +11,10 @@ use crate::QuVoid;
 use crate::Vector2;
 use crate::compiler::Definitions;
 use crate::compiler::ExternalFunctionId;
+use crate::compiler::FunctionGroup;
 use crate::compiler::FunctionId;
 use crate::import::ClassId;
+use crate::objects;
 
 pub const BASE_MODULE:&str = "__base__";
 pub const MAIN_MODULE:&str = "__main__";
@@ -48,7 +50,7 @@ pub enum QuOp {
 	Literal(Literal, VmStackPointer),
 	/// Loads a value of type [`ClassId`] into the stack. Takes the value being
 	/// loaded and the stack id where it will bestored.
-	Value(ClassId, VmStackPointer),
+	Value(ExternalFunctionId, VmStackPointer),
 	/// Specifies to the Vm what class can be retrieved from the API.
 	Return(ClassId),
 } impl Debug for QuOp {
@@ -218,16 +220,6 @@ pub struct QuVm {
 	pc: usize,
 
 } impl QuVm {
-
-	/// Constructs a new [`QuVm`].
-	/// 
-	/// # Example
-	/// 
-	/// ```
-	/// use qu::QuVm;;
-	/// 
-	/// let vm = QuVm::new();
-	/// ```
 	pub fn new() -> Self {
 		let mut vm = QuVm { 
 			hold_is_zero: false,
@@ -245,6 +237,7 @@ pub struct QuVm {
 				b.register_struct::<bool>()?;
 				b.register_struct::<Class>()?;
 				b.register_struct::<Module>()?;
+				b.register_struct::<objects::FunctionGroup>()?;
 				b.register_functions()?;
 				Ok(())
 			},
@@ -406,14 +399,17 @@ pub struct QuVm {
 	}
 
 
-	fn op_load_int(
+	fn op_load_class(
 		&mut self,
-		class: ClassId,
+		function_id: ExternalFunctionId,
 		output: VmStackPointer,
-	) {
-		// TODO: Make function signature i32
-		unimplemented!();
-		// self.write(output, value as i32);
+	) -> Result<(), QuMsg> {
+		self.external_call_by_id(
+			function_id,
+			&vec![],
+			output,
+		)?;
+		Ok(())
 	}
 
 
@@ -537,7 +533,7 @@ pub struct QuVm {
 			QuOp::DefineFn(fn_id, length) => self.op_define_fn(*fn_id, *length),
 			QuOp::JumpByIfNot(by) => self.op_jump_by_if_not(*by),
 			QuOp::JumpBy(by) => self.op_jump_by(*by),
-			QuOp::Value(value, output) => self.op_load_int(*value, *output),
+			QuOp::Value(function_id, output) => self.op_load_class(*function_id, *output)?,
 			QuOp::Return(return_type) => self.return_type = *return_type,
     		QuOp::Literal(literal, output) => self.op_literal(*literal, *output),
 		};
@@ -568,16 +564,9 @@ pub struct QuVm {
 }
 
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-/// Note: The safety of this pointer relies on the VM's memory nevery moving.
-pub struct VmHeapPointer {
-	ptr: *mut[u8],
-}
-
-
 #[derive(Debug, Clone)]
 pub struct VmRc {
-	rc: Rc<dyn VmRcTrait>,
+	rc: Rc<dyn QuRegisterStruct>,
 }
 
 
