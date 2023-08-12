@@ -2,6 +2,7 @@
 use std::fmt::Debug;
 use std::mem::size_of;
 
+use crate::Bool;
 use crate::Class;
 use crate::Module;
 use crate::QuMsg;
@@ -233,7 +234,7 @@ pub struct QuVm {
 			&|mut b| {
 				b.register_struct::<QuVoid>()?;
 				b.register_struct::<i32>()?;
-				b.register_struct::<bool>()?;
+				b.register_struct::<Bool>()?;
 				b.register_struct::<Class>()?;
 				b.register_struct::<Module>()?;
 				b.register_functions()?;

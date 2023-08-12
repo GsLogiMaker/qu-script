@@ -11,6 +11,7 @@ use crate::QuVoid;
 use crate::import::QuRegistered;
 use crate::import::QuStruct;
 use crate::import::ClassId;
+use crate::objects::Bool;
 use crate::parser::KEYWORD_IF;
 use crate::parser::QuOperator;
 use crate::parser::parsed::*;
@@ -1986,7 +1987,7 @@ pub struct QuCompiler {
 				condition,
 				QuStackId::new(
 					expr_reg.index(),
-					definitions.class_id::<bool>()?,
+					definitions.class_id::<Bool>()?,
 				),
 				definitions
 			)
@@ -2031,7 +2032,7 @@ pub struct QuCompiler {
 				condition,
 				QuStackId::new(
 					if_expr_reg.index(),
-					definitions.class_id::<bool>()?,
+					definitions.class_id::<Bool>()?,
 				),
 				definitions
 			)

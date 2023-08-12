@@ -198,21 +198,41 @@ pub struct QuFnObject {
 
 }
 
-
-impl QuRegisterStruct for bool {
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Bool (bool, bool, bool, bool);
+impl Bool {
+	pub fn and(&self, other: &Self) -> Bool {
+		(self.0 && other.0).into()
+	}
 	
+	pub fn or(&self, other: &Self) -> Bool {
+		(self.0 && other.0).into()
+	}
+} impl Into<bool> for Bool {
+    fn into(self) -> bool {
+        self.0
+    }
+} impl QuRegisterStruct for Bool {
 	fn register_fns() -> Vec<ExternalFunction> {
 		return vec![
 			qufn!(and(Self, Self) Self |vm, args, return_id| {
-				vm.write(return_id, *vm.read::<Self>(args[0])? && *vm.read::<Self>(args[1])?);
+				vm.write(
+					return_id,
+					vm.read::<Self>(args[0])?.and(
+						vm.read::<Self>(args[1])?
+					)
+				);
 				Ok(())
 			}),
 			qufn!(or(Self, Self) Self |vm, args, return_id| {
-				vm.write(return_id, *vm.read::<Self>(args[0])? || *vm.read::<Self>(args[1])?);
+				vm.write(
+					return_id,
+					vm.read::<Self>(args[0])?.or(vm.read::<Self>(args[1])?)
+				);
 				Ok(())
 			}),
 			qufn!(eq(Self, Self) Self |vm, args, return_id| {
-				let output = vm.read::<i32>(args[0])? == vm.read::<i32>(args[1])?;
+				let output = vm.read::<Bool>(args[0])? == vm.read::<Bool>(args[1])?;
 				vm.hold_is_zero = output;
 				if output {
 					vm.write(return_id, 1i32);
@@ -222,7 +242,7 @@ impl QuRegisterStruct for bool {
 				Ok(())
 			}),
 			qufn!(neq(Self, Self) Self |vm, args, return_id| {
-				let output = vm.read::<i32>(args[0])? != vm.read::<i32>(args[1])?;
+				let output = vm.read::<Bool>(args[0])? != vm.read::<Bool>(args[1])?;
 				vm.hold_is_zero = output;
 				if output {
 					vm.write(return_id, 1i32);
@@ -232,17 +252,20 @@ impl QuRegisterStruct for bool {
 				Ok(())
 			}),
 			qufn!(copy(Self) Self |vm, args, return_id| {
-				vm.write(return_id, *vm.read::<bool>(args[0])?);
+				vm.write(return_id, *vm.read::<Bool>(args[0])?);
 				Ok(())
 			}),
 		];
 	}
 
-
 	fn name() -> &'static str {"bool"}
-
 }
 
+impl Into<Bool> for bool {
+    fn into(self) -> Bool {
+        Bool(self, false, false, false)
+    }
+}
 
 impl QuRegisterStruct for i32 {
 	
@@ -264,40 +287,58 @@ impl QuRegisterStruct for i32 {
 				vm.write(return_id, vm.read::<i32>(args[0])? / vm.read::<i32>(args[1])?);
 				Ok(())
 			}),
-			qufn!(lesser(i32, i32) bool |vm, args, return_id| {
+			qufn!(lesser(i32, i32) Bool |vm, args, return_id| {
 				let output = vm.read::<i32>(args[0])? < vm.read::<i32>(args[1])?;
 				vm.hold_is_zero = output;
-				vm.write(return_id, output);
+				vm.write::<Bool>(
+					return_id,
+					output.into(),
+				);
 				Ok(())
 			}),
-			qufn!(lessereq(i32, i32) bool |vm, args, return_id| {
+			qufn!(lessereq(i32, i32) Bool |vm, args, return_id| {
 				let output = vm.read::<i32>(args[0])? <= vm.read::<i32>(args[1])?;
 				vm.hold_is_zero = output;
-				vm.write(return_id, output);
+				vm.write::<Bool>(
+					return_id,
+					output.into(),
+				);
 				Ok(())
 			}),
-			qufn!(greater(i32, i32) bool |vm, args, return_id| {
+			qufn!(greater(i32, i32) Bool |vm, args, return_id| {
 				let output = vm.read::<i32>(args[0])? > vm.read::<i32>(args[1])?;
 				vm.hold_is_zero = output;
-				vm.write(return_id, output);
+				vm.write::<Bool>(
+					return_id,
+					output.into(),
+				);
 				Ok(())
 			}),
-			qufn!(greatereq(i32, i32) bool |vm, args, return_id| {
+			qufn!(greatereq(i32, i32) Bool |vm, args, return_id| {
 				let output = vm.read::<i32>(args[0])? >= vm.read::<i32>(args[1])?;
 				vm.hold_is_zero = output;
-				vm.write(return_id, output);
+				vm.write::<Bool>(
+					return_id,
+					output.into(),
+				);
 				Ok(())
 			}),
-			qufn!(eq(i32, i32) bool |vm, args, return_id| {
+			qufn!(eq(i32, i32) Bool |vm, args, return_id| {
 				let output = vm.read::<i32>(args[0])? == vm.read::<i32>(args[1])?;
 				vm.hold_is_zero = output;
-				vm.write(return_id, output);
+				vm.write::<Bool>(
+					return_id,
+					output.into(),
+				);
 				Ok(())
 			}),
-			qufn!(neq(i32, i32) bool |vm, args, return_id| {
+			qufn!(neq(i32, i32) Bool |vm, args, return_id| {
 				let output = vm.read::<i32>(args[0])? != vm.read::<i32>(args[1])?;
 				vm.hold_is_zero = output;
-				vm.write(return_id, output);
+				vm.write::<Bool>(
+					return_id,
+					output.into(),
+				);
 				Ok(())
 			}),
 			qufn!(copy(i32) i32 |vm, args, return_id| {

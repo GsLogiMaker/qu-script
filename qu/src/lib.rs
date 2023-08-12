@@ -73,7 +73,7 @@ pub use vm::QuStackId;
 /// ```
 pub struct Qu<'a> {
 	vm: QuVm,
-	ph: PhantomData<&'a u8>,
+	ph: PhantomData<&'a ()>,
 
 } impl<'a> Qu<'a> {
 
@@ -187,7 +187,7 @@ pub struct Qu<'a> {
 
 #[cfg(test)]
 mod lib {
-    use crate::{Qu, Module};
+    use crate::{Qu, Module, Bool};
 
 	#[test]
 	fn fibinachi() {
@@ -483,12 +483,12 @@ mod lib {
 	#[test]
 	fn variable_dot_notation_2() {
 		let mut qu = Qu::new();
-		let result:bool = *qu.run_and_get("
+		let result:Bool = *qu.run_and_get("
 			var count int = 5
 			return count.add(1) == add(count, 1)
 		").unwrap();
 		
-		assert!(result);
+		assert!(result == true.into());
 	}
 
 
