@@ -42,7 +42,7 @@ qu_print_vm_operations = []
 
 default = [
 	"qu_panic_upon_error",
-	#"qu_print_vm_operations",
+	# "qu_print_vm_operations",
 ]
 
 [[bench]]

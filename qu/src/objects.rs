@@ -4,8 +4,10 @@
 
 use crate::QuVm;
 use crate::QuMsg;
+use crate::compiler::Definitions;
 use crate::compiler::ModuleId;
 use crate::import::ClassId;
+use crate::vm::FUNDAMENTALS_MODULE;
 use crate::vm::QuExtFn;
 use crate::vm::QuVoidExtFn;
 use crate::vm::QuStackId;
@@ -15,11 +17,11 @@ use std::fmt::Debug;
 macro_rules! qufn {
 	($name:ident($($param:ident),*) $return:ident $block:expr) => {
 		{
-			ExternalFunction::new(
+			ExternalFunctionDefinition::new(
 				stringify!($name),
 				&$block,
-				[$(<$param as QuRegisterStruct>::name()),*].into(),
-				<$return as QuRegisterStruct>::name(),
+				[$($param),*].into(),
+				$return,
 			)
 		}
 	};
@@ -37,9 +39,18 @@ pub type QuVoidFnForm = (String, QuVoidExtFn, Vec<usize>);
 pub struct Class {
 	id: ClassId,
 } impl QuRegisterStruct for Class {
-	fn register_fns() -> Vec<ExternalFunction> where Self: Sized {
+	fn register_fns(
+		definitions: &mut Definitions
+	) -> Vec<ExternalFunctionDefinition> {
+		let literals = definitions
+			.get_module_by_name(FUNDAMENTALS_MODULE)
+			.unwrap();
+		let class = literals
+			.get_class_id("__Class__")
+			.unwrap();
+
 		vec![
-			qufn!(copy(Self) Self |vm, args, return_id| {
+			qufn!(copy(class) class |vm, args, return_id| {
 				vm.write(return_id, *vm.read::<Class>(args[0])?);
 				Ok(())
 			}),
@@ -55,14 +66,14 @@ pub struct Class {
 pub struct ExternalFunction {
 	pub name: String,
 	pub pointer: QuExtFn,
-	pub parameters: Vec<&'static str>,
-	pub return_type: &'static str,
+	pub parameters: Vec<ClassId>,
+	pub return_type: ClassId,
 } impl ExternalFunction {
 	pub fn new(
 		name: &str,
 		pointer: QuExtFn,
-		parameters: Vec<&'static str>,
-		return_type: &'static str,
+		parameters: Vec<ClassId>,
+		return_type: ClassId,
 	) -> Self{
 		Self {
 			name: name.into(),
@@ -96,6 +107,52 @@ pub struct ExternalFunction {
 }
 
 
+#[derive(Clone)]
+pub struct ExternalFunctionDefinition {
+	pub name: String,
+	pub pointer: QuExtFn,
+	pub parameters: Vec<ClassId>,
+	pub return_type: ClassId,
+} impl ExternalFunctionDefinition {
+	pub fn new(
+		name: &str,
+		pointer: QuExtFn,
+		parameters: Vec<ClassId>,
+		return_type: ClassId,
+	) -> Self{
+		Self {
+			name: name.into(),
+			pointer,
+			parameters: parameters,
+			return_type,
+		}
+	}
+
+
+	pub fn call(
+		&self, vm:&mut QuVm, parameters: &Vec<QuStackId>, output_id: QuStackId,
+	) -> Result<(), QuMsg> {
+		(self.pointer)(vm, parameters, output_id)
+	}
+} impl Debug for ExternalFunctionDefinition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExternalFunctionDefinition")
+			.field("name", &self.name)
+			.field("parameters", &self.parameters)
+			.field("return_type", &self.return_type)
+			.finish()
+    }
+} impl Default for ExternalFunctionDefinition {
+    fn default() -> Self {
+        Self {
+			pointer: &|_, _, _| {Ok(())},
+			..Default::default()
+		}
+    }
+}
+
+
+
 #[derive(Debug, Default, Clone)]
 pub struct FunctionPointer {
 	pub pc_target: usize,
@@ -106,15 +163,23 @@ pub struct FunctionPointer {
 pub struct Module {
 	id: ModuleId,
 } impl QuRegisterStruct for Module {
-	fn register_fns() -> Vec<ExternalFunction> where Self: Sized {
+	fn register_fns(
+		definitions: &mut Definitions
+	) -> Vec<ExternalFunctionDefinition> {
+		let literals = definitions
+			.get_module_by_name(FUNDAMENTALS_MODULE)
+			.unwrap();
+		let module = literals
+			.get_class_id("__Module__")
+			.unwrap();
+
 		vec![
-			qufn!(copy(Self) Self |vm, args, return_id| {
+			qufn!(copy(module) module |vm, args, return_id| {
 				vm.write(return_id, *vm.read::<Module>(args[0])?);
 				Ok(())
 			}),
 		]
 	}
-
 
 	fn name() -> &'static str {"__Module__"}
 }
@@ -213,27 +278,36 @@ impl Bool {
         self.0
     }
 } impl QuRegisterStruct for Bool {
-	fn register_fns() -> Vec<ExternalFunction> {
+	fn register_fns(
+		definitions: &mut Definitions
+	) -> Vec<ExternalFunctionDefinition> {
+		let literals = definitions
+			.get_module_by_name(FUNDAMENTALS_MODULE)
+			.unwrap();
+		let bool = literals
+			.get_class_id("bool")
+			.unwrap();
+
 		return vec![
-			qufn!(and(Self, Self) Self |vm, args, return_id| {
+			qufn!(and(bool, bool) bool |vm, args, return_id| {
 				vm.write(
 					return_id,
-					vm.read::<Self>(args[0])?.and(
-						vm.read::<Self>(args[1])?
+					vm.read::<Bool>(args[0])?.and(
+						vm.read::<Bool>(args[1])?
 					)
 				);
 				Ok(())
 			}),
-			qufn!(or(Self, Self) Self |vm, args, return_id| {
+			qufn!(or(bool, bool) bool |vm, args, return_id| {
 				vm.write(
 					return_id,
-					vm.read::<Self>(args[0])?.or(vm.read::<Self>(args[1])?)
+					vm.read::<Bool>(args[0])?.or(vm.read::<Bool>(args[1])?)
 				);
 				Ok(())
 			}),
-			qufn!(eq(Self, Self) Self |vm, args, return_id| {
+			qufn!(eq(bool, bool) bool |vm, args, return_id| {
 				let output = vm.read::<Bool>(args[0])? == vm.read::<Bool>(args[1])?;
-				vm.hold_is_zero = output;
+				vm.hold_is_true = output;
 				if output {
 					vm.write(return_id, 1i32);
 				} else {
@@ -241,9 +315,9 @@ impl Bool {
 				}
 				Ok(())
 			}),
-			qufn!(neq(Self, Self) Self |vm, args, return_id| {
+			qufn!(neq(bool, bool) bool |vm, args, return_id| {
 				let output = vm.read::<Bool>(args[0])? != vm.read::<Bool>(args[1])?;
-				vm.hold_is_zero = output;
+				vm.hold_is_true = output;
 				if output {
 					vm.write(return_id, 1i32);
 				} else {
@@ -251,7 +325,7 @@ impl Bool {
 				}
 				Ok(())
 			}),
-			qufn!(copy(Self) Self |vm, args, return_id| {
+			qufn!(copy(bool) bool |vm, args, return_id| {
 				vm.write(return_id, *vm.read::<Bool>(args[0])?);
 				Ok(())
 			}),
@@ -269,79 +343,91 @@ impl Into<Bool> for bool {
 
 impl QuRegisterStruct for i32 {
 	
-	fn register_fns() -> Vec<ExternalFunction> {
+	fn register_fns(
+		definitions: &mut Definitions
+	) -> Vec<ExternalFunctionDefinition> {
+		let literals = definitions
+			.get_module_by_name(FUNDAMENTALS_MODULE)
+			.unwrap();
+		let int = literals
+			.get_class_id("int")
+			.unwrap();
+		let bool = literals
+			.get_class_id("bool")
+			.unwrap();
+
 		return vec![
-			qufn!(add(i32, i32) i32 |vm, args, return_id| {
+			qufn!(add(int, int) int |vm, args, return_id| {
 				vm.write(return_id, vm.read::<i32>(args[0])? + vm.read::<i32>(args[1])?);
 				Ok(())
 			}),
-			qufn!(sub(i32, i32) i32 |vm, args, return_id| {
+			qufn!(sub(int, int) int |vm, args, return_id| {
 				vm.write(return_id, vm.read::<i32>(args[0])? - vm.read::<i32>(args[1])?);
 				Ok(())
 			}),
-			qufn!(mul(i32, i32) i32 |vm, args, return_id| {
+			qufn!(mul(int, int) int |vm, args, return_id| {
 				vm.write(return_id, vm.read::<i32>(args[0])? * vm.read::<i32>(args[1])?);
 				Ok(())
 			}),
-			qufn!(div(i32, i32) i32 |vm, args, return_id| {
+			qufn!(div(int, int) int |vm, args, return_id| {
 				vm.write(return_id, vm.read::<i32>(args[0])? / vm.read::<i32>(args[1])?);
 				Ok(())
 			}),
-			qufn!(lesser(i32, i32) Bool |vm, args, return_id| {
+			qufn!(lesser(int, int) bool |vm, args, return_id| {
 				let output = vm.read::<i32>(args[0])? < vm.read::<i32>(args[1])?;
-				vm.hold_is_zero = output;
+				vm.hold_is_true = output;
 				vm.write::<Bool>(
 					return_id,
 					output.into(),
 				);
 				Ok(())
 			}),
-			qufn!(lessereq(i32, i32) Bool |vm, args, return_id| {
+			qufn!(lessereq(int, int) bool |vm, args, return_id| {
 				let output = vm.read::<i32>(args[0])? <= vm.read::<i32>(args[1])?;
-				vm.hold_is_zero = output;
+				vm.hold_is_true = output;
 				vm.write::<Bool>(
 					return_id,
 					output.into(),
 				);
 				Ok(())
 			}),
-			qufn!(greater(i32, i32) Bool |vm, args, return_id| {
+			qufn!(greater(int, int) bool |vm, args, return_id| {
 				let output = vm.read::<i32>(args[0])? > vm.read::<i32>(args[1])?;
-				vm.hold_is_zero = output;
+				vm.hold_is_true = output;
 				vm.write::<Bool>(
 					return_id,
 					output.into(),
 				);
 				Ok(())
 			}),
-			qufn!(greatereq(i32, i32) Bool |vm, args, return_id| {
+			qufn!(greatereq(int, int) bool |vm, args, return_id| {
 				let output = vm.read::<i32>(args[0])? >= vm.read::<i32>(args[1])?;
-				vm.hold_is_zero = output;
+				vm.hold_is_true = output;
 				vm.write::<Bool>(
 					return_id,
 					output.into(),
 				);
 				Ok(())
 			}),
-			qufn!(eq(i32, i32) Bool |vm, args, return_id| {
+			qufn!(eq(int, int) bool |vm, args, return_id| {
 				let output = vm.read::<i32>(args[0])? == vm.read::<i32>(args[1])?;
-				vm.hold_is_zero = output;
+				vm.hold_is_true = output;
 				vm.write::<Bool>(
 					return_id,
 					output.into(),
 				);
 				Ok(())
 			}),
-			qufn!(neq(i32, i32) Bool |vm, args, return_id| {
+			qufn!(neq(int, int) bool |vm, args, return_id| {
 				let output = vm.read::<i32>(args[0])? != vm.read::<i32>(args[1])?;
-				vm.hold_is_zero = output;
+				vm.hold_is_true = output;
 				vm.write::<Bool>(
 					return_id,
 					output.into(),
 				);
 				Ok(())
 			}),
-			qufn!(copy(i32) i32 |vm, args, return_id| {
+			qufn!(copy(int) int |vm, args, return_id| {
 				vm.write(return_id, *vm.read::<i32>(args[0])?);
 				Ok(())
 			}),
@@ -359,10 +445,18 @@ impl QuRegisterStruct for i32 {
 /// Represents a void type in Qu.
 pub struct QuVoid();
 impl QuRegisterStruct for QuVoid {
+	fn register_fns(
+		definitions: &mut Definitions
+	) -> Vec<ExternalFunctionDefinition> {
+		let literals = definitions
+			.get_module_by_name(FUNDAMENTALS_MODULE)
+			.unwrap();
+		let void = literals
+			.get_class_id("void")
+			.unwrap();
 
-	fn register_fns() -> Vec<ExternalFunction> {
 		vec![
-			qufn!(copy(Self) Self |_vm, _parameters, _return_id| {
+			qufn!(copy(void) void |vm, args, return_id| {
 				Ok(())
 			}),
 		]
@@ -370,7 +464,6 @@ impl QuRegisterStruct for QuVoid {
 
 
 	fn name() -> &'static str {"void"}
-
 }
 
 
@@ -378,7 +471,9 @@ impl QuRegisterStruct for QuVoid {
 pub trait QuRegisterStruct {
 
 	/// Returns functions that are callable by [`QuVm`].
-	fn register_fns() -> Vec<ExternalFunction> where Self: Sized {
+	fn register_fns(
+		definitions: &mut Definitions
+	) -> Vec<ExternalFunctionDefinition> where Self: Sized {
 		Vec::default()
 	}
 
@@ -393,9 +488,21 @@ pub struct Vector2 {
 	x: i32,
 	y: i32,
 } impl QuRegisterStruct for Vector2 {
-	fn register_fns() -> Vec<ExternalFunction> where Self: Sized {
+	fn register_fns(
+		definitions: &mut Definitions
+	) -> Vec<ExternalFunctionDefinition> {
+		let math = definitions
+			.get_module_by_name("math")
+			.unwrap();
+		let fundamentals = definitions
+			.get_module_by_name(FUNDAMENTALS_MODULE)
+			.unwrap();
+		let int = fundamentals
+			.get_class_id("int")
+			.unwrap();
+
 		vec![
-			qufn!( foo(i32) i32 |vm, args, return_id| {
+			qufn!( foo(int) int |vm, args, return_id| {
 				let value = *vm.read::<i32>(args[0])?;
 				vm.write(
 					return_id,

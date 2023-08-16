@@ -1,6 +1,7 @@
 
 use crate::Class;
 use crate::ExternalFunction;
+use crate::ExternalFunctionDefinition;
 use crate::Module;
 use crate::QuOp;
 use crate::QuOp::*;
@@ -18,14 +19,16 @@ use crate::parser::parsed::*;
 
 use crate::QuMsg;
 use crate::QuToken;
-use crate::vm::BASE_MODULE;
+use crate::vm::FUNDAMENTALS_MODULE;
 use crate::vm::MAIN_MODULE;
 use crate::vm::Stack;
 
 use core::panic;
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::mem::size_of;
 use std::hash::Hash;
+use std::mem::take;
 
 // TODO: Fix compiler's documentation
 
@@ -503,10 +506,12 @@ enum ContextFrame {
 pub struct Definitions {
 	pub constants: GrowingStack,
 	pub classes: Vec<QuStruct>,
-	pub external_functions: Vec<ExternalFunction>,
+	pub external_functions: Vec<ExternalFunctionDefinition>,
 	pub functions: Vec<FunctionMetadata>,
 	pub function_groups: Vec<FunctionGroup>,
 	pub modules: Vec<ModuleMetadata>,
+
+	pub byte_code_blocks: Vec<Vec<QuOp>>,
 
 	/// A map of names to module IDs.
 	pub module_map: HashMap<String, ModuleId>,
@@ -525,6 +530,7 @@ pub struct Definitions {
 	pub fn add_class_external_function_map(
 		&mut self,
 		class_id: ClassId,
+		module_id: ModuleId,
 		signature: FunctionIdentity,
 		id: ExternalFunctionId,
 	) -> Result<(), QuMsg> {
@@ -536,7 +542,21 @@ pub struct Definitions {
 		let group_id = match &class.function_groups_map.get(name) {
 			Some(id) => {**id},
 			None => {
+				let module = self.get_module_mut(module_id)?;
+				let id = match &module.function_groups_map.get(name) {
+			Some(id) => {**id},
+			None => {
 				let id = new_id;
+						module.function_groups_map.insert(
+							name.into(), id,
+						);
+						let mut group = FunctionGroup::default();
+						group.name = name.clone();
+						self.function_groups.push(group);
+						id
+					}
+				};
+				let class = self.get_class_mut(class_id)?;
 				class.function_groups_map.insert(
 					name.into(), id,
 				);
@@ -546,15 +566,30 @@ pub struct Definitions {
 				id
 			}
 		};
+		
+
 		let group = &mut self
 			.function_groups[group_id];
-
-		// Add to mappings
-		assert!(!group.map.contains_key(&signature));
+		if group.map.contains_key(&signature) {
+			// The function couldn't be registered because a function with
+			// its signature already exists.
+			let module_name = &self.get_module(module_id).unwrap().name;
+			return Err(format!(
+				"Couldn't register function '{signature}' in module '{module_name}'. A function with that signature already exists."
+			).into())
+		}
 		group.map.insert(signature.clone(), SomeFunctionId::External(id)); // TODO: Remove cloning
+		
+		// Add to class mappings
 		self.get_class_mut(class_id)?
 			.external_functions_map
+			.insert(signature.clone(), id); // TODO: Remove cloning
+
+		// Add to module mappings
+		self.get_module_mut(module_id)?
+			.external_functions_map
 			.insert(signature, id);
+
 		Ok(())
 	}
 
@@ -837,7 +872,7 @@ pub struct Definitions {
 
 	pub fn get_external_function(
 		&self, id: ExternalFunctionId
-	) -> Result<&ExternalFunction, QuMsg> {
+	) -> Result<&ExternalFunctionDefinition, QuMsg> {
 		let external_function = self.external_functions
 			.get(usize::from(id))
 			.ok_or_else(|| -> QuMsg { format!(
@@ -972,6 +1007,14 @@ pub struct Definitions {
 	}
 
 
+	pub fn get_module_by_name(&self, module:&str) -> Result<&ModuleMetadata, QuMsg> {
+		let id = self.get_module_id(module).ok_or_else(|| {
+			QuMsg::from(format!("Found no module by name {module}"))
+		})?;
+		self.get_module(id)
+	}
+
+
 	pub fn get_module_id(&self, module:&str) -> Option<ModuleId> {
 		if !self.module_map.contains_key(module) {
 			return None;
@@ -1041,7 +1084,7 @@ pub struct Definitions {
 			registrations.push(self.get_class(*class_id)?.register_fn);
 		}
 		for registration in registrations {
-			for external_function in (registration)() {
+			for external_function in (registration)(self) {
 				self.register_function(external_function)?;
 			}
 		}
@@ -1051,16 +1094,18 @@ pub struct Definitions {
 
 
 	pub fn register_module_functions(
-		&mut self, module_id: ModuleId,
+		&mut self,
+		module_id: ModuleId,
 	) -> Result<(), QuMsg> {
 		let mut registrations = vec![];
 		for class_id in &self.with_unregistered_functions {
 			registrations.push(self.get_class(*class_id)?.register_fn);
 		}
 		for registration in registrations {
-			for external_function in (registration)() {
+			for external_function in (registration)(self) {
 				self.register_module_function(
-					module_id, external_function
+					module_id,
+					external_function,
 				)?;
 			}
 		}
@@ -1071,21 +1116,19 @@ pub struct Definitions {
 
 	/// Registers an [`ExternalFunction`] to Qu.
 	pub fn register_function(
-		&mut self, external_function:ExternalFunction,
+		&mut self,
+		external_function:ExternalFunctionDefinition,
 	) -> Result<(), QuMsg> {
 		// Make function identity
 		let mut parameters = vec![];
 		for parameter in &external_function.parameters {
-			let class_id = self.find_class_id(
-				parameter,
-			).unwrap();
+			let class_id = parameter;
 			parameters.push(class_id);
 		}
-		let return_type = *parameters.first().unwrap();
 		let function_identity = FunctionIdentity {
 			name: external_function.name.clone(),
-			parameters,
-			return_type,
+			parameters: external_function.parameters.clone(),
+			return_type: external_function.return_type,
 		};
 
 		// Get class id of first parameter
@@ -1096,11 +1139,11 @@ pub struct Definitions {
 
 		// Add identity to class's map
 		let new_function_id = self.external_functions.len();
-		self.add_class_external_function_map(
-			class_id,
-			function_identity.clone(),
-			new_function_id,
-		);
+		// self.add_class_external_function_map(
+		// 	class_id,
+		// 	function_identity.clone(),
+		// 	new_function_id,
+		// );
 
 		// Add external function to list
 		self.external_functions.push(external_function);
@@ -1110,21 +1153,15 @@ pub struct Definitions {
 
 
 	pub fn register_module_function(
-		&mut self, module_id: ModuleId, external_function:ExternalFunction,
+		&mut self,
+		module_id: ModuleId,
+		external_function:ExternalFunctionDefinition,
 	) -> Result<(), QuMsg> {
 		// Make function identity
-		let mut parameters = vec![];
-		for parameter in &external_function.parameters {
-			let class_id = self.find_class_id(
-				parameter,
-			).unwrap();
-			parameters.push(class_id);
-		}
-		let return_type = *parameters.first().unwrap();
 		let function_identity = FunctionIdentity {
 			name: external_function.name.clone(),
-			parameters,
-			return_type,
+			parameters: external_function.parameters.clone(),
+			return_type: external_function.return_type,
 		};
 
 		// Get class id of first parameter
@@ -1133,16 +1170,14 @@ pub struct Definitions {
 			None => {todo!()},
 		};
 
-		// Add identity to class's map
+		// Add identity to class's and module's map
 		let new_function_id = self.external_functions.len();
 		self.add_class_external_function_map(
-			class_id, function_identity.clone(), new_function_id,
-		);
-
-		// Add identity to module's map
-		self.add_module_external_function_map(
-			module_id, function_identity, new_function_id,
-		);
+			class_id,
+			module_id,
+			function_identity.clone(),
+			new_function_id,
+		).unwrap();
 
 		// Add external function to list
 		self.external_functions.push(external_function);
@@ -1153,7 +1188,8 @@ pub struct Definitions {
 
 	/// Registers an external struct to be used within the Qu langauge.
 	pub fn register_module_struct<S:QuRegisterStruct+'static>(
-		&mut self, module_id: ModuleId,
+		&mut self,
+		module_id: ModuleId,
 	) -> Result<(), QuMsg> {
 		let class_name = <S as QuRegisterStruct>::name();
 
@@ -1165,6 +1201,7 @@ pub struct Definitions {
 		self.with_unregistered_functions.push(class_id);
 
 		// Add class to list of classes
+		let external_function_definitions = &<S as QuRegisterStruct>::register_fns;
 		let class = QuStruct::new(
 			class_name,
 			&<S as QuRegisterStruct>::register_fns,
@@ -1175,7 +1212,6 @@ pub struct Definitions {
 		Ok(())
 
 	}
-
 }
 
 
@@ -1264,6 +1300,15 @@ pub struct FunctionIdentity {
         }
         self.parameters.partial_cmp(&other.parameters)
     }
+} impl Display for FunctionIdentity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		let mut params = String::new();
+		for p in &self.parameters {
+			let id = p.0;
+			params.push_str(&format!("type:{id}"));
+		}
+		write!(f,"{}({}) type:{}", self.name, params, self.return_type.0)
+	}
 }
 
 
@@ -1273,7 +1318,7 @@ pub struct FunctionMetadata {
 	pub identity: FunctionIdentity,
 	/// The value that the VM's program counter should be set to in order to
 	/// start this function.
-	pub pc_start: usize,
+	pub code_block: usize,
 }
 
 
@@ -1282,7 +1327,6 @@ pub struct FunctionIdentityMap {
 	map: HashMap<String, HashMap<ClassId, Vec<FunctionIdentity>>>,
 } impl FunctionIdentityMap {
 }
-
 
 
 #[derive(Debug, Default, Clone)]
@@ -1314,7 +1358,6 @@ pub struct GrowingStack {
 
 	fn offset_mut(&mut self) -> &mut usize {todo!()}
 }
-
 
 
 pub struct ModuleBuilder<'a>(&'a mut Definitions, ModuleId);
@@ -1368,6 +1411,23 @@ pub struct ModuleMetadata {
 			|| self.static_variables_map.contains_key(identity)
 	}
 	
+
+	pub fn get_class_id(
+		&self,
+		class_name: &str,
+	) -> Result<ClassId, QuMsg> {
+		self.class_map
+			.get(class_name)
+			.ok_or_else(|| -> QuMsg {
+				format!(
+					"Found no class named '{}' in module '{}'",
+					class_name,
+					self.name,
+				).into()
+			})
+			.map(|id| {*id})
+	}
+
 	
 	pub fn get_function_group_id(
 		&self,
@@ -1680,12 +1740,9 @@ pub struct QuCompiler {
 				return_type_id
 			},
 			SomeFunctionId::External(id) => {
-				let return_type_id = definitions
+				definitions
 					.get_external_function(*id)?
-					.return_type;
-				let return_type_id = definitions
-					.find_class_id(return_type_id)?;
-				return_type_id
+					.return_type
 			},
 		};
 
@@ -2269,7 +2326,7 @@ pub struct QuCompiler {
 		self.context.open_frame(ContextFrame::Function(
 			func_id, FrameData::default(),
 		));
-		let body_code = {
+		let mut body_code = {
 			// Allocate return value
 			self.context.define_variable(
 				"return value".into(),
@@ -2289,20 +2346,21 @@ pub struct QuCompiler {
 			// Compile code block
 			let mut b = QuAsmBuilder::new();
 			b.add_builder(self.cmp_code_block(&body.code_block, definitions)?);
-			if needs_added_end_op {
-				b.add_op(End);
-			}
 			Ok::<QuAsmBuilder, QuMsg>(b)
 		}?;
 		self.context.close_frame();
 
-		// Add fn declaration operation
-		let mut code = QuAsmBuilder::new();
-		code.add_op(DefineFn(func_id, body_code.len() as usize));
+		// Compile function body
+		definitions.get_function_mut(func_id)?.code_block = definitions
+			.byte_code_blocks
+			.len();
+		let bytcode = body_code.compile(
+			&self.name_refs,
+			definitions
+		)?;
+		definitions.byte_code_blocks.push(bytcode);
 
-		// Add body
-		code.add_builder(body_code);
-
+		let code = QuAsmBuilder::new();
 		return Ok(code);
 	}
 
@@ -2534,8 +2592,18 @@ pub struct QuCompiler {
 	}
 
 
-	fn cmp_module(&mut self) {
+	fn cmp_module(
+		&mut self,
+		code_block: &CodeBlock,
+		definitions: &mut Definitions,
+	) -> Result<QuAsmBuilder, QuMsg> {
+		let code = self.cmp_code_block(
+			code_block,
+			definitions
+		)?.compile(&self.name_refs, definitions)?;
+		definitions.byte_code_blocks.push(code);
 		
+		Ok(QuAsmBuilder::new())
 	}
 
 
@@ -2633,7 +2701,7 @@ pub struct QuCompiler {
 		let code_block = p.parse(code)?;
 		
 		let base_id = *definitions.module_map
-			.get(BASE_MODULE)
+			.get(FUNDAMENTALS_MODULE)
 			.unwrap();
 		let main_id = *definitions.module_map
 			.get(MAIN_MODULE)
@@ -2678,8 +2746,7 @@ pub struct QuCompiler {
 	) -> Result<Vec<QuOp>, QuMsg> {
 		// Main code
 		let mut code = {
-			let mut code = self.cmp_code_block(code_block, definitions)?;
-			code.add_op(End);
+			let mut code = self.cmp_module(code_block, definitions)?;
 			Ok::<QuAsmBuilder, QuMsg>(code)
 		}?;
 		

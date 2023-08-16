@@ -5,10 +5,12 @@ use std::mem::size_of;
 use std::slice::SliceIndex;
 
 use crate::ExternalFunction;
+use crate::ExternalFunctionDefinition;
 use crate::QuMsg;
 use crate::QuRegisterStruct;
 use crate::QuVoid;
 use crate::compiler::ConstantId;
+use crate::compiler::Definitions;
 use crate::compiler::ExternalFunctionId;
 use crate::compiler::FunctionGroupId;
 use crate::compiler::FunctionId;
@@ -178,14 +180,14 @@ pub struct QuStruct {
 	pub function_groups_map: HashMap<String, FunctionGroupId>,
 	
 	pub name: String,
-	pub register_fn: &'static dyn Fn() -> Vec<ExternalFunction>,
+	pub register_fn: &'static dyn Fn(&mut Definitions) -> Vec<ExternalFunctionDefinition>,
 	/// The size of the struct in bytes.
 	pub size: u8,
 
 } impl QuStruct {
 	pub fn new(
 		name:impl Into<String>,
-		fn_registerer:&'static dyn Fn() -> Vec<ExternalFunction>,
+		fn_registerer:&'static dyn Fn(&mut Definitions) -> Vec<ExternalFunctionDefinition>,
 		size:usize,
 	) -> Self {
 		let name = name.into();
@@ -250,10 +252,9 @@ pub struct QuStruct {
 			external_functions_map: Default::default(),
 			functions_map: Default::default(),
 			name: Default::default(),
-			register_fn: &|| {vec![]},
+			register_fn: &|definitions:&mut Definitions| {vec![]},
 			size: Default::default(),
 			function_groups_map: Default::default(),
 		}
     }
 }
-

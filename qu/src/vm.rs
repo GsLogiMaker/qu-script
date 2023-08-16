@@ -6,6 +6,7 @@ use crate::Bool;
 use crate::Class;
 use crate::Module;
 use crate::QuMsg;
+use crate::QuRegisterStruct;
 use crate::QuVoid;
 use crate::Vector2;
 use crate::compiler::Definitions;
@@ -13,7 +14,7 @@ use crate::compiler::ExternalFunctionId;
 use crate::compiler::FunctionId;
 use crate::import::ClassId;
 
-pub const BASE_MODULE:&str = "__base__";
+pub const FUNDAMENTALS_MODULE:&str = "__fundamentals__";
 pub const MAIN_MODULE:&str = "__main__";
 
 pub type QuExtFn = &'static dyn Fn(
@@ -30,9 +31,11 @@ pub type QuVoidExtFn = &'static dyn Fn(
 #[derive(Clone, PartialEq)]
 /// The low level operations of [`QuVm`].
 pub enum QuOp {
+	/// Calls a function defined by Qu.
 	Call(FunctionId, QuStackId),
+	/// Calls a function defined outside of Qu (like in Rust).
 	CallExt(ExternalFunctionId, Vec<QuStackId>, QuStackId),
-	// Fn name, fn body length.
+	// Fn name, fn body length. (DEPCRICATED)
 	DefineFn(FunctionId, usize),
 	End,
 	/// Moves the program counter by the given [`isize`].
@@ -53,9 +56,9 @@ pub enum QuOp {
 			Self::CallExt(
 				arg0,
 				arg1,
-				arg2
+				arg2,
 			) =>
-				write!(f, "CallExt({:?}, {:?}, {:?})", arg0, arg1, arg2),
+				write!(f, "CallExt({:?}, {:?}, {:?})", arg0, arg1, arg2,),
 			Self::DefineFn(arg0, arg1) => 
 				write!(f, "DefineFn({:?}, {:?})", arg0, arg1),
 			Self::End =>
@@ -199,15 +202,13 @@ impl From<QuStackId> for u8 {
 #[derive(Default)]
 pub struct QuVm {
 	/// Holds the outputed value of the last executed operation.
-	pub hold_is_zero: bool,
+	pub hold_is_true: bool,
 	/// Holds the value returned from a Qu script.
 	return_type: ClassId,
 	/// Contains all the defined class, funcitons, and more for the Vm. 
 	pub definitions: Definitions,
 	/// Holds the Vm's memory.
 	stack: VmStack,
-	/// The program counter.
-	pc: usize,
 
 } impl QuVm {
 
@@ -222,15 +223,13 @@ pub struct QuVm {
 	/// ```
 	pub fn new() -> Self {
 		let mut vm = QuVm { 
-			hold_is_zero: false,
+			hold_is_true: false,
 			return_type: 0.into(),
 			stack: VmStack::new(u8::MAX as usize),
-			//stack_offset: 0,
-			pc: 0,
 			..Default::default()
 		};
 		vm.definitions.define_module(
-			BASE_MODULE.into(),
+			FUNDAMENTALS_MODULE.into(),
 			&|mut b| {
 				b.register_struct::<QuVoid>()?;
 				b.register_struct::<i32>()?;
@@ -263,12 +262,16 @@ pub struct QuVm {
 	fn external_call_by_id(
 		&mut self,
 		fn_id: ExternalFunctionId,
-		parameters: &Vec<QuStackId>,
+		args: Vec<QuStackId>,
 		output_id: QuStackId,
 	) -> Result<(), QuMsg> {
-		Ok((self.definitions.get_external_function(fn_id)?.pointer)(
+		let external_func = self.definitions
+			.get_external_function(fn_id)?;
+
+		// Call the external function
+		Ok((external_func.pointer)(
 			self,
-			parameters,
+			&args,
 			output_id,
 		)?)
 	}
@@ -286,29 +289,10 @@ pub struct QuVm {
 	}
 
 
-	/// Ends the current frame.
-	fn frame_end(&mut self) -> Result<(), QuMsg>{
-		return Err(QuMsg::done());
-	}
-
-
-	/// Starts a new frame.
-	fn frame_start(&mut self, at_code:usize) {
-		self.pc = at_code;
-	}
-
-
 	#[inline]
 	/// Returns *true* if *hold* is a *true* value.
-	fn is_hold_true(&mut self) -> bool {
-		return self.hold_is_zero;
-	}
-
-
-	fn next_op<'a>(&mut self, code:&'a [QuOp]) -> &'a QuOp {
-		let val = &code[self.pc];
-		self.pc += 1;
-		return val;
+	fn is_hold_true(&self) -> bool {
+		return self.hold_is_true;
 	}
 
 
@@ -316,7 +300,6 @@ pub struct QuVm {
 		&mut self,
 		fn_id: usize,
 		ouput: QuStackId,
-		code: &[QuOp],
 	) -> Result<(), QuMsg> {
 		*self.stack.offset_mut() += usize::from(ouput);
 		// Assure registers is big enought to fit u8::MAX more values
@@ -326,66 +309,48 @@ pub struct QuVm {
 				0
 			);
 		}
-
-		let return_pc = self.pc;
 		let function = self.definitions.get_function(fn_id)?;
-		self.frame_start(function.pc_start);
-		self.loop_ops(code)?;
+		self.loop_ops(function.code_block)?;
 		*self.stack.offset_mut() -= usize::from(ouput);
-		self.pc = return_pc;
 
 		return Ok(());
-	}
-
-
-	fn op_call_fn_ext(
-		&mut self,
-		func: ExternalFunctionId,
-		args: &Vec<QuStackId>,
-		output: QuStackId,
-	) -> Result<(), QuMsg> {
-		self.external_call_by_id(
-			func,
-			args,
-			output,
-		)?;
-
-		Ok(())
 	}
 
 
 	/// Sets the start of the function with the given function_id to the
 	/// current program counter.
 	fn op_define_fn(&mut self, function_id: usize, length: usize) {
-		self.definitions.get_function_mut(function_id)
-			.unwrap()
-			.pc_start = self.pc;
-		self.pc += length;
+		todo!("Define functions with code_block rather than pc_start");
+		// self.definitions.get_function_mut(function_id)
+		// 	.unwrap()
+		// 	.pc_start = self.pc;
+		// self.pc += length;
 	}
 
 
-	fn op_jump_by(&mut self, by:isize) {
+	fn op_jump_by(&mut self, mut pc:usize, by:isize) -> usize {
 		// Add
 		if by > 0 {
-			self.pc += by as usize;
+			pc += by as usize;
 		// Subtract
 		} else {
-			self.pc -= by.abs() as usize;
+			pc -= by.abs() as usize;
 		}
-		
+		pc
 	}
 
 
-	fn op_jump_by_if_not(&mut self, by:isize) {
+	fn op_jump_by_if_not(&mut self, mut pc:usize, by:isize) -> usize{
 		if !self.is_hold_true() {
 			// Add
 			if by > 0 {
-				self.pc += by as usize;
+				pc += by as usize;
 			// Subtract
 			} else {
-				self.pc -= by.abs() as usize;
+				pc -= by.abs() as usize;
 			}
 		}
+		pc
 	}
 
 
@@ -397,11 +362,15 @@ pub struct QuVm {
 
 	#[inline]
 	/// Gets a register value.
-	pub fn read<T>(&self, at_reg:QuStackId) -> Result<&T, QuMsg> {
+	pub fn read<T: QuRegisterStruct>(&self, at_reg:QuStackId) -> Result<&T, QuMsg> {
 		let struct_data = self.definitions
 			.get_class(at_reg.class_id())?;
 		if size_of::<T>() != struct_data.size as usize {
-			return Err("Can't get register. Mismatched types. TODO: Better msg".into());
+			return Err(format!(
+				"Can't get register as type '{}' because it's type '{}'.",
+				<T as QuRegisterStruct>::name(),
+				self.definitions.get_class(at_reg.class_id()).unwrap().name,
+			).into());
 		}
 
 		let got = self.stack.read(at_reg);
@@ -430,135 +399,112 @@ pub struct QuVm {
 
 
 	/// Runs inputed bytecode in a loop.
-	fn loop_ops(&mut self, code:&[QuOp]
+	pub fn loop_ops(
+		&mut self,
+		code_block:usize,
 	) -> Result<(), QuMsg>{
-		while self.pc != code.len() {
-			let result
-				= self.do_next_op(code);
-			if let Err(e) = result {
-				if e.description == "Done" {
-					return Ok(())
-				} else {
-					return Err(e);
-				}
-			}
-		}
-		return Ok(());
-	}
-
-
-	/// Runs the next command in the given bytecode.
-	fn do_next_op(
-		&mut self, instructions:&[QuOp]
-	) -> Result<(), QuMsg> {
-		let op = self.next_op(instructions);
-		#[cfg(feature = "qu_print_vm_operations")] {
-			match op {
-				QuOp::Call(function_id, output) => {
-					println!(
-						"Call::{} -> {}",
-						self.definitions
-							.get_function(*function_id)
-							.unwrap()
-							.identity
-							.name,
-						output.readable(&self.definitions),
-					);
-				},
-				QuOp::CallExt(function_id, args, output) => {
-					let mut arg_string = "".to_owned();
-					for arg in args {
-						arg_string.extend(
-							arg.readable(&self.definitions).chars()
+		let mut pc = 0;
+		while pc != self.definitions.byte_code_blocks[code_block].len() {
+			let op = &self.definitions.byte_code_blocks[code_block][pc];
+			#[cfg(feature = "qu_print_vm_operations")] {
+				match op {
+					QuOp::Call(function_id, output) => {
+						let params = &self.definitions
+							.get_function(*function_id)?
+							.identity.parameters;
+						
+						let mut args_string = String::from("");
+						for arg in params {
+							args_string.push_str(&format!(
+								"{}, ",
+								self.definitions
+									.get_class(*arg)
+									.unwrap().name,
+								));
+						}
+						println!(
+							"Call::{}({args_string}) -> {}",
+							self.definitions
+								.get_function(*function_id)
+								.unwrap()
+								.identity
+								.name,
+							output.readable(&self.definitions),
 						);
-						arg_string.push(',');
-						arg_string.push(' ');
-					}
-					println!(
-						"CallExt::{}({}) -> {}",
-						self.definitions
-							.get_external_function(*function_id)
-							.unwrap()
-							.name,
-						arg_string,
-						output.readable(&self.definitions),
-					);
-				},
-				QuOp::End => {
-					println!(
-						"End",
-					);
-				},
-				QuOp::DefineFn(function_id, length) => {
-					println!(
-						"DefineFn({}, {})",
-						self.definitions
-							.get_function(*function_id)
-							.unwrap()
-							.identity
-							.name,
-						length,
-					);
-				},
-				QuOp::JumpByIfNot(by) => {
-					println!(
-						"JumpBy({})IfNot hold:{}",
-						by,
-						self.is_hold_true(),
-					);
-				},
-				QuOp::JumpBy(by) => {
-					println!(
-						"JumpBy {by}",
-					);
-				},
-				QuOp::Value(value, output) => {
-					println!(
-						"Value {} -> {}",
-						value,
-						output.readable(&self.definitions),
-					);
-				},
-				QuOp::Return(return_type) => {
-					println!(
-						"Return:{}",
-						self.definitions.get_class(*return_type).unwrap().name,
-					);
-				},
+					},
+					QuOp::CallExt(function_id, args, output) => {
+						let mut args_string = String::from("");
+						for arg in args {
+							args_string.push_str(&format!(
+								"{}:{}, ",
+								arg.0,
+								self.definitions
+									.get_class(arg.class_id())
+									.unwrap().name,
+								));
+						}
+						println!(
+							"CallExt::{}({args_string}) -> {}",
+							self.definitions
+								.get_external_function(*function_id)
+								.unwrap()
+								.name,
+							output.readable(&self.definitions),
+						);
+					},
+					QuOp::End => {
+						println!("End");
+					},
+					QuOp::DefineFn(function_id, length) => {
+						println!(
+							"DefineFn({}, {})",
+							self.definitions
+								.get_function(*function_id)
+								.unwrap()
+								.identity
+								.name,
+							length,
+						);
+					},
+					QuOp::JumpByIfNot(by) => {
+						println!(
+							"JumpBy({})IfNot hold:{}",
+							by,
+							self.is_hold_true(),
+						);
+					},
+					QuOp::JumpBy(by) => {
+						println!(
+							"JumpBy {by}",
+						);
+					},
+					QuOp::Value(value, output) => {
+						println!(
+							"Value {} -> {}",
+							value,
+							output.readable(&self.definitions),
+						);
+					},
+					QuOp::Return(return_type) => {
+						println!(
+							"Return:{}",
+							self.definitions.get_class(*return_type).unwrap().name,
+						);
+					},
+				};
+			}
+			match op {
+				QuOp::Call(fn_id, ouput) => self.op_call_fn(*fn_id, *ouput)?,
+				QuOp::CallExt(fn_id, args, output) => self.external_call_by_id(*fn_id, args.clone(), *output)?,
+				QuOp::End => break,
+				QuOp::DefineFn(fn_id, length) => self.op_define_fn(*fn_id, *length),
+				QuOp::JumpByIfNot(by) => pc = self.op_jump_by_if_not(pc, *by),
+				QuOp::JumpBy( by) => pc = self.op_jump_by(pc, *by),
+				QuOp::Value(value, output) => self.op_load_int(*value, *output),
+				QuOp::Return(return_type) => self.return_type = *return_type,
 			};
+			pc += 1;
 		}
-		match op {
-			QuOp::Call(fn_id, ouput) => self.op_call_fn(*fn_id, *ouput, instructions)?,
-			QuOp::CallExt(fn_id, args, output) => self.op_call_fn_ext(*fn_id, args, *output)?,
-			QuOp::End => self.frame_end()?,
-			QuOp::DefineFn(fn_id, length) => self.op_define_fn(*fn_id, *length),
-			QuOp::JumpByIfNot(by) => self.op_jump_by_if_not(*by),
-			QuOp::JumpBy(by) => self.op_jump_by(*by),
-			QuOp::Value(value, output) => self.op_load_int(*value, *output),
-			QuOp::Return(return_type) => self.return_type = *return_type,
-		};
-		return Ok(());
-	}
-
-
-	pub fn run_ops(&mut self, instructions:&[QuOp]
-	) -> Result<(), QuMsg> {
-		self.pc = 0;
-		while self.pc != instructions.len() {
-			match self.do_next_op(&instructions) {
-				// No errors, continue running
-				Ok(_) => {/*pass*/},
-				// Encountered error; check if done and finish, otherwise
-				// propogate error
-				Err(msg) => {
-					if msg.description == "Done" {
-						break;
-					}
-					return Err(msg);
-				},
-			};
-		}
-
 		return Ok(());
 	}
 }

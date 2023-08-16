@@ -125,7 +125,7 @@ pub struct Qu<'a> {
 	}
 
 
-	fn register_fn(&mut self, fn_data:ExternalFunction) -> Result<(), QuMsg> {
+	fn register_fn(&mut self, fn_data:ExternalFunctionDefinition) -> Result<(), QuMsg> {
 		self.vm.definitions.register_function(fn_data)
 	}
 
@@ -135,7 +135,7 @@ pub struct Qu<'a> {
 	}
 
 
-	pub fn read<'b, T:'a>(
+	pub fn read<'b, T:'a + QuRegisterStruct>(
 		&self, at_reg:QuStackId
 	) -> Result<&T, QuMsg> {
 		self.vm.read::<T>(at_reg)
@@ -165,21 +165,19 @@ pub struct Qu<'a> {
 	/// ```
 	pub fn run(&mut self, script:&str) -> Result<(), QuMsg> {
 		let code = self.compile(script)?;
-		self.run_ops(&code)
+		self.vm.loop_ops(self.vm.definitions.byte_code_blocks.len()-1)
 	}
 
 
-	pub fn run_and_get<T:'a>(&mut self, script:&str) -> Result<&T, QuMsg> {
+	pub fn run_and_get<T:'a + QuRegisterStruct>(
+		&mut self,
+		script:&str,
+	) -> Result<&T, QuMsg> {
 		self.run(script)?;
 		let return_id = self.vm.return_value_id();
 		self.read(
 			QuStackId::new(0, return_id)
 		)
-	}
-
-
-	fn run_ops(&mut self, instructions:&[QuOp]) -> Result<(), QuMsg> {
-		return self.vm.run_ops(instructions);
 	}
 
 }
@@ -452,8 +450,7 @@ mod lib {
 	}
 
 
-	// TODO: implement accessing classes like variables
-	//#[test]
+	#[test]
 	fn class_dot_notation() {
 		let mut qu = Qu::new();
 		let result:i32 = *qu.run_and_get("return int.sub(5, 8)").unwrap();
@@ -529,10 +526,9 @@ mod lib {
 	}
 
 
-	// TODO: Allow accessing global items from between invocations of Qu::run
-	//#[test]
+	#[test]
 	fn cross_run_accessing() {
-		// TODO: Allow this:
+		// Test cross accessing functions
 		let mut qu = Qu::new(); // register_fns is called once in new().
 		qu.run("
 			fn thrice(num int) int:
@@ -542,12 +538,24 @@ mod lib {
 			return thrice(2)
 		").unwrap();
 		assert_eq!(num, 2*3);
+
+		// TODO: Allow accessing global variables across invocations of 'run'.
+		// Test cross accessing variables
+		// let mut qu = Qu::new();
+		// qu.run("
+		// 	var first int = 5
+		// 	var second int = 20
+		// ").unwrap();
+		// let num = *qu.run_and_get::<i32>("
+		// 	return first * second
+		// ").unwrap();
+		// assert_eq!(num, 5*20);
 	}
 
 
 	// TODO: Prevent functions definitions from having multiple parameters of
 	// 	the same name 
-	//#[test]
+	// #[test]
 	fn function_multiple_parameters_same_name() {
 		let mut qu = Qu::new();
 		let script = r#"
