@@ -33,13 +33,14 @@ extern crate lazy_static;
 mod compiler;
 mod errors;
 mod import;
-mod objects;
+pub mod objects;
 mod parser;
 mod tokens;
 mod vm;
 
 use std::marker::PhantomData;
 
+use compiler::RegistrationMethod;
 use tokens::TOKEN_TYPE_NAME;
 use tokens::QuToken;
 pub use errors::QuMsg;
@@ -60,13 +61,15 @@ pub use vm::QuStackId;
 /// # fn main() {run_test().unwrap();}
 /// # fn run_test() -> Result<(), qu::QuMsg>{
 /// let mut qu = Qu::new();
+/// 
+/// // TODO: Fix functions with no parameters being uncallable.
 /// qu.run(r#"
-/// 	fn adder() int:
+/// 	fn adder(a int) int:
 /// 		var left int = 2
 /// 		var right int = 5
 /// 		return left + right
 /// 
-/// 	adder()
+/// 	adder(0)
 /// "#)?;
 /// # return Ok(());
 /// # }
@@ -120,18 +123,9 @@ pub struct Qu<'a> {
 	}
 
 
-	pub fn register_fns(&mut self) -> Result<(), QuMsg>{
-		self.vm.definitions.register_functions()
-	}
-
-
-	fn register_fn(&mut self, fn_data:ExternalFunctionDefinition) -> Result<(), QuMsg> {
-		self.vm.definitions.register_function(fn_data)
-	}
-
-
-	pub fn register_struct<S:QuRegisterStruct+'static>(&mut self) {
-		unimplemented!()
+	/// Registers external items (such as functions, classes, and modules).
+	pub fn register(&mut self, body: &RegistrationMethod) -> Result<(), QuMsg>{
+		self.vm.definitions.register(body)
 	}
 
 
@@ -152,14 +146,16 @@ pub struct Qu<'a> {
 	/// # Example
 	/// 
 	/// ```
-	/// use qu::Qu;
-	/// use qu::QuMsg;
 	/// 
+	/// 
+	/// # use qu::QuMsg;
 	/// # fn main(){example().unwrap()}
 	/// # fn example() -> Result<(), QuMsg> {
+	/// use qu::Qu;
+	/// 
 	/// let mut qu = Qu::new();
 	/// 
-	/// qu.run("var count = 5 + 6")?;
+	/// qu.run("var count int = 5 + 6")?;
 	/// # return Ok(());
 	/// # }
 	/// ```
@@ -431,14 +427,6 @@ mod lib {
 		"#;
 		let outcome:i32 = *qu.run_and_get(script).unwrap();
 		assert_eq!(outcome, (1+2) + (3+4+5));
-	}
-
-
-	#[test]
-	fn repeated_register_functions() {
-		let mut qu = Qu::new();
-		qu.register_fns().unwrap();
-		qu.register_fns().unwrap();
 	}
 
 

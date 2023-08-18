@@ -1,14 +1,19 @@
 
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::fmt::format;
 use std::mem::size_of;
 use std::slice::SliceIndex;
 
 use crate::ExternalFunction;
 use crate::ExternalFunctionDefinition;
+use crate::Module;
 use crate::QuMsg;
 use crate::QuRegisterStruct;
+use crate::QuStackId;
+use crate::QuVm;
 use crate::QuVoid;
+use crate::Vector2;
 use crate::compiler::ConstantId;
 use crate::compiler::Definitions;
 use crate::compiler::ExternalFunctionId;
@@ -17,8 +22,65 @@ use crate::compiler::FunctionId;
 use crate::compiler::FunctionIdentity;
 use crate::compiler::ItemId;
 use crate::compiler::FunctionGroup;
+use crate::compiler::ModuleId;
+use crate::compiler::ModuleMetadata;
 use crate::compiler::SomeFunctionId;
 
+
+pub struct ArgsAPI<'a> {
+	pub(crate) vm: &'a mut QuVm,
+	pub(crate) arg_ids: &'a [QuStackId],
+	pub(crate) out_id: QuStackId,
+} impl<'a> ArgsAPI<'a> {
+	/// Gets a reference to the value of the function argument at `index`.
+	pub fn get<T:QuRegisterStruct>(&self, index:usize) -> Result<&T, QuMsg> {
+		self.vm.read::<T>(self.arg_ids[index])
+	}
+
+	/// Sets the return value of the function to `value`.
+	pub fn set<T:QuRegisterStruct>(&mut self, value:T) {
+		self.vm.write::<T>(self.out_id, value);
+	}
+
+	pub fn set_hold(&mut self, value: bool) {
+		self.vm.hold_is_true = value;
+	}
+}
+
+pub type ExternalFunctionPointer = dyn Fn(&mut ArgsAPI) -> Result<(), QuMsg>;
+
+pub struct ModuleBuilder<'a> {
+	pub(crate) definitions: &'a mut Definitions,
+	pub(crate) module_id: ModuleId,
+} impl<'a> ModuleBuilder<'a> {
+	/// Define a class in this module.
+	pub fn add_class<T:QuRegisterStruct+'static>(
+		&mut self
+	) -> Result<ClassId, QuMsg> {
+		self.definitions.register_module_struct::<T>(self.module_id)
+	}
+
+	/// Define a function in this module.
+	pub fn add_function(
+		&mut self,
+		name: String,
+		args: &[ClassId],
+		out: ClassId,
+		body: &'static ExternalFunctionPointer,
+	) -> Result<(), QuMsg> {
+		self.definitions.register_module_function(self.module_id, ExternalFunctionDefinition {
+			name: name,
+			pointer: body,
+			parameters: Vec::from(args),
+			return_type: out,
+		})?;
+		self.definitions.register_functions()
+	}
+
+	pub fn get_module(&self, name:&str) -> Result<&ModuleMetadata, QuMsg> {
+		self.definitions.get_module_by_name(name)
+	}
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 /// An ID for an external function.
@@ -147,6 +209,18 @@ pub struct QuRegistered {
 	}
 }
 
+
+pub type ModuleBody = dyn Fn(&mut ModuleBuilder) -> Result<(), QuMsg>;
+pub struct Registerer<'a> {
+	pub(crate) definitions: &'a mut Definitions,
+} impl<'a> Registerer<'a> {
+	pub fn add_module(
+		&mut self, name:String,
+		body:&ModuleBody
+	) -> Result<ModuleId, QuMsg> {
+		self.definitions.define_module(name, body)
+	}
+}
 
 #[derive(Clone, Copy, Debug, Default, Hash, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ClassId(pub usize);

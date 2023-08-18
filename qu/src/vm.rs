@@ -1,9 +1,20 @@
 
+use std::collections::HashSet;
 use std::fmt::Debug;
+use std::hash::Hash;
 use std::mem::size_of;
+use std::sync::Arc;
+
+use core::ops::Deref;
+use std::sync::Mutex;
+use std::sync::RwLock;
+use std::sync::Weak;
+
+use lazy_static::__Deref;
 
 use crate::Bool;
 use crate::Class;
+use crate::ExternalFunctionDefinition;
 use crate::Module;
 use crate::QuMsg;
 use crate::QuRegisterStruct;
@@ -12,10 +23,15 @@ use crate::Vector2;
 use crate::compiler::Definitions;
 use crate::compiler::ExternalFunctionId;
 use crate::compiler::FunctionId;
+use crate::import;
+use crate::import::ArgsAPI;
 use crate::import::ClassId;
+use crate::objects;
+use crate::objects::fundamentals_module;
+use crate::objects::math_module;
 
-pub const FUNDAMENTALS_MODULE:&str = "__fundamentals__";
 pub const MAIN_MODULE:&str = "__main__";
+
 
 pub type QuExtFn = &'static dyn Fn(
 	&mut QuVm,
@@ -228,31 +244,12 @@ pub struct QuVm {
 			stack: VmStack::new(u8::MAX as usize),
 			..Default::default()
 		};
-		vm.definitions.define_module(
-			FUNDAMENTALS_MODULE.into(),
-			&|mut b| {
-				b.register_struct::<QuVoid>()?;
-				b.register_struct::<i32>()?;
-				b.register_struct::<Bool>()?;
-				b.register_struct::<Class>()?;
-				b.register_struct::<Module>()?;
-				b.register_functions()?;
-				Ok(())
-			},
-		).unwrap();
+		vm.definitions.register(&fundamentals_module).unwrap();
+		vm.definitions.register(&math_module).unwrap();
 
 		vm.definitions.define_module(
 			MAIN_MODULE.into(),
 			&|mut b| {Ok(())},
-		).unwrap();
-
-		vm.definitions.define_module(
-			"math".into(),
-			&|mut b| {
-				b.register_struct::<Vector2>()?;
-				b.register_functions()?;
-				Ok(())
-			},
 		).unwrap();
 
 		vm
@@ -265,15 +262,17 @@ pub struct QuVm {
 		args: Vec<QuStackId>,
 		output_id: QuStackId,
 	) -> Result<(), QuMsg> {
-		let external_func = self.definitions
-			.get_external_function(fn_id)?;
+		let fn_pointer = self.definitions
+			.get_external_function(fn_id)?
+			.pointer;
 
 		// Call the external function
-		Ok((external_func.pointer)(
-			self,
-			&args,
-			output_id,
-		)?)
+		let mut api = ArgsAPI {
+			vm: self,
+			arg_ids: &args,
+			out_id: output_id,
+		};
+		Ok((fn_pointer)(&mut api,)?)
 	}
 
 

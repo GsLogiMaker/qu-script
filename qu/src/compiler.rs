@@ -9,9 +9,12 @@ use crate::QuParser;
 use crate::QuRegisterStruct;
 use crate::QuStackId;
 use crate::QuVoid;
+use crate::import::ModuleBody;
+use crate::import::ModuleBuilder;
 use crate::import::QuRegistered;
 use crate::import::QuStruct;
 use crate::import::ClassId;
+use crate::import::Registerer;
 use crate::objects::Bool;
 use crate::parser::KEYWORD_IF;
 use crate::parser::QuOperator;
@@ -19,13 +22,14 @@ use crate::parser::parsed::*;
 
 use crate::QuMsg;
 use crate::QuToken;
-use crate::vm::FUNDAMENTALS_MODULE;
+use crate::objects::FUNDAMENTALS_MODULE;
 use crate::vm::MAIN_MODULE;
 use crate::vm::Stack;
 
 use core::panic;
 use std::collections::HashMap;
 use std::fmt::Display;
+use std::fmt::format;
 use std::mem::size_of;
 use std::hash::Hash;
 use std::mem::take;
@@ -502,6 +506,7 @@ enum ContextFrame {
 }
 
 
+pub type RegistrationMethod = dyn Fn(&mut Registerer) -> Result<(), QuMsg>;
 #[derive(Debug, Default, Clone)]
 pub struct Definitions {
 	pub constants: GrowingStack,
@@ -766,22 +771,30 @@ pub struct Definitions {
 	pub fn define_module(
 		&mut self,
 		name: String,
-		body: &dyn Fn(ModuleBuilder) -> Result<(), QuMsg>,
+		body: &ModuleBody,
 	) -> Result<ModuleId, QuMsg> {
-		assert!(!self.module_map.contains_key(&name));
-		let id = self.modules.len();
+		if self.module_map.contains_key(&name) {
+			return Err(format!(
+				"Couldn't register module '{name}'. A module with that name has already been registered."
+			).into())
+		}
+		let module_id = self.modules.len();
 		self.modules.push(ModuleMetadata {
 			name: name.clone(),
-			id,
+			id: module_id,
 			..Default::default()
 		});
-		self.module_map.insert(name, id);
+		self.module_map.insert(name, module_id);
 		
 		assert_eq!(self.with_unregistered_functions.len(), 0, "Some functions were not registered");
-		(body)(ModuleBuilder(self, id))?;
+		let mut builder = ModuleBuilder {
+			definitions: self,
+			module_id,
+		};
+		(body)(&mut builder)?;
 		assert_eq!(self.with_unregistered_functions.len(), 0, "Some functions were not registered");
 		
-		Ok(id)
+		Ok(module_id)
 	}
 
 
@@ -1070,6 +1083,16 @@ pub struct Definitions {
 		).into())
 	}
 
+	pub fn register(
+		&mut self,
+		body:&RegistrationMethod,
+	) -> Result<(), QuMsg> {
+		let mut registerer = Registerer {
+			definitions: self,
+		};
+		body(&mut registerer)?;
+		Ok(())
+	}
 
 	/// Registers the functions of the previously registered structs to be used
 	/// in the Qu language.
@@ -1190,7 +1213,7 @@ pub struct Definitions {
 	pub fn register_module_struct<S:QuRegisterStruct+'static>(
 		&mut self,
 		module_id: ModuleId,
-	) -> Result<(), QuMsg> {
+	) -> Result<ClassId, QuMsg> {
 		let class_name = <S as QuRegisterStruct>::name();
 
 		// Manage classes map
@@ -1209,7 +1232,7 @@ pub struct Definitions {
 		);
 		self.classes.push(class);
 
-		Ok(())
+		Ok(class_id)
 
 	}
 }
@@ -1360,8 +1383,8 @@ pub struct GrowingStack {
 }
 
 
-pub struct ModuleBuilder<'a>(&'a mut Definitions, ModuleId);
-impl<'a> ModuleBuilder<'a> {
+pub struct ModuleBuilder2<'a>(&'a mut Definitions, ModuleId);
+impl<'a> ModuleBuilder2<'a> {
 	pub fn register_functions(
 		&mut self
 	) -> Result<(), QuMsg> {
@@ -1371,7 +1394,8 @@ impl<'a> ModuleBuilder<'a> {
 	pub fn register_struct<S:QuRegisterStruct+'static>(
 		&mut self
 	) -> Result<(), QuMsg> {
-		self.0.register_module_struct::<S>(self.1)
+		self.0.register_module_struct::<S>(self.1);
+		Ok(())
 	}
 }
 
@@ -2259,6 +2283,10 @@ pub struct QuCompiler {
 		match id {
 			SomeFunctionId::Qu(function_id) => {
 				builder.add_op(QuOp::Call(function_id, store_to));
+				builder.return_type = definitions
+					.get_function(function_id)?
+					.identity
+					.return_type;
 			},
 			SomeFunctionId::External(external_function_id) => {
 				builder.add_op(QuOp::CallExt(
@@ -2266,6 +2294,9 @@ pub struct QuCompiler {
 					parameter_ids,
 					store_to
 				));
+				builder.return_type = definitions
+					.get_external_function(external_function_id)?
+					.return_type;
 			},
 		}
 
