@@ -1,4 +1,5 @@
 
+use std::alloc::Layout;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::mem::size_of;
@@ -189,11 +190,15 @@ pub struct QuStruct {
 		size:usize,
 	) -> Self {
 		let name = name.into();
-		assert!(size < u8::MAX as usize);
+		let size = Layout::from_size_align(size, 4)
+			.unwrap()
+			.pad_to_align()
+			.size()
+			as u8;
 		Self {
 			name,
 			register_fn: fn_registerer,
-			size: size as u8,
+			size,
 			constants_map: Default::default(),
 			external_functions_map: Default::default(),
 			functions_map: Default::default(),

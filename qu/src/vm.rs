@@ -1,7 +1,9 @@
 
 use std::fmt::Debug;
 use std::mem::size_of;
+use std::path::Iter;
 use std::rc::Rc;
+use std::vec;
 
 use crate::Class;
 use crate::Module;
@@ -466,7 +468,7 @@ pub struct QuVm {
 				},
 				QuOp::CallExt(function_id, args, output) => {
 					let mut arg_string = "".to_owned();
-					for arg in args {
+					for arg in args.iter() {
 						arg_string.extend(
 							arg.readable(&self.definitions).chars()
 						);
@@ -523,6 +525,9 @@ pub struct QuVm {
 						"Return:{}",
 						self.definitions.get_class(*return_type).unwrap().name,
 					);
+				},
+    			QuOp::Literal(literal, pointer) => {
+					println!("{:}& = {:?} [Literal]", pointer.offset, literal);
 				},
 			};
 		}
@@ -612,6 +617,10 @@ struct VmStack {
 /// Note: The safety of this pointer relies on the VM's memory nevery moving.
 pub struct VmStackPointer {
 	offset: usize,
+} impl VmStackPointer {
+	fn readable(&self, definitions: &Definitions) -> String {
+		format!("{}", self.offset)
+	}
 } impl From<usize> for VmStackPointer {
 	fn from(offset: usize) -> Self {
 		VmStackPointer { offset }
@@ -632,6 +641,10 @@ impl From<VmStackPointer> for usize {
 #[derive(Debug, Clone, PartialEq)]
 pub struct VmStackPointers {
 	pointers: Vec<VmStackPointer>,
+} impl VmStackPointers {
+	fn iter(&self) -> core::slice::Iter<VmStackPointer> {
+		self.pointers.iter()
+	}
 } impl From<Vec<QuStackId>> for VmStackPointers {
     fn from(value: Vec<QuStackId>) -> Self {
         VmStackPointers {

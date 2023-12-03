@@ -2277,7 +2277,7 @@ pub struct QuCompiler {
 	) -> Result<QuAsmBuilder, QuMsg> {
 		let mut builder = QuAsmBuilder::new();
 
-		let mut name:&str = &call_expression.calling.into_identity();
+		let name:&str = &call_expression.calling.into_identity();
 		let mut function_identity = FunctionIdentity {
 			name: name.to_owned(),
 			return_type: store_to.class_id(),
