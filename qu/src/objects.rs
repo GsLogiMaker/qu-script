@@ -25,7 +25,7 @@ pub(crate) const FUNDAMENTALS_MODULE:&str = "__fundamentals__";
 macro_rules! qufn {
 	($module_builder:ident, $api:ident, $name:ident($($param:ident),*) $return:ident $block:block) => {
 		$module_builder.add_function(
-			stringify!($name).into(),
+			stringify!($name),
 			&[$($param),*],
 			$return,
 			&|$api| $block
@@ -34,7 +34,7 @@ macro_rules! qufn {
 	($module_builder:ident, $api:ident, $for_class:ident.$name:ident($($param:ident),*) $return:ident $block:block) => {
 		$module_builder.add_class_static_function(
 			$for_class,
-			stringify!($name).into(),
+			stringify!($name),
 			&[$($param),*],
 			$return,
 			&|$api| $block
@@ -60,7 +60,7 @@ macro_rules! qufn {
 /// ```
 pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 	registerer.add_module(
-		FUNDAMENTALS_MODULE.into(),
+		FUNDAMENTALS_MODULE,
 		&|m| {
 			let void = m.add_class::<QuVoid>()?;
 			let int = m.add_class::<i32>()?;
@@ -77,7 +77,7 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 
 			// int functions
 			{
-				m.add_class_static_function(int, CONSTRUCTOR_NAME.into(),
+				m.add_class_static_function(int, CONSTRUCTOR_NAME,
 					&[],
 					int,
 					&|api| {
@@ -85,7 +85,7 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 						Ok(())
 					}
 				)?;
-				m.add_class_static_function(int, CONSTRUCTOR_NAME.into(),
+				m.add_class_static_function(int, CONSTRUCTOR_NAME,
 					&[int],
 					int,
 					&|api| {
@@ -93,7 +93,7 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 						Ok(())
 					}
 				)?;
-				m.add_class_static_function(int, CONSTRUCTOR_NAME.into(),
+				m.add_class_static_function(int, CONSTRUCTOR_NAME,
 					&[bool],
 					int,
 					&|api| {
@@ -173,7 +173,7 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 
 			// bool functions
 			{
-				m.add_class_static_function(bool, CONSTRUCTOR_NAME.into(),
+				m.add_class_static_function(bool, CONSTRUCTOR_NAME,
 					&[],
 					bool,
 					&|api| {
@@ -181,7 +181,7 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 						Ok(())
 					}
 				)?;
-				m.add_class_static_function(bool, CONSTRUCTOR_NAME.into(),
+				m.add_class_static_function(bool, CONSTRUCTOR_NAME,
 					&[bool],
 					bool,
 					&|api| {
@@ -189,7 +189,7 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 						Ok(())
 					}
 				)?;
-				m.add_class_static_function(bool, CONSTRUCTOR_NAME.into(),
+				m.add_class_static_function(bool, CONSTRUCTOR_NAME,
 					&[int],
 					bool,
 					&|api| {
@@ -245,13 +245,13 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 
 pub fn math_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 	registerer.add_module(
-		"math".into(),
+		"math",
 		&|m| {
 			let vector2 = m.add_class::<Vector2>()?;
 			let fundamentals = m.get_module(FUNDAMENTALS_MODULE)?;
 			let int = fundamentals.get_class_id("int")?;
 			m.add_function(
-				"foo".into(),
+				"foo",
 				&[int],
 				int,
 				&|api:&mut ArgsAPI| {

@@ -62,7 +62,6 @@ pub use vm::QuStackId;
 /// # fn run_test() -> Result<(), qu::QuMsg>{
 /// let mut qu = Qu::new();
 /// 
-/// // TODO: Fix functions with no parameters being uncallable.
 /// qu.run(r#"
 /// 	fn adder(a int) int:
 /// 		var left int = 2
@@ -124,11 +123,56 @@ pub struct Qu<'a> {
 
 
 	/// Registers external items (such as functions, classes, and modules).
+	/// 
+	/// # Example
+	/// 
+	/// ```
+	/// # use qu::QuMsg;
+	/// # fn main(){example().unwrap()}
+	/// # fn example() -> Result<(), QuMsg> {
+	/// use qu::Qu;
+	/// use qu::QuRegisterStruct;
+	/// 
+	/// struct MyClass(i32);
+	/// impl QuRegisterStruct for MyClass {
+	/// 	fn name() -> &'static str {
+	/// 		"MyClass"
+	/// 	}
+	/// }
+	///
+	/// let mut qu = Qu::new();
+	/// qu.register(&|r| {
+	/// 	r.add_module("my_module", &|m| {
+	/// 		let my_class_id = m.add_class::<MyClass>()?;
+	/// 		m.add_class_static_function(
+	/// 			my_class_id,
+	/// 			":new",
+	/// 			&[],
+	/// 			my_class_id,
+	/// 			&|api| {
+	/// 				api.set(MyClass(25));
+	/// 				Ok(())
+	/// 			}
+	/// 		)?;
+	/// 		Ok(())
+	/// 	})?;
+	/// 	Ok(())
+	/// }).unwrap();
+	///
+	/// let value:&MyClass = qu.run_and_get("
+	/// 	import my_module.MyClass
+	/// 	return MyClass()
+	/// ").unwrap();
+	/// assert_eq!(value.0, 25);
+	/// # return Ok(());
+	/// # }
+	/// ```
 	pub fn register(&mut self, body: &RegistrationMethod) -> Result<(), QuMsg>{
 		self.vm.definitions.register(body)
 	}
 
 
+	/// 
 	pub fn read<'b, T:'a + QuRegisterStruct>(
 		&self, at_reg:QuStackId
 	) -> Result<&T, QuMsg> {
@@ -146,7 +190,6 @@ pub struct Qu<'a> {
 	/// # Example
 	/// 
 	/// ```
-	/// 
 	/// # use qu::QuMsg;
 	/// # fn main(){example().unwrap()}
 	/// # fn example() -> Result<(), QuMsg> {

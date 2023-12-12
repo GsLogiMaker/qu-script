@@ -64,13 +64,13 @@ pub struct ModuleBuilder<'a> {
 	/// Define a function in this module.
 	pub fn add_function(
 		&mut self,
-		name: String,
+		name: impl Into<String>,
 		args: &[ClassId],
 		out: ClassId,
 		body: &'static ExternalFunctionPointer,
 	) -> Result<(), QuMsg> {
 		self.definitions.register_function_in_module(self.module_id, ExternalFunctionDefinition {
-			name: name,
+			name: name.into(),
 			pointer: body,
 			parameters: Vec::from(args),
 			return_type: out,
@@ -81,7 +81,7 @@ pub struct ModuleBuilder<'a> {
 	pub fn add_class_static_function(
 		&mut self,
 		for_class: ClassId,
-		name: String,
+		name: impl Into<String>,
 		args: &[ClassId],
 		out: ClassId,
 		body: &'static ExternalFunctionPointer,
@@ -89,7 +89,7 @@ pub struct ModuleBuilder<'a> {
 		self.definitions.register_static_function_in_class(
 			for_class,
 			ExternalFunctionDefinition {
-				name: name,
+				name: name.into(),
 				pointer: body,
 				parameters: Vec::from(args),
 				return_type: out,
@@ -236,10 +236,10 @@ pub struct Registerer<'a> {
 	pub(crate) definitions: &'a mut Definitions,
 } impl<'a> Registerer<'a> {
 	pub fn add_module(
-		&mut self, name:String,
+		&mut self, name:impl Into<String>,
 		body:&ModuleBody
 	) -> Result<ModuleId, QuMsg> {
-		self.definitions.define_module(name, body)
+		self.definitions.define_module(name.into(), body)
 	}
 }
 
