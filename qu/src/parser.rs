@@ -1,6 +1,4 @@
 
-use std::convert::identity;
-use std::fmt::format;
 use std::vec;
 
 use crate::errors;

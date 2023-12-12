@@ -1,7 +1,6 @@
 
 use crate::Class;
 use crate::ExternalFunction;
-use crate::ExternalFunctionDefinition;
 use crate::Module;
 use crate::QuOp;
 use crate::QuOp::*;
@@ -16,7 +15,10 @@ use crate::import::QuStruct;
 use crate::import::ClassId;
 use crate::import::Registerer;
 use crate::objects::Bool;
+use crate::parser::KEYWORD_BOOL_FALSE;
+use crate::parser::KEYWORD_BOOL_TRUE;
 use crate::parser::KEYWORD_IF;
+use crate::parser::KEYWORD_WHILE;
 use crate::parser::QuOperator;
 use crate::parser::parsed::*;
 
@@ -33,57 +35,6 @@ use std::hash::Hash;
 
 pub(crate) const CONSTRUCTOR_NAME:&str = ":new";
 // TODO: Fix compiler's documentation
-
-#[derive(Debug, Clone)]
-pub struct ClassMetadata {
-	constants_map: HashMap<String, ConstantId>,
-	external_functions_map: HashMap<FunctionIdentity, ExternalFunctionId>,
-	functions_map: HashMap<FunctionIdentity, ConstantId>,
-
-	/// The name of this class.
-	name: String,
-	/// The ID of this class.
-	id: usize,
-} impl Default for ClassMetadata {
-	fn default() -> Self {
-		Self {
-			name: "void".to_owned(),
-			constants_map: Default::default(),
-			external_functions_map: Default::default(),
-			functions_map: Default::default(),
-			id: Default::default(),
-		}
-	}
-}
-
-
-#[derive(Debug, Clone)]
-enum CodeItem<'a> {
-	Class(&'a ClassMetadata),
-	Constant,
-	ExternalFunction(&'a ExternalFunction),
-	ExternalClass(&'a QuStruct),
-	Function(&'a FunctionMetadata),
-	Variable,
-} impl<'a> From<&'a ModuleItem> for CodeItem<'a> {
-	fn from(value: &'a ModuleItem) -> Self {
-		match value {
-			ModuleItem::Class(class_metadata) => {
-				CodeItem::Class(&class_metadata)
-			},
-			ModuleItem::Constant => {
-				CodeItem::Constant
-			},
-			ModuleItem::Function(function_metadata) => {
-				CodeItem::Function(&function_metadata)
-			},
-			ModuleItem::StaticVariable => {
-				CodeItem::Variable
-			},
-		}
-	}
-}
-
 
 pub type ConstantId = usize;
 
@@ -144,7 +95,6 @@ struct Context {
 					static_type, definitions,
 				)?;
 				self.variables.push(VariableMetadata {
-					name: name,
 					stack_id,
 				});
 
@@ -162,7 +112,6 @@ struct Context {
 					static_type, definitions,
 				)?;
 				self.variables.push(VariableMetadata {
-					name: name,
 					stack_id,
 				});
 
@@ -183,7 +132,7 @@ struct Context {
 			ContextFrame::Class(_, frame) => frame,
 			ContextFrame::Function(_, frame) => frame,
 		};
-		let scope = frame.scopes.pop().unwrap();
+		frame.scopes.pop().unwrap();
 	}
 
 
@@ -283,7 +232,7 @@ struct Context {
 							break 'frames Some(item);
 						}
 					},
-					ContextFrame::Function(function_id, _) => {
+					ContextFrame::Function(_function_id, _) => {
 						continue;
 					},
 				}
@@ -412,7 +361,7 @@ struct Context {
 							}
 						}
 					},
-					ContextFrame::Function(function_id, _) => {
+					ContextFrame::Function(_function_id, _) => {
 						continue;
 					},
 				}
@@ -679,7 +628,7 @@ pub type RegistrationMethod = dyn Fn(&mut Registerer) -> Result<(), QuMsg>;
 pub struct Definitions {
 	pub constants: GrowingStack,
 	pub classes: Vec<QuStruct>,
-	pub external_functions: Vec<ExternalFunctionDefinition>,
+	pub external_functions: Vec<ExternalFunction>,
 	pub functions: Vec<FunctionMetadata>,
 	pub function_groups: Vec<FunctionGroup>,
 	pub modules: Vec<ModuleMetadata>,
@@ -934,7 +883,7 @@ pub struct Definitions {
 			*function_group_map.get(&identity.name).unwrap()
 		};
 
-		let mut group = &mut self.function_groups[group_id];
+		let group = &mut self.function_groups[group_id];
 		if group.map.contains_key(&identity) {
 			todo!("Return error here")
 		}
@@ -950,23 +899,9 @@ pub struct Definitions {
 		self.find_class_id(<T as QuRegisterStruct>::name())
 	}
 
-
-	pub fn define_class_constant<T>(
-		&mut self,
-		module: ModuleId,
-		class: &mut ClassMetadata,
-		name: String,
-		value: T,
-	) -> ConstantId {
-		let constant_id = self.define_constant(module, value);
-		class.constants_map.insert(name, constant_id);
-		constant_id
-	}
-
-
 	pub fn define_constant<T>(
 		&mut self,
-		module: ModuleId,
+		_module: ModuleId,
 		value: T,
 	) -> ConstantId {
 		let constant_id = self.constants.allocate(size_of::<T>());
@@ -1016,7 +951,6 @@ pub struct Definitions {
 		let function_id = self.functions.len();
 		self.functions.push(FunctionMetadata {
 			identity: identity.clone(),
-			id: funciton_id,
 			..Default::default()
 		});
 
@@ -1065,7 +999,6 @@ pub struct Definitions {
 		let module_id = self.modules.len();
 		self.modules.push(ModuleMetadata {
 			name: name.clone(),
-			id: module_id,
 			..Default::default()
 		});
 		self.module_map.insert(name, module_id);
@@ -1112,10 +1045,9 @@ pub struct Definitions {
 
 	pub fn define_module_function(
 		&mut self,
-		module_id: ModuleId,
+		_module_id: ModuleId,
 		identity: FunctionIdentity,
 	) -> Result<FunctionId, QuMsg> {
-		let class_id = identity.parameters.get(0);
 
 		// TODO: Determin if static function mappings should be kept
 		// if let Some(class_id) = class_id {
@@ -1131,7 +1063,6 @@ pub struct Definitions {
 
 		let id = FunctionId::from(self.functions.len());
 		self.functions.push(FunctionMetadata {
-			id,
 			identity: identity,
 			..Default::default()
 		});
@@ -1184,7 +1115,7 @@ pub struct Definitions {
 
 	pub fn get_external_function(
 		&self, id: ExternalFunctionId
-	) -> Result<&ExternalFunctionDefinition, QuMsg> {
+	) -> Result<&ExternalFunction, QuMsg> {
 		let external_function = self.external_functions
 			.get(usize::from(id))
 			.ok_or_else(|| -> QuMsg { format!(
@@ -1296,20 +1227,7 @@ pub struct Definitions {
 		}
 		Ok(&mut self.modules[id])
 	}
-
-
-	fn get_module_class_id(
-		&self, module_id: ModuleId, class_name: &str,
-	) -> Result<ClassId, QuMsg> {
-		let module = self.get_module(module_id)?;
-		let class_id = *module.class_map
-			.get(class_name)
-			.ok_or_else(|| -> QuMsg { format!(
-				"The module '{}' has no class names '{}'", module.name, class_name
-			).into()})?;
-		Ok(class_id)
-	}
-
+	
 
 	fn get_module_constant_id(
 		&self, module_id: ModuleId, name: &str,
@@ -1414,7 +1332,7 @@ pub struct Definitions {
 	pub fn register_function_in_module(
 		&mut self,
 		module_id: ModuleId,
-		external_function:ExternalFunctionDefinition,
+		external_function:ExternalFunction,
 	) -> Result<(), QuMsg> {
 		// Get class id of first parameter
 		let class_id = match external_function.parameters.first() {
@@ -1462,7 +1380,7 @@ pub struct Definitions {
 	pub fn register_static_function_in_class(
 		&mut self,
 		class_id: ClassId,
-		external_function:ExternalFunctionDefinition,
+		external_function:ExternalFunction,
 	) -> Result<(), QuMsg> {
 		// Also register function with module.
 		// self.add_static_external_function_mapping_in_class(
@@ -1496,7 +1414,7 @@ pub struct Definitions {
 	pub fn register_static_function_in_module(
 		&mut self,
 		module_id: ModuleId,
-		external_function:ExternalFunctionDefinition,
+		external_function:ExternalFunction,
 	) -> Result<(), QuMsg> {
 		// Also register function with module.
 		// self.add_static_external_function_mapping_in_module(
@@ -1543,27 +1461,7 @@ pub struct Definitions {
 }
 
 
-#[derive(Debug, Default, Clone)]
-pub struct ExternalClassMetadata {
-	functions_map: HashMap<String, ExternalFunctionId>,
-	/// The name of this class.
-	name: String,
-	/// The ID of this class.
-	id: usize,
-}
-
-
 pub type ExternalFunctionId = usize;
-
-
-#[derive(Debug, Default, Clone)]
-pub struct ExternalFunctionMetadata {
-	functions_map: HashMap<String, ExternalFunctionId>,
-	/// The name of this class.
-	name: String,
-	/// The ID of this class.
-	id: usize,
-}
 
 
 #[derive(Debug, Clone)]
@@ -1649,20 +1547,11 @@ pub struct FunctionIdentity {
 
 #[derive(Debug, Default, Clone)]
 pub struct FunctionMetadata {
-	id: FunctionId,
 	pub identity: FunctionIdentity,
 	/// The value that the VM's program counter should be set to in order to
 	/// start this function.
 	pub code_block: usize,
 }
-
-
-#[derive(Debug, Default, Clone)]
-pub struct FunctionIdentityMap {
-	map: HashMap<String, HashMap<ClassId, Vec<FunctionIdentity>>>,
-} impl FunctionIdentityMap {
-}
-
 
 #[derive(Debug, Default, Clone)]
 pub struct GrowingStack {
@@ -1696,17 +1585,6 @@ pub struct GrowingStack {
 
 pub type ModuleId = usize;
 
-
-#[derive(Debug, Default, Clone)]
-/// An item that is owned by a Qu module. See [`ModuleMetadata`].
-enum ModuleItem {
-	Class(Box<ClassMetadata>),
-	#[default]
-	Constant,
-	Function(Box<FunctionMetadata>),
-	StaticVariable,
-}
-
 #[derive(Debug, Clone)]
 /// Reresents a Qu module.
 pub struct ModuleMetadata {
@@ -1719,8 +1597,6 @@ pub struct ModuleMetadata {
 	
 	/// The name of this module.
 	name: String,
-	/// The ID of this module.
-	id: ModuleId,
 } impl ModuleMetadata {
 	fn has_item(&self, identity: &str) -> bool {
 		self.constants_map.contains_key(identity)
@@ -1788,7 +1664,6 @@ pub struct ModuleMetadata {
 			class_map: Default::default(),
 			constants_map : Default::default(),
 			name: "__main__".into(),
-			id : Default::default(),
 			external_functions_map: Default::default(),
 			functions_map: Default::default(),
 			function_groups_map: Default::default(),
@@ -2002,7 +1877,6 @@ type VariableId = usize;
 
 #[derive(Debug, Default, Clone)]
 struct VariableMetadata {
-	name: String,
 	stack_id: QuStackId,
 }
 
@@ -2011,12 +1885,10 @@ struct VariableMetadata {
 #[derive(Debug, Default, Clone)]
 pub struct QuCompiler {
 	context: Context,
-	name_refs: HashMap<String, u32>,
-	types_map: HashMap<String, usize>,
 } impl QuCompiler {
 	/// Creates and returns a new [QuCompiler].
 	pub fn new() -> Self {
-		let mut inst = Self {
+		let inst = Self {
 			..Default::default()
 		};
 
@@ -2029,7 +1901,7 @@ pub struct QuCompiler {
 		call_expression: &CallExpression,
 		definitions: &mut Definitions,
 	) -> Result<ClassId, QuMsg> {
-		let mut caller_id = match &call_expression.caller {
+		let caller_id = match &call_expression.caller {
 			Some(caller_expression) => {
 				// Caller is inferred by dot notation
 				self.get_expr_type(caller_expression, definitions)?
@@ -2453,7 +2325,7 @@ pub struct QuCompiler {
 		)?;
 
 		let builder = match item {
-			ItemId::Class(id) => {
+			ItemId::Class(_) => {
 				let mut builder = QuAsmBuilder::new();
 				builder.return_type = definitions.class_id::<Class>()?;
 				builder
@@ -2570,7 +2442,7 @@ pub struct QuCompiler {
 		let code= {
 			// --- Compile Pieces ---
 			// Code block
-			let mut block_code = self.cmp_scope(body, definitions)?;
+			let block_code = self.cmp_scope(body, definitions)?;
 			let block_code_len = block_code.len();
 
 			let mut b = QuAsmBuilder::new();
@@ -2773,11 +2645,6 @@ pub struct QuCompiler {
 		body: &CodeScope,
 		definitions: &mut Definitions,
 	) -> Result<QuAsmBuilder, QuMsg> {
-		let needs_added_end_op = match body.code_block.statements.last() {
-			Some(Statement::Return(_)) => false,
-			_ => true,
-		};
-
 		let (identity, parameters) = {
 			let mut parameters_types = vec![];
 			let mut parameters_names = vec![];
@@ -2818,7 +2685,7 @@ pub struct QuCompiler {
 		self.context.open_frame(ContextFrame::Function(
 			func_id, FrameData::default(),
 		));
-		let mut body_code = {
+		let body_code = {
 			// Allocate return value
 			self.context.define_variable(
 				"return value".into(),
@@ -2847,10 +2714,7 @@ pub struct QuCompiler {
 		definitions.get_function_mut(func_id)?.code_block = definitions
 			.byte_code_blocks
 			.len();
-		let bytcode = body_code.compile(
-			&self.name_refs,
-			definitions
-		)?;
+		let bytcode = body_code.ops;
 		definitions.byte_code_blocks.push(bytcode);
 
 		let code = QuAsmBuilder::new();
@@ -3101,7 +2965,7 @@ pub struct QuCompiler {
 		let code = self.cmp_code_block(
 			code_block,
 			definitions
-		)?.compile(&self.name_refs, definitions)?;
+		)?.ops;
 		definitions.byte_code_blocks.push(code);
 		
 		Ok(QuAsmBuilder::new())
@@ -3220,15 +3084,12 @@ pub struct QuCompiler {
 		&mut self, code_block:&CodeBlock, definitions: &mut Definitions
 	) -> Result<Vec<QuOp>, QuMsg> {
 		// Main code
-		let mut code = {
-			let mut code = self.cmp_module(code_block, definitions)?;
+		let code = {
+			let code = self.cmp_module(code_block, definitions)?;
 			Ok::<QuAsmBuilder, QuMsg>(code)
 		}?;
 		
-		Ok(code.compile(
-			&self.name_refs,
-			definitions,
-		)?)
+		Ok(code.ops)
 	}
 
 
@@ -3309,7 +3170,7 @@ pub struct QuCompiler {
 			Expression::Number(_) => {
 				definitions.class_id::<i32>()?
 			},
-			Expression::Tuple(tuple) => {
+			Expression::Tuple(_tuple) => {
 				unimplemented!()
 			},
 			Expression::Var(var) => {
@@ -3319,14 +3180,14 @@ pub struct QuCompiler {
 				)?;
 
 				let id = match item {
-					ItemId::Class(id) => {
+					ItemId::Class(_) => {
 						definitions.class_id::<Class>()?
 					},
 					ItemId::Constant(_) => todo!(),
 					ItemId::ExternalFunction(_) => todo!(),
 					ItemId::Function(_) => todo!(),
 					ItemId::FunctionGroup(_) => todo!(),
-					ItemId::Module(id) => {
+					ItemId::Module(_) => {
 						definitions.class_id::<Module>()?
 					},
 					ItemId::StaticVariable(_) => todo!(),
@@ -3402,151 +3263,29 @@ pub struct QuCompiler {
 	}
 }
 
-
-#[derive(Debug, Clone)]
-enum QuBuilderPiece {
-	ReprCall(String, QuStackId),
-	// Struct name, fn name, args, output
-	//ReprCallExt(String, Vec<QuStackId>, QuStackId),
-	/// A [`Vec<u8>`] of code.
-	Ops(Vec<QuOp>),
-} impl QuBuilderPiece {
-	fn len(&self) -> usize{
-		match self {
-			QuBuilderPiece::ReprCall(_, _) => 1,
-			//QuBuilderPiece::ReprCallExt(_, _, _) => 1,
-			QuBuilderPiece::Ops(v) => v.len(),
-		}
-	}
-}
-
-
 #[derive(Debug, Default, Clone)]
 
 struct QuAsmBuilder {
-	code_pieces: Vec<QuBuilderPiece>,
+	ops: Vec<QuOp>,
 	return_type: ClassId,
 } impl QuAsmBuilder {
 	fn new() -> Self {
 		return Self {
-			code_pieces: vec![],
+			ops: vec![],
 			return_type: ClassId::new(0),
 		}
 	}
-	
-
-	/// Adds a builder piece
-	fn add_bp(&mut self, repr:QuBuilderPiece) {
-		self.code_pieces.push(repr);
-	}
-
 
 	fn add_builder(&mut self, mut builder:QuAsmBuilder) {
-		self.code_pieces.append(&mut builder.code_pieces);
+		self.ops.append(&mut builder.ops);
 	}
 
 
 	fn add_op(&mut self, op:QuOp) {
-		self.code_pieces.push(QuBuilderPiece::Ops(vec![op]));
+		self.ops.push(op);
 	}
-
-
-	fn add_ops(&mut self, ops:Vec<QuOp>) {
-		self.code_pieces.push(QuBuilderPiece::Ops(ops));
-	}
-
-
-	fn compile(
-		&mut self,
-		name_references: &HashMap<String, u32>,
-		definitions: &mut Definitions,
-	) -> Result<Vec<QuOp>, QuMsg> {
-		let mut code = vec![];
-		
-		for x in &mut self.code_pieces {
-			match x {
-				QuBuilderPiece::Ops(ops) => code.append(ops),
-				QuBuilderPiece::ReprCall(
-					name,
-					output,
-				) => {
-					let Some(fn_index) = name_references.get(name) else {
-						panic!("Compiler could not find a function by name {name}.");
-					};
-					panic!();
-					//code.push(Call((*fn_index).into(), *output));
-				}
-//				QuBuilderPiece::ReprCallExt(
-//					fn_name,
-//					args,
-//					output
-//				) => {
-//					// TODO: Implement static typing
-//					let struct_data = definitions.get_class(
-//						args.get(0)
-//							.unwrap_or(&QuStackId::from(0))
-//							.class_id()
-//					)?;
-//
-//					let id
-//						= struct_data.get_fn_id(fn_name)?;
-//					code.push(CallExt(id, take(args), *output));
-//				},
-			};
-		}
-		
-
-		return Ok(code);
-	}
-
 
 	fn len(&self) -> usize {
-		let mut l = 0;
-		for x in &self.code_pieces {
-			l += x.len();
-		}
-		return l;
+		return self.ops.len();
 	}
-}
-
-
-#[derive(Debug, Default, Clone)]
-struct QuVarIdentity {
-	name: String,
-	static_type: String,
-	stack_id: QuStackId,
-} impl QuVarIdentity {
-
-	fn new(name:String, static_type:String, id:QuStackId) -> Self {
-		QuVarIdentity{name, static_type, stack_id: id}
-	}
-
-
-	fn object_id(&self) -> ClassId {
-		self.stack_id.class_id()
-	}
-
-} impl PartialEq<str> for QuVarIdentity {
-	fn eq(&self, other:&str) -> bool {
-		&self.name == other
-	} 
-}
-
-
-pub enum CompilerInstruction {
-	// (fn_name, args, result_variable)
-	CallExt(FunctionIdentity, Vec<String>, String),
-	CloseFrame,
-	CloseScope,
-	// (name, body_size)
-	DefineFn(String, usize),
-	// (name, type)
-	DefineVariable(String, String),
-	End,
-	JumpBy(isize),
-	JumpByIfNot(isize),
-	OpenFrame,
-	OpenScope,
-	// (var_name)
-	Return(String),
 }

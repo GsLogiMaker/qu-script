@@ -1,32 +1,14 @@
 
-use std::collections::HashSet;
 use std::fmt::Debug;
-use std::hash::Hash;
 use std::mem::size_of;
-use std::sync::Arc;
 
-use core::ops::Deref;
-use std::sync::Mutex;
-use std::sync::RwLock;
-use std::sync::Weak;
-
-use lazy_static::__Deref;
-
-use crate::Bool;
-use crate::Class;
-use crate::ExternalFunctionDefinition;
-use crate::Module;
 use crate::QuMsg;
 use crate::QuRegisterStruct;
-use crate::QuVoid;
-use crate::Vector2;
 use crate::compiler::Definitions;
 use crate::compiler::ExternalFunctionId;
 use crate::compiler::FunctionId;
-use crate::import;
 use crate::import::ArgsAPI;
 use crate::import::ClassId;
-use crate::objects;
 use crate::objects::fundamentals_module;
 use crate::objects::math_module;
 
@@ -51,8 +33,7 @@ pub enum QuOp {
 	Call(FunctionId, QuStackId),
 	/// Calls a function defined outside of Qu (like in Rust).
 	CallExt(ExternalFunctionId, Vec<QuStackId>, QuStackId),
-	// Fn name, fn body length. (DEPCRICATED)
-	DefineFn(FunctionId, usize),
+	/// Ends the current scope
 	End,
 	/// Moves the program counter by the given [`isize`].
 	JumpBy(isize),
@@ -75,8 +56,6 @@ pub enum QuOp {
 				arg2,
 			) =>
 				write!(f, "CallExt({:?}, {:?}, {:?})", arg0, arg1, arg2,),
-			Self::DefineFn(arg0, arg1) => 
-				write!(f, "DefineFn({:?}, {:?})", arg0, arg1),
 			Self::End =>
 				write!(f, "End"),
 			Self::JumpBy(arg0) =>
@@ -153,7 +132,7 @@ impl QuStackId {
 	}
 
 	/// Returns a readable [`String`] representation of the Id.
-	fn readable(&self, definitions: &Definitions) -> String {
+	fn _readable(&self, definitions: &Definitions) -> String {
 		format!(
 			"{}:{}",
 			self.0,
@@ -249,7 +228,7 @@ pub struct QuVm {
 
 		vm.definitions.define_module(
 			MAIN_MODULE.into(),
-			&|mut b| {Ok(())},
+			&|_| {Ok(())},
 		).unwrap();
 
 		vm
@@ -314,18 +293,6 @@ pub struct QuVm {
 
 		return Ok(());
 	}
-
-
-	/// Sets the start of the function with the given function_id to the
-	/// current program counter.
-	fn op_define_fn(&mut self, function_id: usize, length: usize) {
-		todo!("Define functions with code_block rather than pc_start");
-		// self.definitions.get_function_mut(function_id)
-		// 	.unwrap()
-		// 	.pc_start = self.pc;
-		// self.pc += length;
-	}
-
 
 	fn op_jump_by(&mut self, mut pc:usize, by:isize) -> usize {
 		// Add
@@ -429,7 +396,7 @@ pub struct QuVm {
 								.unwrap()
 								.identity
 								.name,
-							output.readable(&self.definitions),
+							output._readable(&self.definitions),
 						);
 					},
 					QuOp::CallExt(function_id, args, output) => {
@@ -449,7 +416,7 @@ pub struct QuVm {
 								.get_external_function(*function_id)
 								.unwrap()
 								.name,
-							output.readable(&self.definitions),
+							output._readable(&self.definitions),
 						);
 					},
 					QuOp::End => {
@@ -482,7 +449,7 @@ pub struct QuVm {
 						println!(
 							"Value {} -> {}",
 							value,
-							output.readable(&self.definitions),
+							output._readable(&self.definitions),
 						);
 					},
 					QuOp::Return(return_type) => {
@@ -497,7 +464,6 @@ pub struct QuVm {
 				QuOp::Call(fn_id, ouput) => self.op_call_fn(*fn_id, *ouput)?,
 				QuOp::CallExt(fn_id, args, output) => self.external_call_by_id(*fn_id, args.clone(), *output)?,
 				QuOp::End => break,
-				QuOp::DefineFn(fn_id, length) => self.op_define_fn(*fn_id, *length),
 				QuOp::JumpByIfNot(by) => pc = self.op_jump_by_if_not(pc, *by),
 				QuOp::JumpBy( by) => pc = self.op_jump_by(pc, *by),
 				QuOp::Value(value, output) => self.op_load_int(*value, *output),

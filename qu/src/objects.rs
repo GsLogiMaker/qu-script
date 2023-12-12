@@ -1,8 +1,6 @@
 
 //! Defines all types and objects used by Qu.
 
-
-use crate::QuVm;
 use crate::QuMsg;
 use crate::compiler::CONSTRUCTOR_NAME;
 use crate::compiler::Definitions;
@@ -13,7 +11,6 @@ use crate::import::ExternalFunctionPointer;
 use crate::import::Registerer;
 use crate::vm::QuExtFn;
 use crate::vm::QuVoidExtFn;
-use crate::vm::QuStackId;
 use std::fmt::Debug;
 use std::ops::Add;
 use std::ops::Div;
@@ -70,7 +67,7 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 
 			// void functions
 			{
-				qufn!(m, api, copy(void) void {
+				qufn!(m, _api, copy(void) void {
 					Ok(())
 				});
 			}
@@ -243,12 +240,13 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 	Ok(())
 }
 
+/// A method for registering the math module in Qu.
 pub fn math_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 	registerer.add_module(
 		"math",
 		&|m| {
-			let vector2 = m.add_class::<Vector2>()?;
-			let fundamentals = m.get_module(FUNDAMENTALS_MODULE)?;
+			let fundamentals =
+				m.get_module(FUNDAMENTALS_MODULE)?;
 			let int = fundamentals.get_class_id("int")?;
 			m.add_function(
 				"foo",
@@ -274,66 +272,30 @@ pub type QuExtFnData = (String, QuExtFn, Vec<usize>, usize);
 pub type QuVoidFnForm = (String, QuVoidExtFn, Vec<usize>);
 
 
+/// A reference to a Qu class.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Class {
-	id: ClassId,
+	_id: ClassId,
 } impl QuRegisterStruct for Class {
 	fn name() -> &'static str {"__Class__"}
 }
 
 
+/// Defines information about an external function that can be sued by Qu.
 #[derive(Clone)]
 pub struct ExternalFunction {
+	/// The name of the function.
+	/// 
+	/// This is the name used when calling this function from a Qu script.
 	pub name: String,
-	pub pointer: QuExtFn,
+	/// The pointer to the function.
+	pub pointer: &'static ExternalFunctionPointer,
+	/// The arguments this function takes.
 	pub parameters: Vec<ClassId>,
+	/// The return type of the function.
 	pub return_type: ClassId,
 } impl ExternalFunction {
-	pub fn new(
-		name: &str,
-		pointer: QuExtFn,
-		parameters: Vec<ClassId>,
-		return_type: ClassId,
-	) -> Self{
-		Self {
-			name: name.into(),
-			pointer,
-			parameters: parameters,
-			return_type,
-		}
-	}
-
-
-	pub fn call(
-		&self, vm:&mut QuVm, parameters: &Vec<QuStackId>, output_id: QuStackId,
-	) -> Result<(), QuMsg> {
-		(self.pointer)(vm, parameters, output_id)
-	}
-} impl Debug for ExternalFunction {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ExternalFunction")
-			.field("name", &self.name)
-			.field("parameters", &self.parameters)
-			.field("return_type", &self.return_type)
-			.finish()
-    }
-} impl Default for ExternalFunction {
-    fn default() -> Self {
-        Self {
-			pointer: &|_, _, _| {Ok(())},
-			..Default::default()
-		}
-    }
-}
-
-
-#[derive(Clone)]
-pub struct ExternalFunctionDefinition {
-	pub name: String,
-	pub pointer: &'static ExternalFunctionPointer,
-	pub parameters: Vec<ClassId>,
-	pub return_type: ClassId,
-} impl ExternalFunctionDefinition {
+	/// Instantiates a new [`ExternalFunctionDefinition`].
 	pub fn new(
 		name: &str,
 		pointer: &'static ExternalFunctionPointer,
@@ -347,7 +309,7 @@ pub struct ExternalFunctionDefinition {
 			return_type,
 		}
 	}
-} impl Debug for ExternalFunctionDefinition {
+} impl Debug for ExternalFunction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ExternalFunctionDefinition")
 			.field("name", &self.name)
@@ -355,7 +317,7 @@ pub struct ExternalFunctionDefinition {
 			.field("return_type", &self.return_type)
 			.finish()
     }
-} impl Default for ExternalFunctionDefinition {
+} impl Default for ExternalFunction {
     fn default() -> Self {
         Self {
 			name: Default::default(),
@@ -367,47 +329,12 @@ pub struct ExternalFunctionDefinition {
 }
 
 
-
-#[derive(Debug, Default, Clone)]
-pub struct FunctionPointer {
-	pub pc_target: usize,
-}
-
-
+/// A reference to a Qu module.
 #[derive(Debug, Default, Clone, Copy)]
-pub struct Module {
-	id: ModuleId,
+pub struct Module { // TODO: Lock modules to the vm they came from.
+	_id: ModuleId,
 } impl QuRegisterStruct for Module {
 	fn name() -> &'static str {"__Module__"}
-}
-
-
-/// Defines all the types supported by Qu.
-#[derive(Debug, Default, Clone)]
-pub enum QuType {
-	#[default] Void,
-	Int,
-	Bool,
-	String,
-	Tuple(Vec<QuType>),
-	Array,
-	Dictionary,
-	Object(usize),
-} impl From<u8> for QuType {
-
-	fn from(f:u8) -> Self { 
-		match f {
-			0 => QuType::Void,
-			1 => QuType::Int,
-			2 => QuType::Bool,
-			3 => QuType::String,
-			4 => panic!(),//QuType::Tuple(Vec::default()),
-			5 => QuType::Array,
-			6 => QuType::Dictionary,
-			7 => QuType::Object(0),
-			_ => panic!(),
-		}
-	}
 }
 
 /// Defines a block of code.
@@ -460,6 +387,7 @@ pub struct QuFnObject {
 
 }
 
+/// A wrapper for Qu booleans.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Bool (bool, bool, bool, bool);
 impl Bool {
@@ -483,8 +411,8 @@ impl Bool {
     }
 } impl QuRegisterStruct for Bool {
 	fn register_fns(
-		definitions: &mut Definitions
-	) -> Vec<ExternalFunctionDefinition> {vec![]}
+		_definitions: &mut Definitions
+	) -> Vec<ExternalFunction> {vec![]}
 
 	fn name() -> &'static str {"bool"}
 }
@@ -500,7 +428,6 @@ impl QuRegisterStruct for i32 {
 }
 
 
-
 #[derive(Debug, Default, Clone, Copy)]
 /// Represents a void type in Qu.
 pub struct QuVoid();
@@ -513,8 +440,8 @@ impl QuRegisterStruct for QuVoid {
 pub trait QuRegisterStruct {
 	/// Returns functions that are callable by [`QuVm`].
 	fn register_fns(
-		definitions: &mut Definitions
-	) -> Vec<ExternalFunctionDefinition> where Self: Sized {
+		_definitions: &mut Definitions
+	) -> Vec<ExternalFunction> where Self: Sized {
 		Vec::default()
 	}
 
@@ -522,16 +449,6 @@ pub trait QuRegisterStruct {
 	/// Returns the name that identifies the struct being registered.
 	fn name() -> &'static str;
 }
-
-
-#[derive(Copy, Clone, Debug, Default)]
-pub struct Vector2 {
-	x: i32,
-	y: i32,
-} impl QuRegisterStruct for Vector2 {
-	fn name() -> &'static str {"Vector2"}
-}
-
 
 #[cfg(test)]
 mod test_objects {

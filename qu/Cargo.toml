@@ -31,10 +31,9 @@ edition = "2021"
 
 
 [dependencies]
-lazy_static = { workspace = true }
 
 [dev-dependencies]
-criterion = "0.4.0"
+criterion = "0.5.1"
 
 [features]
 qu_panic_upon_error = []

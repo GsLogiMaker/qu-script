@@ -1,20 +1,13 @@
 
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::fmt::format;
 use std::mem::size_of;
-use std::process::id;
-use std::slice::SliceIndex;
 
 use crate::ExternalFunction;
-use crate::ExternalFunctionDefinition;
-use crate::Module;
 use crate::QuMsg;
 use crate::QuRegisterStruct;
 use crate::QuStackId;
 use crate::QuVm;
-use crate::QuVoid;
-use crate::Vector2;
 use crate::compiler::ConstantId;
 use crate::compiler::Definitions;
 use crate::compiler::ExternalFunctionId;
@@ -22,7 +15,6 @@ use crate::compiler::FunctionGroupId;
 use crate::compiler::FunctionId;
 use crate::compiler::FunctionIdentity;
 use crate::compiler::ItemId;
-use crate::compiler::FunctionGroup;
 use crate::compiler::ModuleId;
 use crate::compiler::ModuleMetadata;
 use crate::compiler::SomeFunctionId;
@@ -69,7 +61,7 @@ pub struct ModuleBuilder<'a> {
 		out: ClassId,
 		body: &'static ExternalFunctionPointer,
 	) -> Result<(), QuMsg> {
-		self.definitions.register_function_in_module(self.module_id, ExternalFunctionDefinition {
+		self.definitions.register_function_in_module(self.module_id, ExternalFunction {
 			name: name.into(),
 			pointer: body,
 			parameters: Vec::from(args),
@@ -88,7 +80,7 @@ pub struct ModuleBuilder<'a> {
 	) -> Result<(), QuMsg> {
 		self.definitions.register_static_function_in_class(
 			for_class,
-			ExternalFunctionDefinition {
+			ExternalFunction {
 				name: name.into(),
 				pointer: body,
 				parameters: Vec::from(args),
@@ -145,7 +137,9 @@ pub struct QuRegistered {
 	}
 	
 
-	pub fn get_fn_data_by_id(&self, fn_id:FunctionId
+	pub fn get_fn_data_by_id(
+		&self,
+		fn_id:FunctionId
 	) -> Result<&ExternalFunction, QuMsg>{
 		match self.fns.get(fn_id) {
 			Some(v) => Ok(v),
@@ -276,14 +270,14 @@ pub struct QuStruct {
 	pub static_functions_map: HashMap<FunctionIdentity, SomeFunctionId>,
 	
 	pub name: String,
-	pub register_fn: &'static dyn Fn(&mut Definitions) -> Vec<ExternalFunctionDefinition>,
+	pub register_fn: &'static dyn Fn(&mut Definitions) -> Vec<ExternalFunction>,
 	/// The size of the struct in bytes.
 	pub size: u8,
 
 } impl QuStruct {
 	pub fn new(
 		name:impl Into<String>,
-		fn_registerer:&'static dyn Fn(&mut Definitions) -> Vec<ExternalFunctionDefinition>,
+		fn_registerer:&'static dyn Fn(&mut Definitions) -> Vec<ExternalFunction>,
 		size:usize,
 	) -> Self {
 		let name = name.into();
@@ -362,7 +356,7 @@ pub struct QuStruct {
 			external_functions_map: Default::default(),
 			functions_map: Default::default(),
 			name: Default::default(),
-			register_fn: &|definitions:&mut Definitions| {vec![]},
+			register_fn: &|_d:&mut Definitions| {vec![]},
 			size: Default::default(),
 			function_groups_map: Default::default(),
 			static_functions_map: Default::default(),

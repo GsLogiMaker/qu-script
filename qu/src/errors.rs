@@ -1,6 +1,6 @@
 
-use crate::{tokens::QuCharIndex};
-use std::{fmt::{self, Display, Debug}};
+use crate::tokens::QuCharIndex;
+use std::fmt::{self, Display, Debug};
 
 
 pub const ERR_TITLE_EMPTY_CODE_BLOCK:&str = "EMPTY CODE BLOCK";

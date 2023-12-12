@@ -28,8 +28,6 @@ SOFTWARE.
 #![warn(missing_docs)]
 #![warn(rustdoc::broken_intra_doc_links)]
 
-extern crate lazy_static;
-
 mod compiler;
 mod errors;
 mod import;
@@ -73,6 +71,7 @@ pub use vm::QuStackId;
 /// # return Ok(());
 /// # }
 /// ```
+#[derive(Default)]
 pub struct Qu<'a> {
 	vm: QuVm,
 	ph: PhantomData<&'a ()>,
@@ -95,8 +94,9 @@ pub struct Qu<'a> {
 		}
 	}
 
-
-	/// Compiles Qu script into a [`Vec<u8>`].
+	/// Compiles Qu script without running it.
+	/// 
+	/// Does not return the compiled bytecode.
 	///
 	/// # Errors
 	/// 
@@ -110,15 +110,20 @@ pub struct Qu<'a> {
 	/// # fn main(){example().unwrap()}
 	/// # fn example() -> Result<(), qu::QuMsg> {
 	/// let mut qu = Qu::new();
-	/// let bytecode = qu.compile("var count int = 0")?;
+	/// qu.compile("
+	/// 	fn foo() int:
+	/// 		return 3
+	/// ")?;
+	/// let result:i32 = *qu.run_and_get("return foo()")?;
+	/// assert_eq!(result, 3);
 	/// # return Ok(());
 	/// # }
 	/// ```
-	pub fn compile(&mut self, code:&str) -> Result<Vec<QuOp>, QuMsg> {
+	pub fn compile(&mut self, code:&str) -> Result<(), QuMsg> {
 		// Compile
 		let mut c = QuCompiler::new();
-		let code = c.compile(code, &mut self.vm.definitions)?;
-		return Ok(code);
+		c.compile(code, &mut self.vm.definitions)?;
+		Ok(())
 	}
 
 
@@ -172,15 +177,7 @@ pub struct Qu<'a> {
 	}
 
 
-	/// 
-	pub fn read<'b, T:'a + QuRegisterStruct>(
-		&self, at_reg:QuStackId
-	) -> Result<&T, QuMsg> {
-		self.vm.read::<T>(at_reg)
-	}
-
-
-	/// Runs [`&str`] as Qu script.
+	/// Run a [`&str`] as Qu script.
 	/// 
 	/// # Errors
 	/// 
@@ -202,20 +199,43 @@ pub struct Qu<'a> {
 	/// # }
 	/// ```
 	pub fn run(&mut self, script:&str) -> Result<(), QuMsg> {
-		let code = self.compile(script)?;
+		self.compile(script)?;
 		self.vm.loop_ops(self.vm.definitions.byte_code_blocks.len()-1)
 	}
 
 
+	/// Run a [`&str`] as Qu script and get the result.
+	/// 
+	/// This is evuivalent to running [`Qu::run`] followed
+	/// by [`Qu::get_result`].
+	/// 
+	/// # Errors
+	/// 
+	/// If `code` contains improper syntax or a problem occurs at runtime
+	/// then an [`Err`] is returned.
+	/// 
+	/// # Example
+	/// 
+	/// ```
+	/// # use qu::QuMsg;
+	/// # fn main(){example().unwrap()}
+	/// # fn example() -> Result<(), QuMsg> {
+	/// use qu::Qu;
+	/// 
+	/// let mut qu = Qu::new();
+	/// 
+	/// let value:i32 = *qu.run_and_get("return 5 + 6")?;
+	/// assert_eq!(value, 5 + 6);
+	/// # return Ok(());
+	/// # }
+	/// ```
 	pub fn run_and_get<T:'a + QuRegisterStruct>(
 		&mut self,
 		script:&str,
 	) -> Result<&T, QuMsg> {
 		self.run(script)?;
 		let return_id = self.vm.return_value_id();
-		self.read(
-			QuStackId::new(0, return_id)
-		)
+		self.vm.read::<T>(QuStackId::new(0, return_id))
 	}
 
 }
@@ -457,8 +477,7 @@ mod lib {
 			var counter void
 			return counter
 		"#;
-
-		let res:i32 = *qu.run_and_get(script).unwrap();
+		qu.run_and_get::<i32>(script).unwrap();
 	}
 
 
@@ -543,7 +562,7 @@ mod lib {
 
 	// #[test]
 	// TODO: Allow accessing functions from class name (Requires constant evaluation)
-	fn class_dot_notation() {
+	fn _class_dot_notation() {
 		let mut qu = Qu::new();
 		let result:i32 = *qu.run_and_get("return int.sub(5, 8)").unwrap();
 		assert_eq!(result, 5-8);
@@ -648,7 +667,8 @@ mod lib {
 	// TODO: Prevent functions definitions from having multiple parameters of
 	// 	the same name 
 	// #[test]
-	fn function_multiple_parameters_same_name() {
+	// #[should_panic]
+	fn _function_multiple_parameters_same_name() {
 		let mut qu = Qu::new();
 		let script = r#"
 			fn some(a int, a int, c int) int:
