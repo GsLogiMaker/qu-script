@@ -45,12 +45,12 @@ fn main():
 class Point2D:
 	# Implement traits.
 	impl Sync
-	impl Add as add:
+	impl Add:
 		fn add(other Point2D) Point2D:
 			return Point2D(x+other.x, y+other.y)
 	
-	# Implement other classes as variables.
-	impl DebugInfo as debug_info
+	# Implement other classes as variables. (syntax wip)
+	var debug_info = impl DebugInfo
 	
 	var x int = 0
 	var y int = 0
