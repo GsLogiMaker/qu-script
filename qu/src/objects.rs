@@ -4,12 +4,12 @@
 
 use crate::QuVm;
 use crate::QuMsg;
+use crate::compiler::CONSTRUCTOR_NAME;
 use crate::compiler::Definitions;
 use crate::compiler::ModuleId;
 use crate::import::ClassId;
 use crate::import::ArgsAPI;
 use crate::import::ExternalFunctionPointer;
-use crate::import::ModuleBuilder;
 use crate::import::Registerer;
 use crate::vm::QuExtFn;
 use crate::vm::QuVoidExtFn;
@@ -20,7 +20,7 @@ use std::ops::Div;
 use std::ops::Mul;
 use std::ops::Sub;
 
-pub const FUNDAMENTALS_MODULE:&str = "__fundamentals__";
+pub(crate) const FUNDAMENTALS_MODULE:&str = "__fundamentals__";
 
 macro_rules! qufn {
 	($module_builder:ident, $api:ident, $name:ident($($param:ident),*) $return:ident $block:block) => {
@@ -77,6 +77,30 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 
 			// int functions
 			{
+				m.add_class_static_function(int, CONSTRUCTOR_NAME.into(),
+					&[],
+					int,
+					&|api| {
+						api.set(0);
+						Ok(())
+					}
+				)?;
+				m.add_class_static_function(int, CONSTRUCTOR_NAME.into(),
+					&[int],
+					int,
+					&|api| {
+						api.set(*api.get::<i32>(0)?);
+						Ok(())
+					}
+				)?;
+				m.add_class_static_function(int, CONSTRUCTOR_NAME.into(),
+					&[bool],
+					int,
+					&|api| {
+						api.set(api.get::<Bool>(0)?.0 as i32);
+						Ok(())
+					}
+				)?;
 				qufn!(m, api, add(int, int) int {
 					api.set(<i32 as Add>::add(
 						*api.get::<i32>(0)?,
@@ -149,6 +173,30 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 
 			// bool functions
 			{
+				m.add_class_static_function(bool, CONSTRUCTOR_NAME.into(),
+					&[],
+					bool,
+					&|api| {
+						api.set(Bool::from(false));
+						Ok(())
+					}
+				)?;
+				m.add_class_static_function(bool, CONSTRUCTOR_NAME.into(),
+					&[bool],
+					bool,
+					&|api| {
+						api.set(*api.get::<Bool>(0)?);
+						Ok(())
+					}
+				)?;
+				m.add_class_static_function(bool, CONSTRUCTOR_NAME.into(),
+					&[int],
+					bool,
+					&|api| {
+						api.set(Bool::from(*api.get::<i32>(0)? != 0));
+						Ok(())
+					}
+				)?;
 				qufn!(m, api, and(bool) bool {
 					api.set(api.get::<Bool>(0)?.and(api.get::<Bool>(1)?));
 					Ok(())
@@ -178,7 +226,7 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 					Ok(())
 				});
 			}
-			
+
 			// module functions
 			{
 				qufn!(m, api, copy(module) module {
@@ -415,19 +463,23 @@ pub struct QuFnObject {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Bool (bool, bool, bool, bool);
 impl Bool {
-	pub fn new() -> Bool {
-		Bool (false, false, false, false)
-	}
+	/// Performas the boolean *and* operation between this and another `[Bool]`.
 	pub fn and(&self, other: &Self) -> Bool {
 		(self.0 && other.0).into()
 	}
 	
+	/// Performas the boolean *or* operation between this and another `[Bool]`.
 	pub fn or(&self, other: &Self) -> Bool {
 		(self.0 && other.0).into()
 	}
-} impl Into<bool> for Bool {
-    fn into(self) -> bool {
-        self.0
+} impl From<bool> for Bool {
+    fn from(value: bool) -> Self {
+        Self (
+			value,
+			false,
+			false,
+			false
+		)
     }
 } impl QuRegisterStruct for Bool {
 	fn register_fns(
@@ -437,9 +489,9 @@ impl Bool {
 	fn name() -> &'static str {"bool"}
 }
 
-impl Into<Bool> for bool {
-    fn into(self) -> Bool {
-        Bool(self, false, false, false)
+impl From<Bool> for bool {
+    fn from(value: Bool) -> Self {
+        value.0
     }
 }
 

@@ -23,20 +23,15 @@ use crate::parser::parsed::*;
 use crate::QuMsg;
 use crate::QuToken;
 use crate::objects::FUNDAMENTALS_MODULE;
-use crate::parser::parsed::FunctionIdentity as ParsedFunctionIdentity;
-use crate::vm::MAIN_MODULE;
 use crate::vm::Stack;
 
 use core::panic;
 use std::collections::HashMap;
-use std::default;
 use std::fmt::Display;
-use std::fmt::format;
 use std::mem::size_of;
 use std::hash::Hash;
-use std::mem::take;
-use std::process::id;
 
+pub(crate) const CONSTRUCTOR_NAME:&str = ":new";
 // TODO: Fix compiler's documentation
 
 #[derive(Debug, Clone)]
@@ -2075,7 +2070,7 @@ pub struct QuCompiler {
 		};
 
 		// Construct function identity
-		let function_identity = FunctionIdentity {
+		let mut function_identity = FunctionIdentity {
 			name: call_expression.name.slice.clone(),
 			parameters,
 			..Default::default()
@@ -2116,22 +2111,33 @@ pub struct QuCompiler {
 			} else {
 				todo!("Handle constant evalution of modules properly");
 			}
-			// caller_id = *parameters
-			// 	.first()
-			// 	.unwrap_or(&definitions.class_id::<QuVoid>()?);
 		}
-		
-		
+
+		let callable_id = self.context
+			.find_item(&call_expression.name.slice, definitions)?;
 
 		// Get function group
-		// let some_function_id = definitions.get_class(caller_id)?
-		// 	.get_static_function_id(&function_identity)?;
-		let some_function_id = if
-			caller_id == definitions.class_id::<Class>()?
-		{
-			todo!("Class dot notation has not been implemented. Requires constant evaluation.");
+		let some_function_id = if let ItemId::Class(class_id) = callable_id {
+			function_identity.name = CONSTRUCTOR_NAME.into();
+			let class = definitions.get_class(class_id)?;
+			let group_id = class.function_groups_map
+				.get(CONSTRUCTOR_NAME)
+				.map(|x|{*x})
+				.expect("TODO: Add error msg");
+			let some_fn_id = *definitions
+				.get_function_group(group_id)?
+				.map
+				.get(&function_identity)
+				.expect("TODO: Add error msg");
+			some_fn_id
 		} else {
-			self.context.find_function(&function_identity, &definitions)?
+			if
+				caller_id == definitions.class_id::<Class>()?
+			{
+				todo!("Class dot notation has not been implemented. Requires constant evaluation.");
+			} else {
+				self.context.find_function(&function_identity, &definitions)?
+			}
 		};
 
 		// Get return type
@@ -2167,6 +2173,39 @@ pub struct QuCompiler {
 		)?;
 		
 		Ok(class_id)
+	}
+
+
+	fn get_class_constructor_id(
+		&mut self,
+		class_id: ClassId,
+		function_identity: FunctionIdentity,
+		definitions: &mut Definitions,
+	) -> Result<SomeFunctionId, QuMsg> {
+		let class = definitions.get_class(class_id)?;
+		let Some(group_id) = class.function_groups_map
+			.get(CONSTRUCTOR_NAME)
+			.map(|x|{*x})
+			else {
+				return Err("TODO: Add err msg".into())
+			};
+		let init_signature = FunctionIdentity {
+			name: CONSTRUCTOR_NAME.into(),
+			parameters: function_identity.parameters,
+			..Default::default()
+		};
+		
+		let Some(some_fn_id) = definitions
+			.function_groups[group_id]
+			.map
+			.get(&init_signature)
+			.map(|x|{*x})
+			else {
+				return Err("TODO: Add err msg".into())
+			};
+		
+		Ok(some_fn_id)
+		
 	}
 
 
@@ -2630,47 +2669,59 @@ pub struct QuCompiler {
 			})
 			.collect();
 
-		// Find function id in the current context
-		let id = if caller_is_container {
-			let identity = call_expression.caller
-				.as_ref()
-				.unwrap()
-				.into_identity();
-			let item = self.context.find_item(
-				identity,
-				definitions,
-			)?;
+		let callable_id = self.context
+			.find_item_maybe(&call_expression.name.slice, definitions);
 
-			match item {
-				ItemId::Class(id) => {
-					let class = definitions.get_class(id)?;
-					let fn_group = class.get_function_group_id(
-						&function_identity.name
-					)?;
-					*definitions.function_groups[fn_group]
-						.map
-						.get(&function_identity)
-						.unwrap() // TODO: Handle none
-				},
-				ItemId::Module(id) => {
-					let module = definitions.get_module(id)?;
-					let fn_group = module.get_function_group_id(
-						&function_identity.name
-					)?;
-					*definitions.function_groups[fn_group]
-						.map
-						.get(&function_identity)
-						.unwrap() // TODO: Handle none
-				},
-				_ => panic!(),
-			}
-		} else {
-			self.context
-				.get_some_function_id_by_identity(
-					&function_identity,
-					&definitions,
+		// Find function id in the current context
+		let id =
+			if let Some(ItemId::Class(class_id)) = callable_id {
+				self.get_class_constructor_id(
+					class_id,
+					function_identity,
+					definitions
 				)?
-		};
+			} else {
+				if caller_is_container {
+					let identity = call_expression.caller
+						.as_ref()
+						.unwrap()
+						.into_identity();
+					let item = self.context.find_item(
+						identity,
+						definitions,
+					)?;
+
+					match item {
+						ItemId::Class(id) => {
+							let class = definitions.get_class(id)?;
+							let fn_group = class.get_function_group_id(
+								&function_identity.name
+							)?;
+							*definitions.function_groups[fn_group]
+								.map
+								.get(&function_identity)
+								.unwrap() // TODO: Handle none
+						},
+						ItemId::Module(id) => {
+							let module = definitions.get_module(id)?;
+							let fn_group = module.get_function_group_id(
+								&function_identity.name
+							)?;
+							*definitions.function_groups[fn_group]
+								.map
+								.get(&function_identity)
+								.unwrap() // TODO: Handle none
+						},
+						_ => panic!(),
+					}
+				} else {
+					self.context
+						.get_some_function_id_by_identity(
+							&function_identity,
+							&definitions,
+						)?
+				}
+			};
 
 		// Compile the function call
 		match id {

@@ -183,6 +183,42 @@ mod lib {
     use crate::{Qu, Module, Bool};
 
 	#[test]
+	/// Tests class instantiation
+	fn instantiate_class() {
+		let mut qu = Qu::new();
+
+		let result:i32 = *qu.run_and_get("
+			return int()
+		").unwrap();
+		assert_eq!(result, 0);
+
+		let result:i32 = *qu.run_and_get("
+			return int(5)
+		").unwrap();
+		assert_eq!(result, 5);
+
+		let result:i32 = *qu.run_and_get("
+			return int(0==0) + int(0==0) + int(0!=0)
+		").unwrap();
+		assert_eq!(result, 1+1+0+0);
+
+		let result:bool = qu.run_and_get::<Bool>("
+			return bool()
+		").unwrap().to_owned().into();
+		assert_eq!(result, false);
+
+		let result:bool = qu.run_and_get::<Bool>("
+			return bool(0==0)
+		").unwrap().to_owned().into();
+		assert_eq!(result, true);
+
+		let result:bool = qu.run_and_get::<Bool>("
+			return bool(1)
+		").unwrap().to_owned().into();
+		assert_eq!(result, true);
+	}
+
+	#[test]
 	fn fibinachi() {
 		let mut qu = Qu::new();
 		let script = r#"
