@@ -3012,6 +3012,7 @@ pub struct QuCompiler {
 							0,
 							return_type,
 						);
+						// Allocate space for return value.
 						let expression_reg = self.context.allocate(
 							return_type,
 							definitions,
@@ -3022,11 +3023,16 @@ pub struct QuCompiler {
 							expression_reg,
 							definitions
 						)?);
-						code.add_builder(self.cmp_copy_register(
-							expression_reg,
-							return_reg,
-							definitions,
-						)?);
+
+						if expression_reg.0 != return_reg.0 {
+							// Copy result to return register if its not
+							// already there
+							code.add_builder(self.cmp_copy_register(
+								expression_reg,
+								return_reg,
+								definitions,
+							)?);
+						}
 
 						if self.context.frames.len() == 1 {
 							code.add_op(Return(return_type));
@@ -3192,7 +3198,7 @@ pub struct QuCompiler {
 		let compiled = self.compile_code(&code_block, definitions)?;
 		self.context.close_frame();
 
-		Ok((compiled))
+		Ok(compiled)
 	}
 
 
