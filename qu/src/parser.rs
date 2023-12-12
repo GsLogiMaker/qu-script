@@ -15,6 +15,8 @@ use crate::QuMsg;
 pub const FLOW_TYPE_IF:u8 = 0;
 pub const FLOW_TYPE_WHILE:u8 = 1;
 
+pub const KEYWORD_BOOL_TRUE:&str = "true";
+pub const KEYWORD_BOOL_FALSE:&str = "false";
 pub const KEYWORD_CLASS:&str = "class";
 pub const KEYWORD_ELSE:&str = "else";
 pub const KEYWORD_ELIF:&str = "elif";
@@ -49,7 +51,6 @@ pub type QuParamNode = (QuToken, Option<QuToken>);
 pub mod parsed {
 	use std::fmt::Display;
 	use crate::tokens::QuToken;
-	use super::OP_ASSIGN_SYMBOL;
 	use super::QuOperator;
 
 	#[derive(Debug, Clone, PartialEq)]
@@ -61,7 +62,7 @@ pub mod parsed {
 		/// A calculable expression. Contains an operator and two [`QuLeafExpr`]s.
 		Operation(Box<OperationExpression>),
 		/// A literal int value.
-		Number(Box<NumberLiteral>),
+		Number(Box<ValueLiteral>),
 		/// A tuple.
 		Tuple(Box<TupleExpression>),
 		/// A variable name.
@@ -281,9 +282,9 @@ pub mod parsed {
 
 
 	#[derive(Debug, Clone, PartialEq)]
-	pub struct NumberLiteral {
+	pub struct ValueLiteral {
 		pub value: QuToken,
-	} impl NumberLiteral {
+	} impl ValueLiteral {
 		pub fn new(value:&str) -> Self {
 			Self {
 				value: QuToken::from(value),
@@ -903,12 +904,16 @@ pub struct QuParser {
 
 
 	/// Attempts to parse a number literal
-	fn ck_number(&mut self) -> Result<Option<NumberLiteral>, QuMsg> {
+	fn ck_literal(&mut self) -> Result<Option<ValueLiteral>, QuMsg> {
 		let tk = self.tk_spy(0);
-		if tk.tk_type == TOKEN_TYPE_NUMBER {
+		if
+			tk.tk_type == TOKEN_TYPE_NUMBER
+			||tk.slice == KEYWORD_BOOL_TRUE
+			|| tk.slice == KEYWORD_BOOL_FALSE
+		{
 			let value = self.tk_next()?.clone();
 			return Ok(Some(
-				NumberLiteral {value}
+				ValueLiteral {value}
 			))
 		}
 		return Ok(None);
@@ -1122,6 +1127,11 @@ pub struct QuParser {
 		}
 		self.tk_state_pop();
 
+		// Check literal
+		if let Some(leaf) = self.ck_literal()? {
+			return Ok(Some(Expression::Number(Box::new(leaf))));
+		}
+
 		// Check function call
 		if let Some(call) = self.ck_fn_call()? {
 			return Ok(Some(Expression::Call(Box::new(call))));
@@ -1130,11 +1140,6 @@ pub struct QuParser {
 		// Check variable
 		if let Some(leaf) = self.ck_var()? {
 			return Ok(Some(Expression::Var(Box::new(leaf))));
-		}
-
-		// Check number
-		if let Some(leaf) = self.ck_number()? {
-			return Ok(Some(Expression::Number(Box::new(leaf))));
 		}
 
 		return Ok(None);

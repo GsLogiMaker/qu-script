@@ -2283,7 +2283,7 @@ pub struct QuCompiler {
 			),
 			Expression::Number(
 				number,
-			) => self.cmp_expr_int(&number.value, output_reg, definitions),
+			) => self.cmp_expr_literal(&number.value, output_reg, definitions),
 			Expression::Tuple(
 				tuple,
 			) => self.cmp_expr_tuple(
@@ -2385,14 +2385,27 @@ pub struct QuCompiler {
 	/// # Panics
 	/// 
 	/// Panics if `val` can't be parsed to a number.
-	fn cmp_expr_int(
+	fn cmp_expr_literal(
 		// TODO: Change output_reg to a struct without type information
 		&mut self,
 		value:&QuToken,
 		output_reg:QuStackId,
 		definitions: &mut Definitions,
 	) -> Result<QuAsmBuilder, QuMsg> {
-		// TODO: Support other int sizes
+
+		// WARNING: Value takes an isize, which can be 4 or 8 bytes, but Bool is only 4 bytes
+		// TODO: Add proper way of adding Bool
+		if value.slice == KEYWORD_BOOL_TRUE {
+			let mut b = QuAsmBuilder::new();
+			b.add_op(Value(1, output_reg));
+			b.return_type = definitions.class_id::<Bool>()?;
+			return Ok(b);
+		} else if value.slice == KEYWORD_BOOL_FALSE {
+			let mut b = QuAsmBuilder::new();
+			b.add_op(Value(0, output_reg));
+			b.return_type = definitions.class_id::<Bool>()?;
+			return Ok(b);
+		}
 		
 		let Ok(val) = value.slice.parse::<isize>() else {
 			panic!("Could not convert text '{}' to number!", value.slice);

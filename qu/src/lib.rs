@@ -225,8 +225,27 @@ pub struct Qu<'a> {
 mod lib {
     use crate::{Qu, Module, Bool};
 
+	// TODO: Test what happens when a function overrides a class name
+	// TODO: Test what happens when a class constructor that doesn't exist is called
+
 	#[test]
-	/// Tests class instantiation
+	fn bool_literals() {
+		let mut qu = Qu::new();
+
+		let result:bool = qu.run_and_get::<Bool>("
+			var value bool = true
+			return value
+		").unwrap().to_owned().into();
+		assert_eq!(result, true);
+
+		let result:bool = qu.run_and_get::<Bool>("
+			var value bool = false
+			return value
+		").unwrap().to_owned().into();
+		assert_eq!(result, false);
+	}
+
+	#[test]
 	fn instantiate_class() {
 		let mut qu = Qu::new();
 
