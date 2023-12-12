@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fmt::format;
 use std::mem::size_of;
+use std::process::id;
 use std::slice::SliceIndex;
 
 use crate::ExternalFunction;
@@ -68,13 +69,33 @@ pub struct ModuleBuilder<'a> {
 		out: ClassId,
 		body: &'static ExternalFunctionPointer,
 	) -> Result<(), QuMsg> {
-		self.definitions.register_module_function(self.module_id, ExternalFunctionDefinition {
+		self.definitions.register_function_in_module(self.module_id, ExternalFunctionDefinition {
 			name: name,
 			pointer: body,
 			parameters: Vec::from(args),
 			return_type: out,
 		})?;
-		self.definitions.register_functions()
+		Ok(())
+	}
+
+	pub fn add_class_static_function(
+		&mut self,
+		for_class: ClassId,
+		name: String,
+		args: &[ClassId],
+		out: ClassId,
+		body: &'static ExternalFunctionPointer,
+	) -> Result<(), QuMsg> {
+		self.definitions.register_static_function_in_class(
+			for_class,
+			ExternalFunctionDefinition {
+				name: name,
+				pointer: body,
+				parameters: Vec::from(args),
+				return_type: out,
+			},
+		)?;
+		Ok(())
 	}
 
 	pub fn get_module(&self, name:&str) -> Result<&ModuleMetadata, QuMsg> {
@@ -252,6 +273,7 @@ pub struct QuStruct {
 	pub external_functions_map: HashMap<FunctionIdentity, ExternalFunctionId>,
 	pub functions_map: HashMap<FunctionIdentity, FunctionId>,
 	pub function_groups_map: HashMap<String, FunctionGroupId>,
+	pub static_functions_map: HashMap<FunctionIdentity, SomeFunctionId>,
 	
 	pub name: String,
 	pub register_fn: &'static dyn Fn(&mut Definitions) -> Vec<ExternalFunctionDefinition>,
@@ -274,9 +296,9 @@ pub struct QuStruct {
 			external_functions_map: Default::default(),
 			functions_map: Default::default(),
 			function_groups_map: Default::default(),
+			static_functions_map: Default::default(),
 		}
 	}
-
 
 	pub fn has_item(&self, identity: &str) -> bool {
 		self.constants_map.contains_key(identity)
@@ -313,6 +335,20 @@ pub struct QuStruct {
 			})
 			.map(|id| {*id})
 	}
+
+	pub fn get_static_function_id(
+		&self,
+		identity: &FunctionIdentity,
+	) -> Result<SomeFunctionId, QuMsg> {
+		let id = self.static_functions_map
+			.get(identity)
+			.ok_or_else(||->QuMsg {
+				format!(
+					"Class has no static function with identity '{identity}'.",
+				).into()
+			})?;
+		Ok(*id)
+	}
 } impl Debug for QuStruct {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("QuStruct")
@@ -329,6 +365,7 @@ pub struct QuStruct {
 			register_fn: &|definitions:&mut Definitions| {vec![]},
 			size: Default::default(),
 			function_groups_map: Default::default(),
+			static_functions_map: Default::default(),
 		}
     }
 }

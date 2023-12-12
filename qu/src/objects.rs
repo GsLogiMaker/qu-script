@@ -31,6 +31,15 @@ macro_rules! qufn {
 			&|$api| $block
 		)?
 	};
+	($module_builder:ident, $api:ident, $for_class:ident.$name:ident($($param:ident),*) $return:ident $block:block) => {
+		$module_builder.add_class_static_function(
+			$for_class,
+			stringify!($name).into(),
+			&[$($param),*],
+			$return,
+			&|$api| $block
+		)?
+	};
 }
 
 /// A method for registering the __fundamentals__ module in Qu.
@@ -53,40 +62,15 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 	registerer.add_module(
 		FUNDAMENTALS_MODULE.into(),
 		&|m| {
+			let void = m.add_class::<QuVoid>()?;
+			let int = m.add_class::<i32>()?;
 			let bool = m.add_class::<Bool>()?;
 			let class = m.add_class::<Class>()?;
-			let int = m.add_class::<i32>()?;
 			let module = m.add_class::<Module>()?;
-			let void = m.add_class::<QuVoid>()?;
 
-			// bool functions
+			// void functions
 			{
-				qufn!(m, api, and(bool) bool {
-					api.set(api.get::<Bool>(0)?.and(api.get::<Bool>(1)?));
-					Ok(())
-				});
-				qufn!(m, api, or(bool) bool {
-					api.set(api.get::<Bool>(0)?.or(api.get::<Bool>(1)?));
-					Ok(())
-				});
-				qufn!(m, api, eq(bool) bool {
-					api.set::<Bool>((api.get::<Bool>(0)? == api.get::<Bool>(1)?).into());
-					Ok(())
-				});
-				qufn!(m, api, neq(bool) bool {
-					api.set::<Bool>((api.get::<Bool>(0)? != api.get::<Bool>(1)?).into());
-					Ok(())
-				});
-				qufn!(m, api, copy(bool) bool {
-					api.set::<Bool>(*api.get::<Bool>(0)?);
-					Ok(())
-				});
-			}
-
-			// class functions
-			{
-				qufn!(m, api, copy(class) class {
-					api.set(*api.get::<Class>(0)?);
+				qufn!(m, api, copy(void) void {
 					Ok(())
 				});
 			}
@@ -162,6 +146,38 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 					Ok(())
 				});
 			}
+
+			// bool functions
+			{
+				qufn!(m, api, and(bool) bool {
+					api.set(api.get::<Bool>(0)?.and(api.get::<Bool>(1)?));
+					Ok(())
+				});
+				qufn!(m, api, or(bool) bool {
+					api.set(api.get::<Bool>(0)?.or(api.get::<Bool>(1)?));
+					Ok(())
+				});
+				qufn!(m, api, eq(bool) bool {
+					api.set::<Bool>((api.get::<Bool>(0)? == api.get::<Bool>(1)?).into());
+					Ok(())
+				});
+				qufn!(m, api, neq(bool) bool {
+					api.set::<Bool>((api.get::<Bool>(0)? != api.get::<Bool>(1)?).into());
+					Ok(())
+				});
+				qufn!(m, api, copy(bool) bool {
+					api.set::<Bool>(*api.get::<Bool>(0)?);
+					Ok(())
+				});
+			}
+
+			// class functions
+			{
+				qufn!(m, api, copy(class) class {
+					api.set(*api.get::<Class>(0)?);
+					Ok(())
+				});
+			}
 			
 			// module functions
 			{
@@ -171,12 +187,7 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 				});
 			}
 
-			// void functions
-			{
-				qufn!(m, api, copy(void) void {
-					Ok(())
-				});
-			}
+			
 
 			Ok(())
 		}
@@ -404,6 +415,9 @@ pub struct QuFnObject {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Bool (bool, bool, bool, bool);
 impl Bool {
+	pub fn new() -> Bool {
+		Bool (false, false, false, false)
+	}
 	pub fn and(&self, other: &Self) -> Bool {
 		(self.0 && other.0).into()
 	}

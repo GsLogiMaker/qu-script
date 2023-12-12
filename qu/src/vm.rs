@@ -405,7 +405,8 @@ pub struct QuVm {
 		let mut pc = 0;
 		while pc != self.definitions.byte_code_blocks[code_block].len() {
 			let op = &self.definitions.byte_code_blocks[code_block][pc];
-			#[cfg(feature = "qu_print_vm_operations")] {
+			#[cfg(feature = "qu_print_vm_operations")]
+			{
 				match op {
 					QuOp::Call(function_id, output) => {
 						let params = &self.definitions

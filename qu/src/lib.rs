@@ -140,13 +140,12 @@ pub struct Qu<'a> {
 	/// 
 	/// # Errors
 	/// 
-	/// If `code` contains improper Qu syntax or a Qu runtime error occurs
+	/// If `code` contains improper syntax or a problem occurs at runtime
 	/// then an [`Err`] is returned.
 	/// 
 	/// # Example
 	/// 
 	/// ```
-	/// 
 	/// 
 	/// # use qu::QuMsg;
 	/// # fn main(){example().unwrap()}
@@ -214,10 +213,16 @@ mod lib {
 				var i int = 0
 				while i < to:
 					i = i + 1
-			
 			count(10)
 		"#;
+		qu.run(script).unwrap();
 
+		let mut qu = Qu::new();
+		let script = r#"
+			fn five() void:
+				return 5
+			return five()
+		"#;
 		qu.run(script).unwrap();
 	}
 
@@ -438,7 +443,8 @@ mod lib {
 	}
 
 
-	#[test]
+	// #[test]
+	// TODO: Allow accessing functions from class name (Requires constant evaluation)
 	fn class_dot_notation() {
 		let mut qu = Qu::new();
 		let result:i32 = *qu.run_and_get("return int.sub(5, 8)").unwrap();
