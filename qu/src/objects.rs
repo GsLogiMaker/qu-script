@@ -2,15 +2,19 @@
 //! Defines all types and objects used by Qu.
 
 use crate::QuMsg;
+use crate::Uuid;
 use crate::compiler::CONSTRUCTOR_NAME;
 use crate::compiler::Definitions;
 use crate::compiler::ModuleId;
+use crate::compiler::REGISTERED_BANK;
 use crate::import::ClassId;
 use crate::import::ArgsAPI;
 use crate::import::ExternalFunctionPointer;
 use crate::import::Registerer;
+use crate::import::RegistererLayer;
 use crate::vm::QuExtFn;
 use crate::vm::QuVoidExtFn;
+use std::any::TypeId;
 use std::fmt::Debug;
 use std::ops::Add;
 use std::ops::Div;
@@ -64,6 +68,8 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 			let bool = m.add_class::<Bool>()?;
 			let class = m.add_class::<Class>()?;
 			let module = m.add_class::<Module>()?;
+
+			m.add_constant("PI", 3)?;
 
 			// void functions
 			{
@@ -245,9 +251,10 @@ pub fn math_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 	registerer.add_module(
 		"math",
 		&|m| {
-			let fundamentals =
-				m.get_module(FUNDAMENTALS_MODULE)?;
+			let fundamentals = m
+				.get_module(FUNDAMENTALS_MODULE)?;
 			let int = fundamentals.get_class_id("int")?;
+
 			m.add_function(
 				"foo",
 				&[int],
@@ -438,6 +445,16 @@ impl QuRegisterStruct for QuVoid {
 
 /// A trait for registering structs into the Qu programming language.
 pub trait QuRegisterStruct {
+	/// Gets the [`ClassId`] of this struct from the Qu instance with `uuid`.
+	fn get_id(uuid: &Uuid) -> Option<ClassId> where Self: 'static{
+		REGISTERED_BANK
+			.read()
+			.unwrap()
+			.get(&uuid)?
+			.get(&TypeId::of::<Self>())
+			.map(|x|{*x})
+	}
+
 	/// Returns functions that are callable by [`QuVm`].
 	fn register_fns(
 		_definitions: &mut Definitions

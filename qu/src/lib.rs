@@ -36,9 +36,11 @@ mod parser;
 mod tokens;
 mod vm;
 
+use std::any::type_name;
 use std::marker::PhantomData;
 
 use compiler::RegistrationMethod;
+use import::ClassId;
 use tokens::TOKEN_TYPE_NAME;
 use tokens::QuToken;
 pub use errors::QuMsg;
@@ -48,7 +50,9 @@ pub use parser::QuParser;
 pub use vm::QuOp;
 pub use vm::QuVm;
 pub use vm::QuStackId;
+pub use import::RegistererLayer;
 
+type Uuid = uuid::Uuid;
 
 /// The interface for the Qu programming language.
 /// 
@@ -75,7 +79,6 @@ pub use vm::QuStackId;
 pub struct Qu<'a> {
 	vm: QuVm,
 	ph: PhantomData<&'a ()>,
-
 } impl<'a> Qu<'a> {
 
 	/// Instantiates a [`Qu`] struct.
@@ -89,9 +92,16 @@ pub struct Qu<'a> {
 	/// ```
 	pub fn new() -> Self {
 		Qu {
-			vm: QuVm::new(),
+			vm: QuVm::new(Uuid::new_v4()),
 			ph: PhantomData {},
 		}
+	}
+
+	/// Returns the [`ClassId`] registered to the struct in this Qu instance.
+	pub fn get_class_id_of<T: QuRegisterStruct + 'static>(
+		&self
+	) -> Option<ClassId> {
+		T::get_id(self.get_uuid())
 	}
 
 	/// Compiles Qu script without running it.
@@ -127,6 +137,11 @@ pub struct Qu<'a> {
 	}
 
 
+	/// Returns the unique identifier of this Qu instance.
+	pub fn get_uuid(&self) -> &Uuid {
+		&self.vm.definitions.uuid
+	}
+
 	/// Registers external items (such as functions, classes, and modules).
 	/// 
 	/// # Example
@@ -137,6 +152,7 @@ pub struct Qu<'a> {
 	/// # fn example() -> Result<(), QuMsg> {
 	/// use qu::Qu;
 	/// use qu::QuRegisterStruct;
+	/// use qu::RegistererLayer;
 	/// 
 	/// struct MyClass(i32);
 	/// impl QuRegisterStruct for MyClass {
@@ -151,7 +167,7 @@ pub struct Qu<'a> {
 	/// 		let my_class_id = m.add_class::<MyClass>()?;
 	/// 		m.add_class_static_function(
 	/// 			my_class_id,
-	/// 			":new",
+	/// 			".new",
 	/// 			&[],
 	/// 			my_class_id,
 	/// 			&|api| {
@@ -229,12 +245,29 @@ pub struct Qu<'a> {
 	/// # return Ok(());
 	/// # }
 	/// ```
-	pub fn run_and_get<T:'a + QuRegisterStruct>(
+	pub fn run_and_get<T: QuRegisterStruct + 'static>(
 		&mut self,
 		script:&str,
 	) -> Result<&T, QuMsg> {
+		let Some(type_class_id) = self.get_class_id_of::<T>()
+			else {
+				return Err(format!(
+					"Type {} is not registered in this Qu isntance",
+					type_name::<T>(),
+				).into());
+			};
+
 		self.run(script)?;
 		let return_id = self.vm.return_value_id();
+
+		if type_class_id != return_id {
+			return Err(format!(
+				"Returned value of type {} does not match requested value ot type {}",
+				self.vm.definitions.classes[return_id.0].name,
+				type_name::<T>(),
+			).into())
+		}
+
 		self.vm.read::<T>(QuStackId::new(0, return_id))
 	}
 
@@ -247,6 +280,16 @@ mod lib {
 
 	// TODO: Test what happens when a function overrides a class name
 	// TODO: Test what happens when a class constructor that doesn't exist is called
+
+	#[test]
+	fn constants() {
+		let mut qu = Qu::new();
+		
+		let pi:i32 = *qu.run_and_get("
+			return PI
+		").unwrap();
+		assert_eq!(pi, 3);
+	}
 
 	#[test]
 	fn bool_literals() {

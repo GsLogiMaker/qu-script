@@ -1,4 +1,6 @@
 
+use once_cell::sync::Lazy;
+
 use crate::Class;
 use crate::ExternalFunction;
 use crate::Module;
@@ -8,6 +10,7 @@ use crate::QuParser;
 use crate::QuRegisterStruct;
 use crate::QuStackId;
 use crate::QuVoid;
+use crate::Uuid;
 use crate::import::ModuleBody;
 use crate::import::ModuleBuilder;
 use crate::import::QuRegistered;
@@ -25,19 +28,33 @@ use crate::parser::parsed::*;
 use crate::QuMsg;
 use crate::QuToken;
 use crate::objects::FUNDAMENTALS_MODULE;
-use crate::vm::Stack;
 
 use core::panic;
+use std::any::TypeId;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::mem::size_of;
 use std::hash::Hash;
+use std::sync::RwLock;
 
-pub(crate) const CONSTRUCTOR_NAME:&str = ":new";
+pub(crate) const CONSTRUCTOR_NAME:&str = ".new";
 // TODO: Fix compiler's documentation
+
+// TODO: Make bank store which definitions obj the mappings are for
+/// Stores a conversion map of types to [`ClassId`]s.
+pub(crate) static
+	REGISTERED_BANK:Lazy<RwLock< HashMap<Uuid, HashMap<TypeId, ClassId>> >>
+	= Lazy::new(||{RwLock::new(HashMap::new())});
 
 pub type ConstantId = usize;
 
+
+#[derive(Debug)]
+pub struct Constant {
+	pub name: String,
+	pub value: Box<[u8]>,
+	pub class_id: ClassId,
+}
 
 /// The context for what is being compiled. Records things like temporary
 /// variables and import shortcuts.
@@ -624,9 +641,10 @@ enum ContextFrame {
 
 
 pub type RegistrationMethod = dyn Fn(&mut Registerer) -> Result<(), QuMsg>;
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default)]
 pub struct Definitions {
-	pub constants: GrowingStack,
+	pub(crate) uuid: Uuid,
+	pub constants: Vec<Constant>,
 	pub classes: Vec<QuStruct>,
 	pub external_functions: Vec<ExternalFunction>,
 	pub functions: Vec<FunctionMetadata>,
@@ -641,11 +659,11 @@ pub struct Definitions {
 	/// All registered classes with external functions that were not registered.
 	with_unregistered_functions: Vec<ClassId>, // TODO: Remove with_unregistered_functions
 } impl Definitions {
-	pub fn new(imports: QuRegistered) -> Self {
-		Self {
-			imports,
-			..Default::default()
-		}
+	pub fn new(uuid: Uuid) -> Self {
+		let mut d = Self::default();
+		d.uuid = uuid;
+		REGISTERED_BANK.write().unwrap().insert(uuid, HashMap::default());
+		d
 	}
 
 
@@ -899,14 +917,58 @@ pub struct Definitions {
 		self.find_class_id(<T as QuRegisterStruct>::name())
 	}
 
-	pub fn define_constant<T>(
+	/// Adds a constant without binding any names to it.
+	pub fn add_constant<T: QuRegisterStruct + 'static>(
 		&mut self,
-		_module: ModuleId,
+		name: String,
 		value: T,
-	) -> ConstantId {
-		let constant_id = self.constants.allocate(size_of::<T>());
-		self.constants.write(constant_id, value);
-		constant_id
+	) -> Result<ConstantId, QuMsg> {
+		let Some(class_id) = T::get_id(&self.uuid)
+			else {
+				return Err("TODO: Add proper err msg".into())
+			};
+
+		let allocated_value_ptr:*mut T = Box::leak(Box::new(value));
+		let vec = unsafe { Vec::from_raw_parts(
+			allocated_value_ptr as *mut u8,
+			size_of::<T>(),
+			size_of::<T>(),
+		) };
+		let constant = Constant {
+			name: name,
+			value: vec.into_boxed_slice(),
+			class_id,
+		};
+		let constant_id = self.constants.len();
+		self.constants.push(constant);
+		Ok(constant_id)
+	}
+
+
+	/// Adds a constant and binds a names to it relative to the given item.
+	pub fn define_constant_in_item<T: QuRegisterStruct + 'static>(
+		&mut self,
+		name: String,
+		value: T,
+		item_id: ItemId,
+	) -> Result<ConstantId, QuMsg> {
+		let constant_id = self.add_constant(name.clone(), value)?;
+
+		let constants_map = match item_id {
+			ItemId::Class(_) => todo!(),
+			ItemId::Constant(_) => todo!(),
+			ItemId::ExternalFunction(_) => todo!(),
+			ItemId::Function(_) => todo!(),
+			ItemId::FunctionGroup(_) => todo!(),
+			ItemId::Module(id) => 
+				&mut self.get_module_mut(id)?.constants_map,
+			ItemId::StaticVariable(_) => todo!(),
+			ItemId::Variable(_) => todo!(),
+			ItemId::None => todo!(),
+		};
+		constants_map.insert(name, constant_id);
+
+		Ok(constant_id)
 	}
 
 
@@ -1031,18 +1093,6 @@ pub struct Definitions {
 	}
 
 
-	pub fn define_module_constant<T>(
-		&mut self,
-		module: ModuleId,
-		name: String,
-		value: T,
-	) -> ConstantId {
-		let constant_id = self.define_constant(module, value);
-		self.modules[module].constants_map.insert(name, constant_id);
-		constant_id
-	}
-
-
 	pub fn define_module_function(
 		&mut self,
 		_module_id: ModuleId,
@@ -1090,26 +1140,6 @@ pub struct Definitions {
 				"There's no class with id '{:?}' defined.", id,
 			).into()})?;
 		Ok(class)
-	}
-
-
-	fn get_class_constant_id(
-		&self, class_id: ClassId, name: &str,
-	) -> Result<ConstantId, QuMsg> {
-		let class = self.get_class(class_id)?;
-		let constant_id = *class.constants_map
-			.get(name)
-			.ok_or_else(|| -> QuMsg { format!(
-				"The class '{}' has no constant named '{}' defined.",
-				class.name,
-				name,
-			).into()})?;
-		Ok(constant_id)
-	}
-
-
-	fn get_constant<T>(&self, id: usize) -> &T {
-		self.constants.read(id)
 	}
 
 
@@ -1229,21 +1259,6 @@ pub struct Definitions {
 	}
 	
 
-	fn get_module_constant_id(
-		&self, module_id: ModuleId, name: &str,
-	) -> Result<ConstantId, QuMsg> {
-		let module = self.get_module(module_id)?;
-		let constant_id = *module.constants_map
-			.get(name)
-			.ok_or_else(|| -> QuMsg { format!(
-				"The module '{}' has no constant named '{}'.",
-				module.name,
-				name,
-			).into()})?;
-		Ok(constant_id)
-	}
-
-
 	pub fn get_module_by_name(&self, module:&str) -> Result<&ModuleMetadata, QuMsg> {
 		let id = self.get_module_id(module).ok_or_else(|| {
 			QuMsg::from(format!("Found no module by name {module}"))
@@ -1285,16 +1300,6 @@ pub struct Definitions {
 		).into())
 	}
 
-
-	fn find_constant_id(&self, name: &str) -> Option<ConstantId> {
-		for module in &self.modules {
-			if module.constants_map.contains_key(name) {
-				return Some(*module.constants_map.get(name).unwrap());
-			}
-		}
-		None
-	}
-
 	
 	fn find_class_id(&self, name: &str) -> Result<ClassId, QuMsg> {
 		for module in &self.modules {
@@ -1306,6 +1311,7 @@ pub struct Definitions {
 			"There's no class with name '{}' defined.", name,
 		).into())
 	}
+
 
 	pub fn register(
 		&mut self,
@@ -1455,6 +1461,14 @@ pub struct Definitions {
 		);
 		self.classes.push(class);
 
+		// Add struct to register bank
+		REGISTERED_BANK
+			.write()
+			.unwrap()
+			.get_mut(&self.uuid)
+			.unwrap()
+			.insert(TypeId::of::<S>(), class_id);
+
 		Ok(class_id)
 
 	}
@@ -1551,36 +1565,6 @@ pub struct FunctionMetadata {
 	/// The value that the VM's program counter should be set to in order to
 	/// start this function.
 	pub code_block: usize,
-}
-
-#[derive(Debug, Default, Clone)]
-pub struct GrowingStack {
-	allocated: usize,
-	data: Vec<u8>,
-} impl GrowingStack {
-	fn allocate(&mut self, size: usize) -> usize {
-		let index = self.allocated;
-		self.allocated += size;
-		if self.allocated > self.data.len() {
-			self.data.resize(self.allocated, 0);
-		}
-		index
-	}
-} impl Stack for GrowingStack {
-	type Indexer = usize;
-
-
-	fn data(&self) -> &Vec<u8> {
-		&self.data
-	}
-
-	fn data_mut(&mut self) -> &mut Vec<u8> {
-		&mut self.data
-	}
-
-	fn offset(&self) -> usize {0}
-
-	fn offset_mut(&mut self) -> &mut usize {todo!()}
 }
 
 pub type ModuleId = usize;
@@ -1995,12 +1979,12 @@ pub struct QuCompiler {
 			let group_id = class.function_groups_map
 				.get(CONSTRUCTOR_NAME)
 				.map(|x|{*x})
-				.expect("TODO: Add error msg");
+				.expect("TODO: Add error msg1");
 			let some_fn_id = *definitions
 				.get_function_group(group_id)?
 				.map
 				.get(&function_identity)
-				.expect("TODO: Add error msg");
+				.expect("TODO: Add error msg2");
 			some_fn_id
 		} else {
 			if
@@ -2330,7 +2314,11 @@ pub struct QuCompiler {
 				builder.return_type = definitions.class_id::<Class>()?;
 				builder
 			},
-			ItemId::Constant(_) => todo!(),
+			ItemId::Constant(id) => {
+				let mut builder = QuAsmBuilder::new();
+				builder.add_op(QuOp::LoadConstant(id as u32, output_reg));
+				builder
+			},
 			ItemId::ExternalFunction(_) => todo!(),
 			ItemId::Function(_) => todo!(),
 			ItemId::FunctionGroup(_) => todo!(),
@@ -3183,7 +3171,8 @@ pub struct QuCompiler {
 					ItemId::Class(_) => {
 						definitions.class_id::<Class>()?
 					},
-					ItemId::Constant(_) => todo!(),
+					ItemId::Constant(id) =>
+						definitions.constants[id].class_id,
 					ItemId::ExternalFunction(_) => todo!(),
 					ItemId::Function(_) => todo!(),
 					ItemId::FunctionGroup(_) => todo!(),

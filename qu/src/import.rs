@@ -8,6 +8,7 @@ use crate::QuMsg;
 use crate::QuRegisterStruct;
 use crate::QuStackId;
 use crate::QuVm;
+use crate::Uuid;
 use crate::compiler::ConstantId;
 use crate::compiler::Definitions;
 use crate::compiler::ExternalFunctionId;
@@ -45,54 +46,18 @@ pub type ExternalFunctionPointer = dyn Fn(&mut ArgsAPI) -> Result<(), QuMsg>;
 pub struct ModuleBuilder<'a> {
 	pub(crate) definitions: &'a mut Definitions,
 	pub(crate) module_id: ModuleId,
-} impl<'a> ModuleBuilder<'a> {
-	/// Define a class in this module.
-	pub fn add_class<T:QuRegisterStruct+'static>(
-		&mut self
-	) -> Result<ClassId, QuMsg> {
-		self.definitions.register_module_struct::<T>(self.module_id)
-	}
+} impl<'a> RegistererLayer for ModuleBuilder<'a> {
+    fn get_layer_item_id(&self) -> ItemId {
+        ItemId::Module(self.module_id)
+    }
 
-	/// Define a function in this module.
-	pub fn add_function(
-		&mut self,
-		name: impl Into<String>,
-		args: &[ClassId],
-		out: ClassId,
-		body: &'static ExternalFunctionPointer,
-	) -> Result<(), QuMsg> {
-		self.definitions.register_function_in_module(self.module_id, ExternalFunction {
-			name: name.into(),
-			pointer: body,
-			parameters: Vec::from(args),
-			return_type: out,
-		})?;
-		Ok(())
-	}
+    fn get_definitions(&self) -> &Definitions {
+        &self.definitions
+    }
 
-	pub fn add_class_static_function(
-		&mut self,
-		for_class: ClassId,
-		name: impl Into<String>,
-		args: &[ClassId],
-		out: ClassId,
-		body: &'static ExternalFunctionPointer,
-	) -> Result<(), QuMsg> {
-		self.definitions.register_static_function_in_class(
-			for_class,
-			ExternalFunction {
-				name: name.into(),
-				pointer: body,
-				parameters: Vec::from(args),
-				return_type: out,
-			},
-		)?;
-		Ok(())
-	}
-
-	pub fn get_module(&self, name:&str) -> Result<&ModuleMetadata, QuMsg> {
-		self.definitions.get_module_by_name(name)
-	}
+    fn get_definitions_mut(&mut self) -> &mut Definitions {
+        &mut self.definitions
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -228,12 +193,52 @@ pub struct QuRegistered {
 pub type ModuleBody = dyn Fn(&mut ModuleBuilder) -> Result<(), QuMsg>;
 pub struct Registerer<'a> {
 	pub(crate) definitions: &'a mut Definitions,
-} impl<'a> Registerer<'a> {
-	pub fn add_module(
-		&mut self, name:impl Into<String>,
-		body:&ModuleBody
-	) -> Result<ModuleId, QuMsg> {
-		self.definitions.define_module(name.into(), body)
+} impl<'a> RegistererLayer for Registerer<'a> {
+    fn get_layer_item_id(&self) -> ItemId {
+        ItemId::None
+    }
+
+    fn get_definitions(&self) -> &Definitions {
+        &self.definitions
+    }
+
+    fn get_definitions_mut(&mut self) -> &mut Definitions {
+        &mut self.definitions
+    }
+
+	fn add_class<T:QuRegisterStruct+'static>(
+		&mut self
+	) -> Result<ClassId, QuMsg> {
+		panic!("Classes can't be added at this level. Add a module first.")
+	}
+
+	fn add_constant<T: QuRegisterStruct + 'static>(
+		&mut self,
+		_name: impl Into<String>,
+		_value: T,
+	) -> Result<ConstantId, QuMsg> {
+		panic!("Constants can't be added at this level. Add a module first.")
+	}
+
+	fn add_function(
+		&mut self,
+		_name: impl Into<String>,
+		_args: &[ClassId],
+		_out: ClassId,
+		_body: &'static ExternalFunctionPointer,
+	) -> Result<(), QuMsg> {
+		panic!("Functions can't be added at this level. Add a module first.")
+	}
+
+	fn add_class_static_function(
+		&mut self,
+		_for_class: ClassId,
+		_name: impl Into<String>,
+		_args: &[ClassId],
+		_out: ClassId,
+		_body: &'static ExternalFunctionPointer,
+	) -> Result<(), QuMsg> {
+		panic!("Static functions can't be added at this level. Add a module first.")
 	}
 }
 
@@ -362,4 +367,120 @@ pub struct QuStruct {
 			static_functions_map: Default::default(),
 		}
     }
+}
+
+
+/// A builder layer for adding external items into Qu.
+/// 
+/// A layer could be something like a module class.
+pub trait RegistererLayer {
+	/// Returns the [`ItemId`] of the current layer.
+	fn get_layer_item_id(&self) -> ItemId;
+	/// Returns a reference to all defined items.
+	fn get_definitions(&self) -> &Definitions;
+	/// Returns a mutable reference to all defined items.
+	fn get_definitions_mut(&mut self) -> &mut Definitions;
+	
+	/// Returns the [`Uuid`] of the Qu instance.
+	fn get_uuid(&self) -> &Uuid {
+		&self.get_definitions().uuid
+	}
+
+	/// Adds a class to the current layer.
+	fn add_class<T:QuRegisterStruct+'static>(
+		&mut self
+	) -> Result<ClassId, QuMsg> {
+		let module_id = match self.get_layer_item_id() {
+			ItemId::Module(id) => {id},
+			_ => todo!("Support adding classes to more types items"),
+		};
+
+		self.get_definitions_mut().register_module_struct::<T>(module_id)
+	}
+
+	/// Adds a constant to the current layer.
+	fn add_constant<T: QuRegisterStruct + 'static>(
+		&mut self,
+		name: impl Into<String>,
+		value: T,
+	) -> Result<ConstantId, QuMsg> {
+		let layer_id = self.get_layer_item_id();
+		self.get_definitions_mut().define_constant_in_item(
+			name.into(),
+			value,
+			layer_id,
+		)
+	}
+
+	/// Adds a function in the layer.
+	fn add_function(
+		&mut self,
+		name: impl Into<String>,
+		args: &[ClassId],
+		out: ClassId,
+		body: &'static ExternalFunctionPointer,
+	) -> Result<(), QuMsg> {
+		let module_id = match self.get_layer_item_id() {
+			ItemId::Module(id) => {id},
+			_ => todo!("Support adding functions to more types items"),
+		};
+
+		self.get_definitions_mut().register_function_in_module(
+			module_id,
+			ExternalFunction {
+				name: name.into(),
+				pointer: body,
+				parameters: Vec::from(args),
+				return_type: out,
+			}
+		)?;
+		Ok(())
+	}
+
+	/// Adds a static function to a class.
+	fn add_class_static_function(
+		&mut self,
+		for_class: ClassId,
+		name: impl Into<String>,
+		args: &[ClassId],
+		out: ClassId,
+		body: &'static ExternalFunctionPointer,
+	) -> Result<(), QuMsg> {
+		self.get_definitions_mut().register_static_function_in_class(
+			for_class,
+			ExternalFunction {
+				name: name.into(),
+				pointer: body,
+				parameters: Vec::from(args),
+				return_type: out,
+			},
+		)?;
+		Ok(())
+	}
+
+	/// Adds a module in the layer.
+	fn add_module(
+		&mut self, name:impl Into<String>,
+		body:&ModuleBody
+	) -> Result<ModuleId, QuMsg> {
+		match self.get_layer_item_id() {
+			ItemId::None => {/* Ok */},
+			_ => todo!("Support adding modules to more types items"),
+		}
+
+		self.get_definitions_mut().define_module(name.into(), body)
+	}
+
+	/// Returns the [`ClassId`] of the given struct.
+	fn get_class_id_of<T: QuRegisterStruct + 'static>(
+		&self
+	) -> Option<ClassId> {
+		T::get_id(&self.get_definitions().uuid)
+	}
+
+	/// Gets a module by name.
+	fn get_module(&self, name:&str) -> Result<&ModuleMetadata, QuMsg> {
+		self.get_definitions().get_module_by_name(name)
+	}
+
 }

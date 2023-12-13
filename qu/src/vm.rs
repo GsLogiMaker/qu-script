@@ -4,6 +4,7 @@ use std::mem::size_of;
 
 use crate::QuMsg;
 use crate::QuRegisterStruct;
+use crate::Uuid;
 use crate::compiler::Definitions;
 use crate::compiler::ExternalFunctionId;
 use crate::compiler::FunctionId;
@@ -40,6 +41,8 @@ pub enum QuOp {
 	/// Moves the program counter by the given [`isize`] if the last expression
 	/// was false.
 	JumpByIfNot(isize),
+	/// Loads a constant onto the stack
+	LoadConstant(u32, QuStackId),
 	/// Loads an [`isize`] into the stack. Takes the value being loaded and the
 	/// stack id where it will bestored.
 	Value(isize, QuStackId),
@@ -62,6 +65,8 @@ pub enum QuOp {
 				write!(f, "JumpBy({:?})", arg0),
 			Self::JumpByIfNot(arg0) =>
 			write!(f, "JumpByIfNot({:?})", arg0),
+			Self::LoadConstant(arg0, arg1) =>
+				write!(f, "&{:?} = LoadConstant({:?})", arg1, arg0),
 			Self::Value(arg0, arg1) =>
 				write!(f, "Value({:?}, {:?})", arg0, arg1),
 			Self::Return(arg0) =>
@@ -208,28 +213,21 @@ pub struct QuVm {
 } impl QuVm {
 
 	/// Constructs a new [`QuVm`].
-	/// 
-	/// # Example
-	/// 
-	/// ```
-	/// use qu::QuVm;;
-	/// 
-	/// let vm = QuVm::new();
-	/// ```
-	pub fn new() -> Self {
-		let mut vm = QuVm { 
-			hold_is_true: false,
-			return_type: 0.into(),
-			stack: VmStack::new(u8::MAX as usize),
-			..Default::default()
-		};
-		vm.definitions.register(&fundamentals_module).unwrap();
-		vm.definitions.register(&math_module).unwrap();
-
-		vm.definitions.define_module(
+	pub fn new(uuid: Uuid) -> Self {
+		let mut def = Definitions::new(uuid);
+		def.register(&fundamentals_module).unwrap();
+		def.register(&math_module).unwrap();
+		def.define_module(
 			MAIN_MODULE.into(),
 			&|_| {Ok(())},
 		).unwrap();
+
+		let vm = QuVm { 
+			hold_is_true: false,
+			return_type: 0.into(),
+			stack: VmStack::new(u8::MAX as usize),
+			definitions: def,
+		};
 
 		vm
 	}
@@ -317,6 +315,12 @@ pub struct QuVm {
 			}
 		}
 		pc
+	}
+
+
+	fn op_load_constant(&mut self, const_id:u32, output:QuStackId) {
+		let value = &self.definitions.constants[const_id as usize].value;
+		self.stack.write_dyn(output, value);
 	}
 
 
@@ -466,6 +470,7 @@ pub struct QuVm {
 				QuOp::End => break,
 				QuOp::JumpByIfNot(by) => pc = self.op_jump_by_if_not(pc, *by),
 				QuOp::JumpBy( by) => pc = self.op_jump_by(pc, *by),
+				QuOp::LoadConstant(const_id, output) => self.op_load_constant(*const_id, *output),
 				QuOp::Value(value, output) => self.op_load_int(*value, *output),
 				QuOp::Return(return_type) => self.return_type = *return_type,
 			};
@@ -570,5 +575,17 @@ pub trait Stack {
 			.as_mut_slice()[index..]
 			.as_mut_ptr();
 		unsafe { *(index_pointer as *mut T) = value };
+	}
+
+	fn write_dyn(&mut self, id: Self::Indexer, value: &[u8]) {
+		let id = id.into();
+		assert!(&self.offset() + id + value.len() <= self.data().len());
+		let index = self.offset() + id;
+		let index_pointer = self.data_mut()
+			.as_mut_slice()[index..]
+			.as_mut_ptr();
+		for i in 0..value.len() {
+			unsafe{ *index_pointer.offset(i as isize) = value[i] };
+		}
 	}
 }
