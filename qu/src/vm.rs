@@ -332,13 +332,14 @@ pub struct QuVm {
 
 	#[inline]
 	/// Gets a register value.
-	pub fn read<T: QuRegisterStruct>(&self, at_reg:QuStackId) -> Result<&T, QuMsg> {
-		let struct_data = self.definitions
-			.get_class(at_reg.class_id())?;
-		if size_of::<T>() != struct_data.size as usize {
+	pub fn read<T: QuRegisterStruct + 'static>(&self, at_reg:QuStackId) -> Result<&T, QuMsg> {
+		if
+			T::get_id(&self.definitions.uuid).unwrap()
+			!= at_reg.class_id()
+		{
 			return Err(format!(
 				"Can't get register as type '{}' because it's type '{}'.",
-				<T as QuRegisterStruct>::name(),
+				T::name(),
 				self.definitions.get_class(at_reg.class_id()).unwrap().name,
 			).into());
 		}

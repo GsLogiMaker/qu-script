@@ -1,4 +1,5 @@
 
+use std::alloc::Layout;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::mem::size_of;
@@ -27,12 +28,18 @@ pub struct ArgsAPI<'a> {
 	pub(crate) out_id: QuStackId,
 } impl<'a> ArgsAPI<'a> {
 	/// Gets a reference to the value of the function argument at `index`.
-	pub fn get<T:QuRegisterStruct>(&self, index:usize) -> Result<&T, QuMsg> {
+	pub fn get<T: QuRegisterStruct + 'static>(
+		&self,
+		index:usize,
+	) -> Result<&T, QuMsg> {
 		self.vm.read::<T>(self.arg_ids[index])
 	}
 
 	/// Sets the return value of the function to `value`.
-	pub fn set<T:QuRegisterStruct>(&mut self, value:T) {
+	pub fn set<T: QuRegisterStruct + 'static>(
+		&mut self,
+		value:T,
+	) {
 		self.vm.write::<T>(self.out_id, value);
 	}
 
@@ -287,10 +294,16 @@ pub struct QuStruct {
 	) -> Self {
 		let name = name.into();
 		assert!(size < u8::MAX as usize);
+		let aligned_size = if size != 0 {
+			Layout::from_size_align(size, 4)
+				.unwrap()
+				.pad_to_align()
+				.size()
+		} else { 0 };
 		Self {
 			name,
 			register_fn: fn_registerer,
-			size: size as u8,
+			size: aligned_size as u8,
 			constants_map: Default::default(),
 			external_functions_map: Default::default(),
 			functions_map: Default::default(),

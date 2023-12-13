@@ -276,10 +276,16 @@ pub struct Qu<'a> {
 
 #[cfg(test)]
 mod lib {
-    use crate::{Qu, Module, Bool};
+    use crate::{Qu, Module, QuRegisterStruct};
 
 	// TODO: Test what happens when a function overrides a class name
 	// TODO: Test what happens when a class constructor that doesn't exist is called
+
+	#[test]
+	fn names() {
+		dbg!(bool::name());
+		let x = 0;
+	}
 
 	#[test]
 	fn constants() {
@@ -295,16 +301,16 @@ mod lib {
 	fn bool_literals() {
 		let mut qu = Qu::new();
 
-		let result:bool = qu.run_and_get::<Bool>("
+		let result:bool = *qu.run_and_get::<bool>("
 			var value bool = true
 			return value
-		").unwrap().to_owned().into();
+		").unwrap();
 		assert_eq!(result, true);
 
-		let result:bool = qu.run_and_get::<Bool>("
+		let result:bool = *qu.run_and_get::<bool>("
 			var value bool = false
 			return value
-		").unwrap().to_owned().into();
+		").unwrap();
 		assert_eq!(result, false);
 	}
 
@@ -327,19 +333,19 @@ mod lib {
 		").unwrap();
 		assert_eq!(result, 1+1+0+0);
 
-		let result:bool = qu.run_and_get::<Bool>("
+		let result:bool = *qu.run_and_get::<bool>("
 			return bool()
-		").unwrap().to_owned().into();
+		").unwrap();
 		assert_eq!(result, false);
 
-		let result:bool = qu.run_and_get::<Bool>("
+		let result:bool = *qu.run_and_get::<bool>("
 			return bool(0==0)
-		").unwrap().to_owned().into();
+		").unwrap();
 		assert_eq!(result, true);
 
-		let result:bool = qu.run_and_get::<Bool>("
+		let result:bool = *qu.run_and_get::<bool>("
 			return bool(1)
-		").unwrap().to_owned().into();
+		").unwrap();
 		assert_eq!(result, true);
 	}
 
@@ -634,7 +640,7 @@ mod lib {
 	#[test]
 	fn variable_dot_notation_2() {
 		let mut qu = Qu::new();
-		let result:Bool = *qu.run_and_get("
+		let result:bool = *qu.run_and_get("
 			var count int = 5
 			return count.add(1) == add(count, 1)
 		").unwrap();

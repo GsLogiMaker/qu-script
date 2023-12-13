@@ -17,7 +17,6 @@ use crate::import::QuRegistered;
 use crate::import::QuStruct;
 use crate::import::ClassId;
 use crate::import::Registerer;
-use crate::objects::Bool;
 use crate::parser::KEYWORD_BOOL_FALSE;
 use crate::parser::KEYWORD_BOOL_TRUE;
 use crate::parser::KEYWORD_IF;
@@ -37,7 +36,7 @@ use std::mem::size_of;
 use std::hash::Hash;
 use std::sync::RwLock;
 
-pub(crate) const CONSTRUCTOR_NAME:&str = ".new";
+pub const CONSTRUCTOR_NAME:&str = ".new";
 // TODO: Fix compiler's documentation
 
 // TODO: Make bank store which definitions obj the mappings are for
@@ -2249,17 +2248,17 @@ pub struct QuCompiler {
 		definitions: &mut Definitions,
 	) -> Result<QuAsmBuilder, QuMsg> {
 
-		// WARNING: Value takes an isize, which can be 4 or 8 bytes, but Bool is only 4 bytes
-		// TODO: Add proper way of adding Bool
+		// WARNING: Value takes an isize, which can be 4 or 8 bytes, but bool is only 4 bytes
+		// TODO: Add proper way of adding bool
 		if value.slice == KEYWORD_BOOL_TRUE {
 			let mut b = QuAsmBuilder::new();
 			b.add_op(Value(1, output_reg));
-			b.return_type = definitions.class_id::<Bool>()?;
+			b.return_type = definitions.class_id::<bool>()?;
 			return Ok(b);
 		} else if value.slice == KEYWORD_BOOL_FALSE {
 			let mut b = QuAsmBuilder::new();
 			b.add_op(Value(0, output_reg));
-			b.return_type = definitions.class_id::<Bool>()?;
+			b.return_type = definitions.class_id::<bool>()?;
 			return Ok(b);
 		}
 		
@@ -2373,7 +2372,7 @@ pub struct QuCompiler {
 				condition,
 				QuStackId::new(
 					expr_reg.index(),
-					definitions.class_id::<Bool>()?,
+					definitions.class_id::<bool>()?,
 				),
 				definitions
 			)
@@ -2418,7 +2417,7 @@ pub struct QuCompiler {
 				condition,
 				QuStackId::new(
 					if_expr_reg.index(),
-					definitions.class_id::<Bool>()?,
+					definitions.class_id::<bool>()?,
 				),
 				definitions
 			)

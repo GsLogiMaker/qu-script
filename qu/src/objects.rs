@@ -1,6 +1,8 @@
 
 //! Defines all types and objects used by Qu.
 
+use once_cell::sync::Lazy;
+
 use crate::QuMsg;
 use crate::Uuid;
 use crate::compiler::CONSTRUCTOR_NAME;
@@ -15,6 +17,7 @@ use crate::import::RegistererLayer;
 use crate::vm::QuExtFn;
 use crate::vm::QuVoidExtFn;
 use std::any::TypeId;
+use std::any::type_name;
 use std::fmt::Debug;
 use std::ops::Add;
 use std::ops::Div;
@@ -65,7 +68,7 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 		&|m| {
 			let void = m.add_class::<QuVoid>()?;
 			let int = m.add_class::<i32>()?;
-			let bool = m.add_class::<Bool>()?;
+			let bool = m.add_class::<bool>()?;
 			let class = m.add_class::<Class>()?;
 			let module = m.add_class::<Module>()?;
 
@@ -100,7 +103,7 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 					&[bool],
 					int,
 					&|api| {
-						api.set(api.get::<Bool>(0)?.0 as i32);
+						api.set(*api.get::<bool>(0)? as i32);
 						Ok(())
 					}
 				)?;
@@ -135,37 +138,37 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 				qufn!(m, api, lesser(int, int) bool {
 					let output = api.get::<i32>(0)? < api.get::<i32>(1)?;
 					api.set_hold(output);
-					api.set::<Bool>(output.into());
+					api.set::<bool>(output.into());
 					Ok(())
 				});
 				qufn!(m, api, lessereq(int, int) bool {
 					let output = api.get::<i32>(0)? <= api.get::<i32>(1)?;
 					api.set_hold(output);
-					api.set::<Bool>(output.into());
+					api.set::<bool>(output.into());
 					Ok(())
 				});
 				qufn!(m, api, greater(int, int) bool {
 					let output = api.get::<i32>(0)? > api.get::<i32>(1)?;
 					api.set_hold(output);
-					api.set::<Bool>(output.into());
+					api.set::<bool>(output.into());
 					Ok(())
 				});
 				qufn!(m, api, greatereq(int, int) bool {
 					let output = api.get::<i32>(0)? >= api.get::<i32>(1)?;
 					api.set_hold(output);
-					api.set::<Bool>(output.into());
+					api.set::<bool>(output.into());
 					Ok(())
 				});
 				qufn!(m, api, eq(int, int) bool {
 					let output = api.get::<i32>(0)? == api.get::<i32>(1)?;
 					api.set_hold(output);
-					api.set::<Bool>(output.into());
+					api.set::<bool>(output.into());
 					Ok(())
 				});
 				qufn!(m, api, neq(int, int) bool {
 					let output = api.get::<i32>(0)? != api.get::<i32>(1)?;
 					api.set_hold(output);
-					api.set::<Bool>(output.into());
+					api.set::<bool>(output.into());
 					Ok(())
 				});
 				qufn!(m, api, copy(int) int {
@@ -180,7 +183,7 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 					&[],
 					bool,
 					&|api| {
-						api.set(Bool::from(false));
+						api.set(bool::from(false));
 						Ok(())
 					}
 				)?;
@@ -188,7 +191,7 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 					&[bool],
 					bool,
 					&|api| {
-						api.set(*api.get::<Bool>(0)?);
+						api.set(*api.get::<bool>(0)?);
 						Ok(())
 					}
 				)?;
@@ -196,28 +199,28 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 					&[int],
 					bool,
 					&|api| {
-						api.set(Bool::from(*api.get::<i32>(0)? != 0));
+						api.set(bool::from(*api.get::<i32>(0)? != 0));
 						Ok(())
 					}
 				)?;
 				qufn!(m, api, and(bool) bool {
-					api.set(api.get::<Bool>(0)?.and(api.get::<Bool>(1)?));
+					api.set(*api.get::<bool>(0)? && *api.get::<bool>(1)?);
 					Ok(())
 				});
 				qufn!(m, api, or(bool) bool {
-					api.set(api.get::<Bool>(0)?.or(api.get::<Bool>(1)?));
+					api.set(*api.get::<bool>(0)? || *api.get::<bool>(1)?);
 					Ok(())
 				});
 				qufn!(m, api, eq(bool) bool {
-					api.set::<Bool>((api.get::<Bool>(0)? == api.get::<Bool>(1)?).into());
+					api.set::<bool>((api.get::<bool>(0)? == api.get::<bool>(1)?).into());
 					Ok(())
 				});
 				qufn!(m, api, neq(bool) bool {
-					api.set::<Bool>((api.get::<Bool>(0)? != api.get::<Bool>(1)?).into());
+					api.set::<bool>((api.get::<bool>(0)? != api.get::<bool>(1)?).into());
 					Ok(())
 				});
 				qufn!(m, api, copy(bool) bool {
-					api.set::<Bool>(*api.get::<Bool>(0)?);
+					api.set::<bool>(*api.get::<bool>(0)?);
 					Ok(())
 				});
 			}
@@ -395,40 +398,41 @@ pub struct QuFnObject {
 }
 
 /// A wrapper for Qu booleans.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Bool (bool, bool, bool, bool);
-impl Bool {
-	/// Performas the boolean *and* operation between this and another `[Bool]`.
-	pub fn and(&self, other: &Self) -> Bool {
-		(self.0 && other.0).into()
-	}
+// #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+// pub struct bool (bool, bool, bool, bool);
+// impl bool {
+// 	/// Performas the boolean *and* operation between this and another `[bool]`.
+// 	pub fn and(&self, other: &Self) -> bool {
+// 		(self.0 && other.0).into()
+// 	}
 	
-	/// Performas the boolean *or* operation between this and another `[Bool]`.
-	pub fn or(&self, other: &Self) -> Bool {
-		(self.0 && other.0).into()
-	}
-} impl From<bool> for Bool {
-    fn from(value: bool) -> Self {
-        Self (
-			value,
-			false,
-			false,
-			false
-		)
-    }
-} impl QuRegisterStruct for Bool {
+// 	/// Performas the boolean *or* operation between this and another `[bool]`.
+// 	pub fn or(&self, other: &Self) -> bool {
+// 		(self.0 && other.0).into()
+// 	}
+// } impl From<bool> for bool {
+//     fn from(value: bool) -> Self {
+    //     Self (
+	// 		value,
+	// 		false,
+	// 		false,
+	// 		false
+	// 	)
+    // }
+// }
+impl QuRegisterStruct for bool {
 	fn register_fns(
 		_definitions: &mut Definitions
 	) -> Vec<ExternalFunction> {vec![]}
 
-	fn name() -> &'static str {"bool"}
+	// fn name() -> &'static str {"bool"}
 }
 
-impl From<Bool> for bool {
-    fn from(value: Bool) -> Self {
-        value.0
-    }
-}
+// impl From<bool> for bool {
+//     fn from(value: bool) -> Self {
+//         value.0
+//     }
+// }
 
 impl QuRegisterStruct for i32 {
 	fn name() -> &'static str {"int"}
@@ -445,6 +449,12 @@ impl QuRegisterStruct for QuVoid {
 
 /// A trait for registering structs into the Qu programming language.
 pub trait QuRegisterStruct {
+	/// The name of the object inferred from the source type.
+	const NAME:Lazy<&'static str> = Lazy::new(||{
+		let path = type_name::<Self>().split("::");
+		path.collect::<Vec<&str>>().last().unwrap()
+	});
+
 	/// Gets the [`ClassId`] of this struct from the Qu instance with `uuid`.
 	fn get_id(uuid: &Uuid) -> Option<ClassId> where Self: 'static{
 		REGISTERED_BANK
@@ -462,9 +472,8 @@ pub trait QuRegisterStruct {
 		Vec::default()
 	}
 
-
 	/// Returns the name that identifies the struct being registered.
-	fn name() -> &'static str;
+	fn name() -> &'static str {*Self::NAME}
 }
 
 #[cfg(test)]
