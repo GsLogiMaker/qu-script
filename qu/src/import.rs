@@ -10,16 +10,14 @@ use crate::Register;
 use crate::QuStackId;
 use crate::QuVm;
 use crate::Uuid;
+use crate::compiler::CommonItem;
 use crate::compiler::ConstantId;
 use crate::compiler::Definitions;
-use crate::compiler::ExternalFunctionId;
 use crate::compiler::FunctionGroupId;
 use crate::compiler::FunctionId;
-use crate::compiler::FunctionIdentity;
 use crate::compiler::ItemId;
 use crate::compiler::ModuleId;
 use crate::compiler::ModuleMetadata;
-use crate::compiler::SomeFunctionId;
 
 
 pub struct ArgsAPI<'a> {
@@ -259,8 +257,6 @@ impl ClassId {
 		Self(index)
 	}
 }
-
-
 impl From<ClassId> for u8 {
 	fn from(v:ClassId) -> Self {
 		v.0 as u8
@@ -272,17 +268,11 @@ impl From<ClassId> for u8 {
 }
 
 
-#[derive(Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct QuStruct {
-	pub constants_map: HashMap<String, ConstantId>,
-	pub external_functions_map: HashMap<FunctionIdentity, ExternalFunctionId>,
-	pub functions_map: HashMap<FunctionIdentity, FunctionId>,
-	pub function_groups_map: HashMap<String, FunctionGroupId>,
-	pub static_functions_map: HashMap<FunctionIdentity, SomeFunctionId>,
-	
-	pub name: String,
 	/// The size of the struct in bytes.
 	pub size: u8,
+	pub common: CommonItem,
 
 } impl QuStruct {
 	pub fn new(
@@ -297,34 +287,23 @@ pub struct QuStruct {
 				.pad_to_align()
 				.size()
 		} else { 0 };
+
+		let mut common = CommonItem::default();
+		common.name = name;
+
 		Self {
-			name,
+			common,
 			size: aligned_size as u8,
-			constants_map: Default::default(),
-			external_functions_map: Default::default(),
-			functions_map: Default::default(),
-			function_groups_map: Default::default(),
-			static_functions_map: Default::default(),
 		}
 	}
 
 	pub fn has_item(&self, identity: &str) -> bool {
-		self.constants_map.contains_key(identity)
-			|| self.function_groups_map.contains_key(identity)
+		self.common.has_item(identity)
 	}
 
 
 	pub fn get_item_id(&self, identity: &str) -> Result<ItemId, QuMsg> {
-		if let Some(id) = self.constants_map.get(identity) {
-			return Ok(ItemId::Constant(*id));
-		}
-		if let Some(id) = self.function_groups_map.get(identity) {
-			return Ok(ItemId::FunctionGroup(*id));
-		}
-
-		Err(format!(
-			"Class '{}' has no item by name '{}'.", self.name, identity,
-		).into())
+		self.common.get_item_id(identity)
 	}
 
 
@@ -332,49 +311,8 @@ pub struct QuStruct {
 		&self,
 		function_name: &str,
 	) -> Result<FunctionGroupId, QuMsg> {
-		self.function_groups_map
-			.get(function_name)
-			.ok_or_else(||->QuMsg {
-				format!(
-					"Class '{}' has no function named '{}'",
-					self.name,
-					function_name
-				).into()
-			})
-			.map(|id| {*id})
+		self.common.get_function_group_id(function_name)
 	}
-
-	pub fn get_static_function_id(
-		&self,
-		identity: &FunctionIdentity,
-	) -> Result<SomeFunctionId, QuMsg> {
-		let id = self.static_functions_map
-			.get(identity)
-			.ok_or_else(||->QuMsg {
-				format!(
-					"Class has no static function with identity '{identity}'.",
-				).into()
-			})?;
-		Ok(*id)
-	}
-} impl Debug for QuStruct {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("QuStruct")
-			.field("name", &self.name)
-			.finish()
-    }
-} impl Default for QuStruct {
-    fn default() -> Self {
-        Self {
-			constants_map: Default::default(),
-			external_functions_map: Default::default(),
-			functions_map: Default::default(),
-			name: Default::default(),
-			size: Default::default(),
-			function_groups_map: Default::default(),
-			static_functions_map: Default::default(),
-		}
-    }
 }
 
 

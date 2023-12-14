@@ -31,7 +31,6 @@ use crate::QuMsg;
 use crate::QuToken;
 use crate::objects::FUNDAMENTALS_MODULE;
 
-use core::num;
 use core::panic;
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -50,6 +49,90 @@ pub(crate) static
 	= Lazy::new(||{RwLock::new(HashMap::new())});
 
 pub type ConstantId = usize;
+
+#[derive(Debug, Clone)]
+/// Reresents a Qu item.
+pub struct CommonItem {
+	/// The name of this item.
+	pub name: String,
+
+	pub constants_map: HashMap<String, ConstantId>,
+	pub class_map: HashMap<String, ClassId>,
+	pub function_groups_map: HashMap<String, FunctionGroupId>,
+	pub static_variables_map: HashMap<String, VariableId>,
+	
+} impl CommonItem {
+	pub fn has_item(&self, identity: &str) -> bool {
+		self.constants_map.contains_key(identity)
+			|| self.class_map.contains_key(identity)
+			|| self.function_groups_map.contains_key(identity)
+			|| self.static_variables_map.contains_key(identity)
+	}
+
+
+	pub fn get_class_id(
+		&self,
+		class_name: &str,
+	) -> Result<ClassId, QuMsg> {
+		self.class_map
+			.get(class_name)
+			.ok_or_else(|| -> QuMsg {
+				format!(
+					"Found no class named '{}' in module '{}'",
+					class_name,
+					self.name,
+				).into()
+			})
+			.map(|id| {*id})
+	}
+
+	
+	pub fn get_function_group_id(
+		&self,
+		function_name: &str,
+	) -> Result<FunctionGroupId, QuMsg> {
+		self.function_groups_map
+			.get(function_name)
+			.ok_or_else(||->QuMsg {
+				format!(
+					"Module '{}' has no function named '{}'",
+					self.name,
+					function_name
+				).into()
+			})
+			.map(|id| {*id})
+	}
+
+
+	pub fn get_item_id(&self, identity: &str) -> Result<ItemId, QuMsg> {
+		if let Some(id) = self.constants_map.get(identity) {
+			return Ok(ItemId::Constant(*id));
+		}
+		if let Some(id) = self.class_map.get(identity) {
+			return Ok(ItemId::Class(*id));
+		}
+		if let Some(id) = self.function_groups_map.get(identity) {
+			return Ok(ItemId::FunctionGroup(*id));
+		}
+		if let Some(id) = self.static_variables_map.get(identity) {
+			return Ok(ItemId::StaticVariable(*id));
+		}
+
+		Err(format!(
+			"Item '{}' has no item by name '{}'.", self.name, identity,
+		).into())
+	}
+} impl Default for CommonItem {
+	fn default() -> Self {
+		Self {
+			name: "".into(),
+			class_map: Default::default(),
+			constants_map : Default::default(),
+			function_groups_map: Default::default(),
+			static_variables_map: Default::default(),
+		}
+	}
+}
 
 
 #[derive(Debug)]
@@ -216,7 +299,7 @@ struct Context {
 						).unwrap();
 						let mut item_opt = None;
 						if let Some(group_id) =
-							module.function_groups_map.get(&identity.name)
+							module.common.function_groups_map.get(&identity.name)
 						{
 							if let Some(some_fn_id) =
 								definitions.function_groups[*group_id]
@@ -237,7 +320,7 @@ struct Context {
 						).unwrap();
 						let mut item_opt = None;
 						if let Some(group_id) =
-							class.function_groups_map.get(&identity.name)
+							class.common.function_groups_map.get(&identity.name)
 						{
 							if let Some(some_fn_id) =
 								definitions.function_groups[*group_id]
@@ -351,11 +434,11 @@ struct Context {
 							*module_id
 						).unwrap();
 						let item_opt = if
-							!module.has_item(identity)
+							!module.common.has_item(identity)
 						{
 							None
 						} else {
-							Some(module.get_item_id(identity).unwrap())
+							Some(module.common.get_item_id(identity).unwrap())
 						};
 
 						if let Some(item) = item_opt {
@@ -456,9 +539,12 @@ struct Context {
 			).into());
 		}
 		let source_class_id = identity.parameters[0];
-		let some_fn_id = definitions
+		let group_id = definitions
 			.get_class(source_class_id)?
-			.get_static_function_id(identity)?;
+			.get_function_group_id(&identity.name)?;
+		let some_fn_id = definitions
+			.get_function_group(group_id)?
+			.get_group_id(&identity)?;
 
 		Ok(some_fn_id)
 	}
@@ -493,7 +579,7 @@ struct Context {
 					ContextFrame::Module(module_id, _) => {
 						let Ok(module) = definitions
 							.get_module(*module_id) else { return false };
-						break 'frames module.has_item(identity);
+						break 'frames module.common.has_item(identity);
 					},
 					ContextFrame::Class(class_id, _) => {
 						let Ok(class) = definitions
@@ -682,15 +768,15 @@ pub struct Definitions {
 		let class = self.get_class_mut(class_id)?;
 
 		// Get group id or create a new group
-		let group_id = match &class.function_groups_map.get(name) {
+		let group_id = match &class.common.function_groups_map.get(name) {
 			Some(id) => {**id},
 			None => {
 				let module = self.get_module_mut(module_id)?;
-				let id = match &module.function_groups_map.get(name) {
+				let id = match &module.common.function_groups_map.get(name) {
 			Some(id) => {**id},
 			None => {
 				let id = new_id;
-						module.function_groups_map.insert(
+						module.common.function_groups_map.insert(
 							name.into(), id,
 						);
 						let mut group = FunctionGroup::default();
@@ -700,7 +786,7 @@ pub struct Definitions {
 					}
 				};
 				let class = self.get_class_mut(class_id)?;
-				class.function_groups_map.insert(
+				class.common.function_groups_map.insert(
 					name.into(), id,
 				);
 				let mut group = FunctionGroup::default();
@@ -716,7 +802,7 @@ pub struct Definitions {
 		if group.map.contains_key(&signature) {
 			// The function couldn't be registered because a function with
 			// its signature already exists.
-			let module_name = &self.get_module(module_id).unwrap().name;
+			let module_name = &self.get_module(module_id).unwrap().common.name;
 			return Err(format!(
 				"Couldn't register function '{signature}' in module \
 				'{module_name}'. A function with that signature \
@@ -724,16 +810,6 @@ pub struct Definitions {
 			).into())
 		}
 		group.map.insert(signature.clone(), SomeFunctionId::External(id)); // TODO: Remove cloning
-		
-		// Add to class mappings
-		self.get_class_mut(class_id)?
-			.external_functions_map
-			.insert(signature.clone(), id); // TODO: Remove cloning
-
-		// Add to module mappings
-		self.get_module_mut(module_id)?
-			.external_functions_map
-			.insert(signature, id);
 
 		Ok(())
 	}
@@ -750,11 +826,11 @@ pub struct Definitions {
 		let class = self.get_class_mut(class_id)?;
 
 		// Get group id or create a new group
-		let group_id = match &class.function_groups_map.get(name) {
+		let group_id = match &class.common.function_groups_map.get(name) {
 			Some(id) => {**id},
 			None => {
 				let id = new_id;
-				class.function_groups_map.insert(
+				class.common.function_groups_map.insert(
 					name.into(), id,
 				);
 				let mut group = FunctionGroup::default();
@@ -769,7 +845,6 @@ pub struct Definitions {
 		// Add to mappings
 		assert!(!group.map.contains_key(&signature));
 		group.map.insert(signature.clone(), SomeFunctionId::Qu(id)); // TODO: Remove cloning
-		self.get_class_mut(class_id)?.functions_map.insert(signature, id);
 
 		Ok(())
 	}
@@ -787,11 +862,11 @@ pub struct Definitions {
 		let module = self.get_module_mut(module_id)?;
 
 		// Get group id or create a new group
-		let group_id = match &module.function_groups_map.get(name) {
+		let group_id = match &module.common.function_groups_map.get(name) {
 			Some(id) => {**id},
 			None => {
 				let id = new_id;
-				module.function_groups_map.insert(
+				module.common.function_groups_map.insert(
 					name.into(), id,
 				);
 				let mut group = FunctionGroup::default();
@@ -806,9 +881,6 @@ pub struct Definitions {
 		// Add to mappings
 		assert!(!group.map.contains_key(&signature));
 		group.map.insert(signature.clone(), SomeFunctionId::External(id)); // TODO: Remove cloning
-		self.get_module_mut(module_id)?
-			.external_functions_map
-			.insert(signature, id);
 		Ok(())
 	}
 
@@ -827,11 +899,11 @@ pub struct Definitions {
 		let module = self.get_module_mut(module_id)?;
 
 		// Get group id or create a new group
-		let group_id = match &module.function_groups_map.get(name) {
+		let group_id = match &module.common.function_groups_map.get(name) {
 			Some(id) => {**id},
 			None => {
 				let id = new_id;
-				module.function_groups_map.insert(
+				module.common.function_groups_map.insert(
 					name.into(), id,
 				);
 				let mut group = FunctionGroup::default();
@@ -846,8 +918,6 @@ pub struct Definitions {
 		// Add to module's group mappings
 		assert!(!group.map.contains_key(&signature));
 		group.map.insert(signature.clone(), SomeFunctionId::Qu(id)); // TODO: Remove cloning
-		// Add to module's function mappings
-		self.get_module_mut(module_id)?.functions_map.insert(signature.clone(), id);// TODO: Remove cloning
 		// Add to class's mappings
 		let class_id = signature.id_self_class();
 		self.add_class_function_map(class_id, signature, id)?;
@@ -878,14 +948,14 @@ pub struct Definitions {
 		let new_group_id = self.function_groups.len();
 		let function_group_map = match item_id {
 			ItemId::Class(id) => {
-				&mut self.get_class_mut(id)?.function_groups_map
+				&mut self.get_class_mut(id)?.common.function_groups_map
 			},
 			ItemId::Constant(_) => todo!(),
 			ItemId::ExternalFunction(_) => todo!(),
 			ItemId::Function(_) => todo!(),
 			ItemId::FunctionGroup(_) => todo!(),
 			ItemId::Module(id) => {
-				&mut self.get_module_mut(id)?.function_groups_map
+				&mut self.get_module_mut(id)?.common.function_groups_map
 			},
 			ItemId::StaticVariable(_) => todo!(),
 			ItemId::Variable(_) => todo!(),
@@ -964,7 +1034,7 @@ pub struct Definitions {
 			ItemId::Function(_) => todo!(),
 			ItemId::FunctionGroup(_) => todo!(),
 			ItemId::Module(id) => 
-				&mut self.get_module_mut(id)?.constants_map,
+				&mut self.get_module_mut(id)?.common.constants_map,
 			ItemId::StaticVariable(_) => todo!(),
 			ItemId::Variable(_) => todo!(),
 			ItemId::None => todo!(),
@@ -1062,10 +1132,9 @@ pub struct Definitions {
 			).into())
 		}
 		let module_id = self.modules.len();
-		self.modules.push(ModuleMetadata {
-			name: name.clone(),
-			..Default::default()
-		});
+		let mut common = CommonItem::default();
+		common.name = name.clone();
+		self.modules.push(ModuleMetadata {common});
 		self.module_map.insert(name, module_id);
 		
 		assert_eq!(self.with_unregistered_functions.len(), 0, "Some functions were not registered");
@@ -1081,16 +1150,21 @@ pub struct Definitions {
 
 
 	pub fn define_module_class(
-		&mut self, module_id: ModuleId, name: String,
+		&mut self,
+		module_id: ModuleId,
+		name: String,
 	) -> Result<ClassId, QuMsg> {
 		let id = ClassId::from(self.classes.len());
 		self.classes.push(QuStruct {
-			name: name.clone(),
-			..Default::default()
+			size: 0,
+			common: CommonItem {
+				name: name.clone(),
+				..Default::default()
+			}
 		});
 		let module = self.get_module_mut(module_id)?;
-		assert!(!module.class_map.contains_key(&name));
-		module.class_map.insert(name, id);
+		assert!(!module.common.class_map.contains_key(&name));
+		module.common.class_map.insert(name, id);
 		
 		Ok(id)
 	}
@@ -1158,26 +1232,6 @@ pub struct Definitions {
 	}
 
 
-	pub fn get_external_function_id_by_identity(
-		&self, identity: &FunctionIdentity,
-	) -> Result<ExternalFunctionId, QuMsg> {
-		let first_arg_type = match identity.parameters.first() {
-			Some(object_id) => *object_id,
-			None => self.class_id::<Void>()?,
-		};
-		let external_function_id = *self
-			.get_class(first_arg_type)?
-			.external_functions_map
-			.get(&identity)
-			.ok_or_else(|| -> QuMsg {format!(
-				"There's no function defined with the identity '{:?}'",
-				&identity,
-			).into()})?;
-
-		Ok(external_function_id)
-	}
-
-
 	pub fn get_function(&self, id: FunctionId) -> Result<&FunctionMetadata, QuMsg> {
 		let function = self.functions
 			.get(usize::from(id))
@@ -1210,33 +1264,6 @@ pub struct Definitions {
 				"There's no function with id '{:?}' defined.", id,
 			).into()})?;
 		Ok(function)
-	}
-
-
-	pub fn get_function_id_by_identity(
-		&self,
-		identity: &FunctionIdentity,
-	) -> Result<FunctionId, QuMsg> {
-		let first_arg_type = match identity.parameters.first() {
-			Some(object_id) => *object_id,
-			None => self.class_id::<Void>()?,
-		};
-		let function_id = *self
-			.get_class(first_arg_type)?
-			.static_functions_map
-			.get(&identity)
-			.ok_or_else(|| -> QuMsg {format!(
-				"There's no function defined with the identity '{:?}'",
-				&identity,
-			).into()})?;
-		
-		match function_id {
-			SomeFunctionId::Qu(function_id) => {
-				Ok(function_id)
-			},
-			_ => panic!("TODO: Error msg"),
-		}
-
 	}
 
 
@@ -1277,37 +1304,11 @@ pub struct Definitions {
 		self.module_map.get(module).map(|x| {*x})
 	}
 
-
-	pub fn get_some_function_id_by_identity(
-		&self,
-		identity: &FunctionIdentity,
-	) -> Result<SomeFunctionId, QuMsg> {
-		let first_arg_type = match identity.parameters.first() {
-			Some(object_id) => *object_id,
-			None => self.class_id::<Void>()?,
-		};
-		let first_arg = self.get_class(first_arg_type)?;
-
-		if first_arg.functions_map.contains_key(&identity) {
-			return Ok(SomeFunctionId::Qu(
-				*first_arg.functions_map.get(&identity).unwrap()
-			));
-		} else if  first_arg.external_functions_map.contains_key(&identity) {
-			return Ok(SomeFunctionId::External(
-				*first_arg.external_functions_map.get(&identity).unwrap()
-			));
-		}
-
-		Err(format!(
-			"There's no function with identity '{:?}' defined.", &identity,
-		).into())
-	}
-
 	
 	fn find_class_id(&self, name: &str) -> Result<ClassId, QuMsg> {
 		for module in &self.modules {
-			if module.class_map.contains_key(name) {
-				return Ok(*module.class_map.get(name).unwrap());
+			if module.common.class_map.contains_key(name) {
+				return Ok(*module.common.class_map.get(name).unwrap());
 			}
 		}
 		Err(format!(
@@ -1453,8 +1454,8 @@ pub struct Definitions {
 		// Manage classes map
 		let class_id:ClassId = self.classes.len().into();
 		let module = self.get_module_mut(module_id)?;
-		assert!(!module.class_map.contains_key(class_name));
-		module.class_map.insert(class_name.into(), class_id);
+		assert!(!module.common.class_map.contains_key(class_name));
+		module.common.class_map.insert(class_name.into(), class_id);
 
 		// Add class to list of classes
 		let class = QuStruct::new(
@@ -1511,6 +1512,21 @@ pub struct FunctionGroup {
 			name,
 			..Default::default()
 		}
+	}
+
+	fn get_group_id(
+		&self,
+		identity:&FunctionIdentity,
+	) -> Result<SomeFunctionId, QuMsg> {
+		let Some(group_id) = self.map
+			.get(identity)
+			else {
+				return Err(format!(
+					"No function by identity {} exists.",
+					identity
+				).into())
+			};
+		Ok(*group_id)
 	}
 }
 
@@ -1571,94 +1587,11 @@ pub struct FunctionMetadata {
 
 pub type ModuleId = usize;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 /// Reresents a Qu module.
 pub struct ModuleMetadata {
-	constants_map: HashMap<String, ConstantId>,
-	class_map: HashMap<String, ClassId>,
-	external_functions_map: HashMap<FunctionIdentity, ExternalFunctionId>,
-	functions_map: HashMap<FunctionIdentity, ConstantId>,
-	function_groups_map: HashMap<String, FunctionGroupId>,
-	static_variables_map: HashMap<String, VariableId>,
-	
-	/// The name of this module.
-	name: String,
-} impl ModuleMetadata {
-	fn has_item(&self, identity: &str) -> bool {
-		self.constants_map.contains_key(identity)
-			|| self.class_map.contains_key(identity)
-			|| self.function_groups_map.contains_key(identity)
-			|| self.static_variables_map.contains_key(identity)
-	}
-	
-
-	pub fn get_class_id(
-		&self,
-		class_name: &str,
-	) -> Result<ClassId, QuMsg> {
-		self.class_map
-			.get(class_name)
-			.ok_or_else(|| -> QuMsg {
-				format!(
-					"Found no class named '{}' in module '{}'",
-					class_name,
-					self.name,
-				).into()
-			})
-			.map(|id| {*id})
-	}
-
-	
-	pub fn get_function_group_id(
-		&self,
-		function_name: &str,
-	) -> Result<FunctionGroupId, QuMsg> {
-		self.function_groups_map
-			.get(function_name)
-			.ok_or_else(||->QuMsg {
-				format!(
-					"Module '{}' has no function named '{}'",
-					self.name,
-					function_name
-				).into()
-			})
-			.map(|id| {*id})
-	}
-
-
-	fn get_item_id(&self, identity: &str) -> Result<ItemId, QuMsg> {
-		if let Some(id) = self.constants_map.get(identity) {
-			return Ok(ItemId::Constant(*id));
-		}
-		if let Some(id) = self.class_map.get(identity) {
-			return Ok(ItemId::Class(*id));
-		}
-		if let Some(id) = self.function_groups_map.get(identity) {
-			return Ok(ItemId::FunctionGroup(*id));
-		}
-		if let Some(id) = self.static_variables_map.get(identity) {
-			return Ok(ItemId::StaticVariable(*id));
-		}
-
-		Err(format!(
-			"Modules '{}' has no item by name '{}'.", self.name, identity,
-		).into())
-	}
-} impl Default for ModuleMetadata {
-	fn default() -> Self {
-		Self {
-			class_map: Default::default(),
-			constants_map : Default::default(),
-			name: "__main__".into(),
-			external_functions_map: Default::default(),
-			functions_map: Default::default(),
-			function_groups_map: Default::default(),
-			static_variables_map: Default::default(),
-		}
-	}
+	pub common: CommonItem,
 }
-
-
 
 #[derive(Debug, Clone, Copy)]
 pub enum ItemId {
@@ -1748,14 +1681,14 @@ struct Scope {
 			None => {
 				let item_function_groups_map = match id {
 					ItemId::Class(id) => {
-						definitions.get_class(id)?.name.clone()
+						definitions.get_class(id)?.common.name.clone()
 					},
 					ItemId::Constant(_) => todo!(),
 					ItemId::ExternalFunction(_) => todo!(),
 					ItemId::Function(_) => todo!(),
 					ItemId::FunctionGroup(_) => todo!(),
 					ItemId::Module(id) => {
-						definitions.get_module(id)?.name.clone()
+						definitions.get_module(id)?.common.name.clone()
 					},
 					ItemId::StaticVariable(_) => todo!(),
 					ItemId::Variable(_) => todo!(),
@@ -1771,14 +1704,14 @@ struct Scope {
 		);
 		let item_function_groups_map = match id {
 			ItemId::Class(id) => {
-				&definitions.get_class(id)?.function_groups_map
+				&definitions.get_class(id)?.common.function_groups_map
 			},
 			ItemId::Constant(_) => todo!(),
 			ItemId::ExternalFunction(_) => todo!(),
 			ItemId::Function(_) => todo!(),
 			ItemId::FunctionGroup(_) => todo!(),
 			ItemId::Module(id) => {
-				&definitions.get_module(id)?.function_groups_map
+				&definitions.get_module(id)?.common.function_groups_map
 			},
 			ItemId::StaticVariable(_) => todo!(),
 			ItemId::Variable(_) => todo!(),
@@ -1833,7 +1766,7 @@ struct Scope {
 			None => {
 				let module = definitions
 					.get_module(module_id)?;
-				module.name.clone()
+				module.common.name.clone()
 			},
 		};
 
@@ -1946,7 +1879,7 @@ pub struct QuCompiler {
 					todo!("Proper error msg");
 				};
 				let module = definitions.get_module(module_id)?;
-				let function_group_id = module.get_function_group_id(
+				let function_group_id = module.common.get_function_group_id(
 					&call_expression.name.slice	
 				)?;
 				let function_group = &definitions.function_groups[function_group_id];
@@ -1978,7 +1911,7 @@ pub struct QuCompiler {
 		let some_function_id = if let ItemId::Class(class_id) = callable_id {
 			function_identity.name = CONSTRUCTOR_NAME.into();
 			let class = definitions.get_class(class_id)?;
-			let group_id = class.function_groups_map
+			let group_id = class.common.function_groups_map
 				.get(CONSTRUCTOR_NAME)
 				.map(|x|{*x})
 				.expect("TODO: Add error msg1");
@@ -2041,7 +1974,7 @@ pub struct QuCompiler {
 		definitions: &mut Definitions,
 	) -> Result<SomeFunctionId, QuMsg> {
 		let class = definitions.get_class(class_id)?;
-		let Some(group_id) = class.function_groups_map
+		let Some(group_id) = class.common.function_groups_map
 			.get(CONSTRUCTOR_NAME)
 			.map(|x|{*x})
 			else {
@@ -2081,6 +2014,7 @@ pub struct QuCompiler {
 		};
 		let mut b = QuAsmBuilder::new();
 		let group_id = *definitions.get_class(from.class_id())?
+			.common
 			.function_groups_map
 			.get(&identity.name)
 			.expect("TODO: Handle None case");
@@ -2171,8 +2105,8 @@ pub struct QuCompiler {
 			if builder.return_type != output_reg.class_id() {
 				return Err(format!(
 					"Attempted to assign a value of type '{}' to a location of type '{}'.",
-					definitions.get_class(builder.return_type)?.name,
-					definitions.get_class(output_reg.class_id())?.name,
+					definitions.get_class(builder.return_type)?.common.name,
+					definitions.get_class(output_reg.class_id())?.common.name,
 				).into());
 			}
 		}
@@ -2623,7 +2557,7 @@ pub struct QuCompiler {
 						},
 						ItemId::Module(id) => {
 							let module = definitions.get_module(id)?;
-							let fn_group = module.get_function_group_id(
+							let fn_group = module.common.get_function_group_id(
 								&function_identity.name
 							)?;
 							*definitions.function_groups[fn_group]
@@ -2780,6 +2714,7 @@ pub struct QuCompiler {
 				ItemId::Module(id) => {
 					definitions
 						.get_module(id)?
+						.common
 						.get_item_id(indexer)?
 				},
 				ItemId::StaticVariable(_) => todo!(),

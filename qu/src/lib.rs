@@ -263,7 +263,7 @@ pub struct Qu<'a> {
 		if type_class_id != return_id {
 			return Err(format!(
 				"Returned value of type {} does not match requested value ot type {}",
-				self.vm.definitions.classes[return_id.0].name,
+				self.vm.definitions.classes[return_id.0].common.name,
 				type_name::<T>(),
 			).into())
 		}

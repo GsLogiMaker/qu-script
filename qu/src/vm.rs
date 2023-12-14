@@ -129,7 +129,7 @@ impl QuStackId {
 		format!(
 			"{}:{}",
 			self.0,
-			definitions.get_class(self.1).unwrap().name,
+			definitions.get_class(self.1).unwrap().common.name,
 		)
 	}
 
@@ -328,7 +328,11 @@ pub struct QuVm {
 			return Err(format!(
 				"Can't get register as type '{}' because it's type '{}'.",
 				T::name(),
-				self.definitions.get_class(at_reg.class_id()).unwrap().name,
+				self.definitions
+					.get_class(at_reg.class_id())
+					.unwrap()
+					.common
+					.name,
 			).into());
 		}
 

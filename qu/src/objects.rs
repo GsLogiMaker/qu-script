@@ -381,7 +381,8 @@ pub fn math_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 		&|m| {
 			let fundamentals = m
 				.get_module(FUNDAMENTALS_MODULE)?;
-			let int = fundamentals.get_class_id("int")?;
+			// TODO: Improve module access api
+			let int = fundamentals.common.get_class_id("int")?;
 
 			m.add_function(
 				"foo",
