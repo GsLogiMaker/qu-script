@@ -43,26 +43,28 @@ pub enum QuOp {
 } impl Debug for QuOp {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		match self {
-			Self::Call(arg0, arg1) =>
+			QuOp::Call(arg0, arg1) =>
 				write!(f, "Call({:?}, {:?})", arg0, arg1),
-			Self::CallExt(
+			QuOp::CallExt(
 				arg0,
 				arg1,
 				arg2,
 			) =>
 				write!(f, "CallExt({:?}, {:?}, {:?})", arg0, arg1, arg2,),
-			Self::End =>
+			QuOp::End =>
 				write!(f, "End"),
-			Self::JumpBy(arg0) =>
+			QuOp::JumpBy(arg0) =>
 				write!(f, "JumpBy({:?})", arg0),
-			Self::JumpByIfNot(arg0) =>
-			write!(f, "JumpByIfNot({:?})", arg0),
-			Self::LoadConstant(arg0, arg1) =>
+			QuOp::JumpByIfNot(arg0) =>
+				write!(f, "JumpByIfNot({:?})", arg0),
+			QuOp::LoadConstant(arg0, arg1) =>
 				write!(f, "&{:?} = LoadConstant({:?})", arg1, arg0),
-			Self::Value(arg0, arg1) =>
+			QuOp::Value(arg0, arg1) =>
 				write!(f, "Value({:?}, {:?})", arg0, arg1),
-			Self::Return(arg0) =>
+			QuOp::Return(arg0) =>
 				write!(f, "Return({:?})", arg0),
+    		QuOp::CallV(arg0, arg1, arg2) => 
+				write!(f, "{:?} = &{:?}.CallV({:?})", arg1, arg2, arg0),
 		}
 	}
 }
@@ -470,6 +472,7 @@ pub struct QuVm {
 				QuOp::LoadConstant(const_id, output) => self.op_load_constant(*const_id, *output),
 				QuOp::Value(value, output) => self.op_load_int(*value, *output),
 				QuOp::Return(return_type) => self.return_type = *return_type,
+    			QuOp::CallV(_, _, _) => todo!(),
 			};
 			pc += 1;
 		}

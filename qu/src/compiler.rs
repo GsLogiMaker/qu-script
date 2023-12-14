@@ -2206,12 +2206,12 @@ pub struct QuCompiler {
 		output_reg: QuStackId,
 		definitions: &mut Definitions,
 	)-> Result<QuAsmBuilder, QuMsg> {
-		let trait_id = match operator {
-			x if x == OP_EXPR_ADD => {
-				definitions.class_id::<QuAdd>()?
-			},
-			_ => unimplemented!(),
-		};
+		// let trait_id = match operator {
+		// 	x if x == OP_EXPR_ADD => {
+		// 		definitions.class_id::<QuAdd>()?
+		// 	},
+		// 	_ => unimplemented!(),
+		// };
 
 
 
