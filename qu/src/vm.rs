@@ -20,6 +20,10 @@ pub const MAIN_MODULE:&str = "__main__";
 pub enum QuOp {
 	/// Calls a function defined by Qu.
 	Call(FunctionId, QuStackId),
+	/// Calls a function defined by Qu via a vtable.
+	/// 
+	/// Looks up a function that is overriden by the given class.
+	CallV(FunctionId, ClassId, QuStackId),
 	/// Calls a function defined outside of Qu (like in Rust).
 	CallExt(ExternalFunctionId, Vec<QuStackId>, QuStackId),
 	/// Ends the current scope

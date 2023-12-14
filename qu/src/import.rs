@@ -272,6 +272,7 @@ impl From<ClassId> for u8 {
 pub struct QuStruct {
 	/// The size of the struct in bytes.
 	pub size: u8,
+	pub(crate) is_trait: bool,
 	pub common: CommonItem,
 
 } impl QuStruct {
@@ -294,6 +295,7 @@ pub struct QuStruct {
 		Self {
 			common,
 			size: aligned_size as u8,
+			..Default::default()
 		}
 	}
 
@@ -417,6 +419,23 @@ pub trait RegistererLayer {
 		self.get_definitions_mut().define_module(name.into(), body)
 	}
 
+
+	/// Adds a class to the current layer.
+	fn add_trait<T: Register + 'static>(
+		&mut self
+	) -> Result<ClassId, QuMsg> {
+		let module_id = match self.get_layer_item_id() {
+			ItemId::Module(id) => {id},
+			_ => todo!("Support adding traits to more types items"),
+		};
+
+		let id = self.get_definitions_mut()
+			.register_module_struct::<T>(module_id)?;
+		self.get_definitions_mut().get_class_mut(id)?.is_trait = true;
+		Ok(id)
+	}
+
+
 	/// Returns the [`ClassId`] of the given struct.
 	fn get_class_id_of<T: Register + 'static>(
 		&self
@@ -427,6 +446,13 @@ pub trait RegistererLayer {
 	/// Gets a module by name.
 	fn get_module(&self, name:&str) -> Result<&ModuleMetadata, QuMsg> {
 		self.get_definitions().get_module_by_name(name)
+	}
+
+
+	/// Implements a trait in a class.
+	fn implement(&mut self, trait_id:ClassId, in_class_id:ClassId) -> Result<(), QuMsg> {
+		self.get_definitions_mut().implement(trait_id, in_class_id)?;
+		Ok(())
 	}
 
 }

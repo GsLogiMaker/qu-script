@@ -151,11 +151,11 @@ pub struct Qu<'a> {
 	/// # fn main(){example().unwrap()}
 	/// # fn example() -> Result<(), QuMsg> {
 	/// use qu::Qu;
-	/// use qu::QuRegisterStruct;
+	/// use qu::Register;
 	/// use qu::RegistererLayer;
 	/// 
 	/// struct MyClass(i32);
-	/// impl QuRegisterStruct for MyClass {
+	/// impl Register for MyClass {
 	/// 	fn name() -> &'static str {
 	/// 		"MyClass"
 	/// 	}
@@ -651,7 +651,7 @@ mod lib {
 			return count.add(1) == add(count, 1)
 		").unwrap();
 		
-		assert!(result == true.into());
+		assert!(result == true);
 	}
 
 

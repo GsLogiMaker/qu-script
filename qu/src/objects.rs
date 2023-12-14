@@ -77,6 +77,15 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 			let class = m.add_class::<Class>()?;
 			let module = m.add_class::<Module>()?;
 
+			// Traits
+			let add = m.add_trait::<QuAdd>()?;
+			{
+				qufn!(m, api, add(add, add) add {
+					Ok(())
+				});
+			}
+
+			// Constants
 			m.add_constant("PI", 3)?;
 
 			// void functions
@@ -88,6 +97,8 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 
 			// float functions
 			{
+				m.implement(add, float)?;
+
 				m.add_class_static_function(float, CONSTRUCTOR_NAME,
 					&[],
 					float,
@@ -398,6 +409,12 @@ pub fn math_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 		}
 	)?;
 	Ok(())
+}
+
+
+pub struct QuAdd {}
+impl Register for QuAdd {
+	fn name() -> &'static str {"Add"}
 }
 
 

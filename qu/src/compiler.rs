@@ -7,6 +7,7 @@ use crate::ExternalFunction;
 use crate::Float;
 use crate::Int;
 use crate::Module;
+use crate::QuAdd;
 use crate::QuOp;
 use crate::QuOp::*;
 use crate::QuParser;
@@ -24,6 +25,7 @@ use crate::parser::KEYWORD_BOOL_FALSE;
 use crate::parser::KEYWORD_BOOL_TRUE;
 use crate::parser::KEYWORD_IF;
 use crate::parser::KEYWORD_WHILE;
+use crate::parser::OP_EXPR_ADD;
 use crate::parser::QuOperator;
 use crate::parser::parsed::*;
 
@@ -61,6 +63,7 @@ pub struct CommonItem {
 	pub function_groups_map: HashMap<String, FunctionGroupId>,
 	pub static_variables_map: HashMap<String, VariableId>,
 	
+	pub implementations: HashMap<ClassId, CommonItem>,
 } impl CommonItem {
 	pub fn has_item(&self, identity: &str) -> bool {
 		self.constants_map.contains_key(identity)
@@ -122,6 +125,22 @@ pub struct CommonItem {
 			"Item '{}' has no item by name '{}'.", self.name, identity,
 		).into())
 	}
+
+	pub fn get_impl_item_id(
+		&self,
+		identity: &str,
+		impl_id:ClassId,
+	) -> Result<ItemId, QuMsg> {
+		assert!(
+			self.implementations.contains_key(&impl_id),
+			"TODO: Handle error better",
+		);
+		let impl_common = self.implementations
+			.get(&impl_id)
+			.unwrap();
+
+		impl_common.get_item_id(identity)
+	}
 } impl Default for CommonItem {
 	fn default() -> Self {
 		Self {
@@ -130,6 +149,7 @@ pub struct CommonItem {
 			constants_map : Default::default(),
 			function_groups_map: Default::default(),
 			static_variables_map: Default::default(),
+			implementations: Default::default(),
 		}
 	}
 }
@@ -1160,7 +1180,8 @@ pub struct Definitions {
 			common: CommonItem {
 				name: name.clone(),
 				..Default::default()
-			}
+			},
+			..Default::default()
 		});
 		let module = self.get_module_mut(module_id)?;
 		assert!(!module.common.class_map.contains_key(&name));
@@ -1208,7 +1229,7 @@ pub struct Definitions {
 	}
 
 
-	fn get_class_mut(
+	pub(crate) fn get_class_mut(
 		&mut self, id: ClassId,
 	) -> Result<&mut QuStruct, QuMsg> {
 		let class = self.classes
@@ -1314,6 +1335,26 @@ pub struct Definitions {
 		Err(format!(
 			"There's no class with name '{}' defined.", name,
 		).into())
+	}
+
+
+	pub(crate) fn implement(
+		&mut self,
+		trait_id: ClassId,
+		class_id: ClassId,
+	) -> Result<(), QuMsg>{
+		let trait_common = self.get_class(trait_id)?.common.clone();
+		let class_data = self.get_class_mut(class_id)?;
+		if class_data.common.implementations.contains_key(&trait_id) {
+			return Err(format!(
+				"TODO: Add err msg"
+			).into());
+		}
+		class_data.common.implementations.insert(
+			trait_id,
+			trait_common,
+		);
+		Ok(())
 	}
 
 
@@ -2165,6 +2206,16 @@ pub struct QuCompiler {
 		output_reg: QuStackId,
 		definitions: &mut Definitions,
 	)-> Result<QuAsmBuilder, QuMsg> {
+		let trait_id = match operator {
+			x if x == OP_EXPR_ADD => {
+				definitions.class_id::<QuAdd>()?
+			},
+			_ => unimplemented!(),
+		};
+
+
+
+
 		// TODO: reimplment without copying
 		let call_expression = CallExpression {
 			name: QuOperator::from(operator.slice.as_str()).name().into(),
