@@ -1,10 +1,7 @@
 
 use std::alloc::Layout;
-use std::collections::HashMap;
 use std::fmt::Debug;
-use std::mem::size_of;
 
-use crate::ExternalFunction;
 use crate::QuMsg;
 use crate::Register;
 use crate::QuStackId;
@@ -14,7 +11,9 @@ use crate::compiler::CommonItem;
 use crate::compiler::ConstantId;
 use crate::compiler::Definitions;
 use crate::compiler::FunctionGroupId;
-use crate::compiler::FunctionId;
+use crate::compiler::FunctionIdentity;
+use crate::compiler::FunctionMetadata;
+use crate::compiler::FunctionReference;
 use crate::compiler::ItemId;
 use crate::compiler::ModuleId;
 use crate::compiler::ModuleMetadata;
@@ -87,109 +86,6 @@ impl QuExtFnId {
 impl From<QuExtFnId> for u8 {
 	fn from(v:QuExtFnId) -> Self {
 		v.0 as u8
-	}
-}
-
-
-#[derive(Clone, Debug, Default)]
-pub struct QuRegistered {
-	pub fns:Vec<ExternalFunction>,
-	pub structs:Vec<QuStruct>,
-	pub structs_map:HashMap<String, ClassId>,
-} impl QuRegistered {
-	/// Constructs a new [`QuImports`].
-	pub fn new() -> Self {
-		Self {
-			fns: Vec::default(),
-			structs: Vec::default(),
-			structs_map: HashMap::default(),
-		}
-	}
-	
-
-	pub fn get_fn_data_by_id(
-		&self,
-		fn_id:FunctionId
-	) -> Result<&ExternalFunction, QuMsg>{
-		match self.fns.get(fn_id) {
-			Some(v) => Ok(v),
-			None => Err(format!(
-				"No external function by id `{:?}` is registered.",
-				fn_id
-			).into()),
-		}
-	}
-
-
-	pub fn get_struct<T:Register>(
-		&self,
-	) -> Result<&QuStruct, QuMsg>{
-		self.get_struct_by_str(<T as Register>::name())
-	}
-
-
-	pub fn get_struct_by_str(&self, name:&str
-	) -> Result<&QuStruct, QuMsg>{
-		Ok(self.get_struct_by_id(self.get_struct_id_by_str(name)?)?)
-	}
-
-
-	pub fn get_struct_by_id(&self, id:ClassId
-	) -> Result<&QuStruct, QuMsg>{
-		match self.structs.get(id.0) {
-			Some(v) => Ok(v),
-			None => Err(format!(
-				"No external struct by id `{:?}` is registered.",
-				id
-			).into()),
-		}
-	}
-
-
-	pub fn get_struct_by_id_mut(&mut self, id:ClassId
-	) -> Result<&mut QuStruct, QuMsg>{
-		match self.structs.get_mut(id.0) {
-			Some(v) => Ok(v),
-			None => Err(format!(
-				"No external struct by id `{:?}` is registered.",
-				id
-			).into()),
-		}
-	}
-
-
-	pub fn get_struct_id<T:Register>(
-		&self
-	) -> Result<ClassId, QuMsg> {
-		self.get_struct_id_by_str(<T as Register>::name())
-	}
-
-
-	pub fn get_struct_id_by_str(&self, name:&str
-	) -> Result<ClassId, QuMsg>{
-		let Some(d) = self.structs_map.get(name)
-			else {
-				return Err(format!(
-					"No external struct by name `{name}` is registered."
-				).into())
-			};
-		Ok(*d)
-	}
-
-
-	/// Registers an external struct to be used within the Qu langauge.
-	pub fn register_struct<S:Register+'static>(&mut self) {
-		let r_struct = QuStruct::new(
-			<S as Register>::name(),
-			size_of::<S>(),
-		);
-		
-		self.structs_map.insert(
-			<S as Register>::name().to_owned(),
-			ClassId::new(self.structs.len()),
-		);
-		self.structs.push(r_struct);
-
 	}
 }
 
@@ -375,11 +271,14 @@ pub trait RegistererLayer {
 
 		self.get_definitions_mut().register_function_in_module(
 			module_id,
-			ExternalFunction {
-				name: name.into(),
-				pointer: body,
-				parameters: Vec::from(args),
-				return_type: out,
+			FunctionMetadata {
+				identity: FunctionIdentity {
+					name: name.into(),
+					parameters: Box::from(args),
+					return_type: out,
+				},
+				code_block: FunctionReference::External(body),
+				
 			}
 		)?;
 		Ok(())
@@ -396,11 +295,14 @@ pub trait RegistererLayer {
 	) -> Result<(), QuMsg> {
 		self.get_definitions_mut().register_static_function_in_class(
 			for_class,
-			ExternalFunction {
-				name: name.into(),
-				pointer: body,
-				parameters: Vec::from(args),
-				return_type: out,
+			FunctionMetadata {
+				identity: FunctionIdentity {
+					name: name.into(),
+					parameters: Box::from(args),
+					return_type: out,
+				},
+				code_block: FunctionReference::External(body),
+				
 			},
 		)?;
 		Ok(())

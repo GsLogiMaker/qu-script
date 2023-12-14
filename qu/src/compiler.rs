@@ -3,21 +3,19 @@ use once_cell::sync::Lazy;
 
 use crate::Bool;
 use crate::Class;
-use crate::ExternalFunction;
 use crate::Float;
 use crate::Int;
 use crate::Module;
-use crate::QuAdd;
-use crate::QuOp;
-use crate::QuOp::*;
+use crate::vm::QuOp;
+use crate::vm::QuOp::*;
 use crate::QuParser;
 use crate::Register;
 use crate::QuStackId;
 use crate::Void;
 use crate::Uuid;
+use crate::import::ExternalFunctionPointer;
 use crate::import::ModuleBody;
 use crate::import::ModuleBuilder;
-use crate::import::QuRegistered;
 use crate::import::QuStruct;
 use crate::import::ClassId;
 use crate::import::Registerer;
@@ -25,7 +23,6 @@ use crate::parser::KEYWORD_BOOL_FALSE;
 use crate::parser::KEYWORD_BOOL_TRUE;
 use crate::parser::KEYWORD_IF;
 use crate::parser::KEYWORD_WHILE;
-use crate::parser::OP_EXPR_ADD;
 use crate::parser::QuOperator;
 use crate::parser::parsed::*;
 
@@ -33,6 +30,7 @@ use crate::QuMsg;
 use crate::QuToken;
 use crate::objects::FUNDAMENTALS_MODULE;
 
+use core::fmt;
 use core::panic;
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -263,7 +261,7 @@ struct Context {
 		&self,
 		identity: &FunctionIdentity,
 		definitions: &Definitions,
-	) -> Result<SomeFunctionId, QuMsg> {
+	) -> Result<FunctionId, QuMsg> {
 		self.find_function_maybe(identity, definitions)
 		.ok_or_else(|| -> QuMsg { format!(
 			"Could not find a function with identity '{identity}' in \
@@ -276,14 +274,11 @@ struct Context {
 		&self,
 		identity: &FunctionIdentity,
 		definitions: &Definitions,
-	) -> Option<SomeFunctionId> {
+	) -> Option<FunctionId> {
 		let item = self.find_in_stack_filtered(
 			&identity.name,
 			&|item| {
 				if let ItemId::Function(_) = item {
-					return true;
-				}
-				if let ItemId::ExternalFunction(_) = item {
 					return true;
 				}
 				if let ItemId::FunctionGroup(_) = item {
@@ -295,10 +290,7 @@ struct Context {
 		if let Some(function_id) = item {
 			return match function_id {
 				ItemId::Function(function_id) => {
-					Some( SomeFunctionId::Qu(function_id) )
-				},
-				ItemId::ExternalFunction(function_id) => {
-					Some( SomeFunctionId::External(function_id) )
+					Some( function_id )
 				},
 				ItemId::FunctionGroup(id) => {
 					definitions.function_groups[id]
@@ -518,7 +510,7 @@ struct Context {
 		&self,
 		identity: &FunctionIdentity,
 		definitions: &Definitions,
-	) -> Result<SomeFunctionId, QuMsg> {
+	) -> Result<FunctionId, QuMsg> {
 		let item = self.find_item_filtered_maybe(
 			&identity.name,
 			&|item| {
@@ -547,7 +539,8 @@ struct Context {
 				return Ok(
 					*definitions
 						.get_function_group(function_group)?
-						.map.get(identity).unwrap()
+						.map
+						.get(identity).unwrap()
 				);
 			}
 		}
@@ -755,16 +748,14 @@ pub struct Definitions {
 	pub(crate) uuid: Uuid,
 	pub constants: Vec<Constant>,
 	pub classes: Vec<QuStruct>,
-	pub external_functions: Vec<ExternalFunction>,
 	pub functions: Vec<FunctionMetadata>,
 	pub function_groups: Vec<FunctionGroup>,
 	pub modules: Vec<ModuleMetadata>,
 
-	pub byte_code_blocks: Vec<Vec<QuOp>>,
+	pub(crate) byte_code_blocks: Vec<Vec<QuOp>>,
 
 	/// A map of names to module IDs.
 	pub module_map: HashMap<String, ModuleId>,
-	pub imports: QuRegistered,
 	/// All registered classes with external functions that were not registered.
 	with_unregistered_functions: Vec<ClassId>, // TODO: Remove with_unregistered_functions
 } impl Definitions {
@@ -829,7 +820,7 @@ pub struct Definitions {
 				already exists."
 			).into())
 		}
-		group.map.insert(signature.clone(), SomeFunctionId::External(id)); // TODO: Remove cloning
+		group.map.insert(signature.clone(), id); // TODO: Remove cloning
 
 		Ok(())
 	}
@@ -864,7 +855,7 @@ pub struct Definitions {
 
 		// Add to mappings
 		assert!(!group.map.contains_key(&signature));
-		group.map.insert(signature.clone(), SomeFunctionId::Qu(id)); // TODO: Remove cloning
+		group.map.insert(signature.clone(), id); // TODO: Remove cloning
 
 		Ok(())
 	}
@@ -900,7 +891,7 @@ pub struct Definitions {
 
 		// Add to mappings
 		assert!(!group.map.contains_key(&signature));
-		group.map.insert(signature.clone(), SomeFunctionId::External(id)); // TODO: Remove cloning
+		group.map.insert(signature.clone(), id); // TODO: Remove cloning
 		Ok(())
 	}
 
@@ -937,7 +928,7 @@ pub struct Definitions {
 
 		// Add to module's group mappings
 		assert!(!group.map.contains_key(&signature));
-		group.map.insert(signature.clone(), SomeFunctionId::Qu(id)); // TODO: Remove cloning
+		group.map.insert(signature.clone(), id); // TODO: Remove cloning
 		// Add to class's mappings
 		let class_id = signature.id_self_class();
 		self.add_class_function_map(class_id, signature, id)?;
@@ -949,21 +940,9 @@ pub struct Definitions {
 	pub fn add_to_function_group(
 		&mut self,
 		item_id: ItemId,
-		fn_id: SomeFunctionId,
+		fn_id: FunctionId,
 	) -> Result<(), QuMsg> {
-		let identity = match fn_id {
-			SomeFunctionId::Qu(id) => self.functions[id].identity.clone(),
-			SomeFunctionId::External(id) => {
-				let ext_fn = &self
-					.external_functions[id];
-				let identity = FunctionIdentity {
-					name: ext_fn.name.clone(),
-					parameters: ext_fn.parameters.clone(),
-					return_type: ext_fn.return_type,
-				};
-				identity
-			},
-		};
+		let identity = self.functions[fn_id].identity.clone();
 
 		let new_group_id = self.function_groups.len();
 		let function_group_map = match item_id {
@@ -971,7 +950,6 @@ pub struct Definitions {
 				&mut self.get_class_mut(id)?.common.function_groups_map
 			},
 			ItemId::Constant(_) => todo!(),
-			ItemId::ExternalFunction(_) => todo!(),
 			ItemId::Function(_) => todo!(),
 			ItemId::FunctionGroup(_) => todo!(),
 			ItemId::Module(id) => {
@@ -1050,7 +1028,6 @@ pub struct Definitions {
 		let constants_map = match item_id {
 			ItemId::Class(_) => todo!(),
 			ItemId::Constant(_) => todo!(),
-			ItemId::ExternalFunction(_) => todo!(),
 			ItemId::Function(_) => todo!(),
 			ItemId::FunctionGroup(_) => todo!(),
 			ItemId::Module(id) => 
@@ -1112,7 +1089,6 @@ pub struct Definitions {
 		match item_id {
 			ItemId::Class(_) => todo!(),
 			ItemId::Constant(_) => todo!(),
-			ItemId::ExternalFunction(_) => todo!(),
 			ItemId::Function(_) => todo!(),
 			ItemId::FunctionGroup(_) => todo!(),
 			ItemId::Module(id) => {
@@ -1238,18 +1214,6 @@ pub struct Definitions {
 				"There's no class with id '{:?}' defined.", id,
 			).into()})?;
 		Ok(class)
-	}
-
-
-	pub fn get_external_function(
-		&self, id: ExternalFunctionId
-	) -> Result<&ExternalFunction, QuMsg> {
-		let external_function = self.external_functions
-			.get(usize::from(id))
-			.ok_or_else(|| -> QuMsg { format!(
-				"There's no external function with id '{:?}' defined.", id,
-			).into()})?;
-		Ok(external_function)
 	}
 
 
@@ -1383,10 +1347,10 @@ pub struct Definitions {
 	pub fn register_function_in_module(
 		&mut self,
 		module_id: ModuleId,
-		external_function:ExternalFunction,
+		external_function:FunctionMetadata,
 	) -> Result<(), QuMsg> {
 		// Get class id of first parameter
-		let class_id = match external_function.parameters.first() {
+		let class_id = match external_function.identity.parameters.first() {
 			Some(class_id) => *class_id,
 			None => {
 				// Register static function with module, but not a class.
@@ -1397,7 +1361,7 @@ pub struct Definitions {
 				// 	external_function.clone(),
 				// )?;
 				// Add external function to list
-				self.external_functions.push(external_function);
+				self.functions.push(external_function);
 
 				return Ok(());
 			},
@@ -1431,7 +1395,7 @@ pub struct Definitions {
 	pub fn register_static_function_in_class(
 		&mut self,
 		class_id: ClassId,
-		external_function:ExternalFunction,
+		external_function:FunctionMetadata,
 	) -> Result<(), QuMsg> {
 		// Also register function with module.
 		// self.add_static_external_function_mapping_in_class(
@@ -1439,12 +1403,12 @@ pub struct Definitions {
 		// 	external_function.clone(),
 		// )?;
 		// Add function to global list
-		let new_function_id = self.external_functions.len();
-		self.external_functions.push(external_function);
+		let new_function_id = self.functions.len();
+		self.functions.push(external_function);
 
 		self.add_to_function_group(
 			ItemId::Class(class_id),
-			SomeFunctionId::External(new_function_id)
+			new_function_id
 		)?;
 
 		Ok(())
@@ -1465,7 +1429,7 @@ pub struct Definitions {
 	pub fn register_static_function_in_module(
 		&mut self,
 		module_id: ModuleId,
-		external_function:ExternalFunction,
+		external_function:FunctionMetadata,
 	) -> Result<(), QuMsg> {
 		// Also register function with module.
 		// self.add_static_external_function_mapping_in_module(
@@ -1473,12 +1437,12 @@ pub struct Definitions {
 		// 	external_function.clone(),
 		// )?;
 		// Add function to global list
-		let new_function_id = self.external_functions.len();
-		self.external_functions.push(external_function);
+		let new_function_id = self.functions.len();
+		self.functions.push(external_function);
 
 		self.add_to_function_group(
 			ItemId::Module(module_id),
-			SomeFunctionId::External(new_function_id)
+			new_function_id
 		)?;
 
 		Ok(())
@@ -1545,7 +1509,7 @@ struct FrameData {
 
 #[derive(Debug, Default, Clone)]
 pub struct FunctionGroup {
-	map: HashMap<FunctionIdentity, SomeFunctionId>,
+	map: HashMap<FunctionIdentity, FunctionId>,
 	name: String,
 } impl FunctionGroup {
 	fn new(name: String) -> Self {
@@ -1558,7 +1522,7 @@ pub struct FunctionGroup {
 	fn get_group_id(
 		&self,
 		identity:&FunctionIdentity,
-	) -> Result<SomeFunctionId, QuMsg> {
+	) -> Result<FunctionId, QuMsg> {
 		let Some(group_id) = self.map
 			.get(identity)
 			else {
@@ -1579,7 +1543,7 @@ pub type FunctionId = usize;
 #[derive(Clone, Debug, Default, Eq, Ord)]
 pub struct FunctionIdentity {
 	pub name: String,
-	pub parameters: Vec<ClassId>,
+	pub parameters: Box<[ClassId]>,
 	pub return_type: ClassId,
 } impl FunctionIdentity {
 	fn id_self_class(&self) -> ClassId {
@@ -1609,7 +1573,7 @@ pub struct FunctionIdentity {
 } impl Display for FunctionIdentity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		let mut params = String::new();
-		for p in &self.parameters {
+		for p in self.parameters.iter() {
 			let id = p.0;
 			params.push_str(&format!("type:{id}"));
 		}
@@ -1618,12 +1582,31 @@ pub struct FunctionIdentity {
 }
 
 
+#[derive(Clone)]
+pub(crate) enum FunctionReference {
+	Internal(usize),
+	External(&'static ExternalFunctionPointer),
+} impl fmt::Debug for FunctionReference {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Internal(arg0) =>
+				f.debug_tuple("Internal").field(arg0).finish(),
+            Self::External(_) =>
+				f.debug_tuple("External").field(&()).finish(),
+        }
+    }
+} impl Default for FunctionReference {
+    fn default() -> Self {
+        FunctionReference::Internal(0)
+    }
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct FunctionMetadata {
 	pub identity: FunctionIdentity,
 	/// The value that the VM's program counter should be set to in order to
 	/// start this function.
-	pub code_block: usize,
+	pub(crate) code_block: FunctionReference,
 }
 
 pub type ModuleId = usize;
@@ -1638,7 +1621,6 @@ pub struct ModuleMetadata {
 pub enum ItemId {
 	Class(ClassId),
 	Constant(ConstantId),
-	ExternalFunction(ExternalFunctionId),
 	Function(FunctionId),
 	FunctionGroup(FunctionGroupId),
 	Module(ModuleId),
@@ -1725,7 +1707,6 @@ struct Scope {
 						definitions.get_class(id)?.common.name.clone()
 					},
 					ItemId::Constant(_) => todo!(),
-					ItemId::ExternalFunction(_) => todo!(),
 					ItemId::Function(_) => todo!(),
 					ItemId::FunctionGroup(_) => todo!(),
 					ItemId::Module(id) => {
@@ -1748,7 +1729,6 @@ struct Scope {
 				&definitions.get_class(id)?.common.function_groups_map
 			},
 			ItemId::Constant(_) => todo!(),
-			ItemId::ExternalFunction(_) => todo!(),
 			ItemId::Function(_) => todo!(),
 			ItemId::FunctionGroup(_) => todo!(),
 			ItemId::Module(id) => {
@@ -1817,17 +1797,6 @@ struct Scope {
 		);
 
 		Ok(())
-	}
-}
-
-
-#[derive(Debug, Clone, Copy)]
-pub enum SomeFunctionId {
-	Qu(FunctionId),
-	External(ExternalFunctionId),
-} impl Default for SomeFunctionId {
-    fn default() -> Self {
-        Self::Qu(0)
     }
 }
 
@@ -1904,7 +1873,7 @@ pub struct QuCompiler {
 		// Construct function identity
 		let mut function_identity = FunctionIdentity {
 			name: call_expression.name.slice.clone(),
-			parameters,
+			parameters: parameters.into_boxed_slice(),
 			..Default::default()
 		};
 
@@ -1924,21 +1893,12 @@ pub struct QuCompiler {
 					&call_expression.name.slice	
 				)?;
 				let function_group = &definitions.function_groups[function_group_id];
-				let some_fn_id = *function_group.map
+				let fn_id = *function_group.map
 					.get(&function_identity)
 					.expect("TODO: Handle error");
-				match some_fn_id {
-					SomeFunctionId::External(id) => {
 						return Ok(
-							definitions.get_external_function(id)?.return_type
+					definitions.get_function(fn_id)?.identity.return_type
 						);
-					},
-					SomeFunctionId::Qu(id) => {
-						return Ok(
-							definitions.get_function(id)?.identity.return_type
-						);
-					},
-				}
 
 			} else {
 				todo!("Handle constant evalution of modules properly");
@@ -1949,19 +1909,19 @@ pub struct QuCompiler {
 			.find_item(&call_expression.name.slice, definitions)?;
 
 		// Get function group
-		let some_function_id = if let ItemId::Class(class_id) = callable_id {
+		let fn_id = if let ItemId::Class(class_id) = callable_id {
 			function_identity.name = CONSTRUCTOR_NAME.into();
 			let class = definitions.get_class(class_id)?;
 			let group_id = class.common.function_groups_map
 				.get(CONSTRUCTOR_NAME)
 				.map(|x|{*x})
 				.expect("TODO: Add error msg1");
-			let some_fn_id = *definitions
+			let fn_id = *definitions
 				.get_function_group(group_id)?
 				.map
 				.get(&function_identity)
 				.expect("TODO: Add error msg2");
-			some_fn_id
+			fn_id
 		} else {
 			if
 				caller_id == definitions.class_id::<Class>()?
@@ -1973,21 +1933,10 @@ pub struct QuCompiler {
 		};
 
 		// Get return type
-		let return_type_id = match some_function_id {
-			SomeFunctionId::Qu(id) => {
 				let return_type_id = definitions
-					.get_function(id)?
+			.get_function(fn_id)?
 					.identity
 					.return_type;
-				return_type_id
-			},
-			SomeFunctionId::External(id) => {
-				definitions
-					.get_external_function(id)?
-					.return_type
-			},
-		};
-
 		Ok(return_type_id)
 	}
 
@@ -2013,7 +1962,7 @@ pub struct QuCompiler {
 		class_id: ClassId,
 		function_identity: FunctionIdentity,
 		definitions: &mut Definitions,
-	) -> Result<SomeFunctionId, QuMsg> {
+	) -> Result<FunctionId, QuMsg> {
 		let class = definitions.get_class(class_id)?;
 		let Some(group_id) = class.common.function_groups_map
 			.get(CONSTRUCTOR_NAME)
@@ -2050,7 +1999,7 @@ pub struct QuCompiler {
 	) -> Result<QuAsmBuilder, QuMsg>{
 		let identity = &FunctionIdentity {
 			name: "copy".into(),
-			parameters: vec![from.class_id()],
+			parameters: Box::new([from.class_id()]),
 			return_type: to.class_id(),
 		};
 		let mut b = QuAsmBuilder::new();
@@ -2059,16 +2008,13 @@ pub struct QuCompiler {
 			.function_groups_map
 			.get(&identity.name)
 			.expect("TODO: Handle None case");
-		let SomeFunctionId::External(fn_id) = *definitions.function_groups[group_id]
+		let fn_id = *definitions.function_groups[group_id]
 			.map
 			.get(&identity)
-			.expect("TODO: Handle None case")
-			else {
-				panic!("Can't copy variable of that type")
-			};
-		b.add_op(QuOp::CallExt(
+			.expect("TODO: Handle None case");
+		b.add_op(QuOp::Call(
 			fn_id,
-			vec![from],
+			Box::new([from]),
 			to,
 		));
 		b.return_type = to.class_id();
@@ -2175,7 +2121,6 @@ pub struct QuCompiler {
 		let builder = match indexed_item {
 			ItemId::Class(_) => todo!(),
 			ItemId::Constant(_) => todo!(),
-			ItemId::ExternalFunction(_) => todo!(),
 			ItemId::Function(_) => todo!(),
 			ItemId::FunctionGroup(_) => todo!(),
 			ItemId::Module(_) => todo!(),
@@ -2350,7 +2295,6 @@ pub struct QuCompiler {
 				builder.add_op(QuOp::LoadConstant(id as u32, output_reg));
 				builder
 			},
-			ItemId::ExternalFunction(_) => todo!(),
 			ItemId::Function(_) => todo!(),
 			ItemId::FunctionGroup(_) => todo!(),
 			ItemId::Module(_) => {
@@ -2577,7 +2521,7 @@ pub struct QuCompiler {
 			.find_item_maybe(&call_expression.name.slice, definitions);
 
 		// Find function id in the current context
-		let id =
+		let fn_id =
 			if let Some(ItemId::Class(class_id)) = callable_id {
 				self.get_class_constructor_id(
 					class_id,
@@ -2628,25 +2572,15 @@ pub struct QuCompiler {
 			};
 
 		// Compile the function call
-		match id {
-			SomeFunctionId::Qu(function_id) => {
-				builder.add_op(QuOp::Call(function_id, store_to));
-				builder.return_type = definitions
-					.get_function(function_id)?
-					.identity
-					.return_type;
-			},
-			SomeFunctionId::External(external_function_id) => {
-				builder.add_op(QuOp::CallExt(
-					external_function_id,
-					parameter_ids,
+		builder.add_op(QuOp::Call(
+			fn_id,
+			parameter_ids.into_boxed_slice(),
 					store_to
 				));
 				builder.return_type = definitions
-					.get_external_function(external_function_id)?
+			.get_function(fn_id)?
+			.identity
 					.return_type;
-			},
-		}
 
 		return Ok(builder);
 	}
@@ -2664,6 +2598,7 @@ pub struct QuCompiler {
 		body: &CodeScope,
 		definitions: &mut Definitions,
 	) -> Result<QuAsmBuilder, QuMsg> {
+		// Compose indentity and parameters list
 		let (identity, parameters) = {
 			let mut parameters_types = vec![];
 			let mut parameters_names = vec![];
@@ -2688,14 +2623,13 @@ pub struct QuCompiler {
 			)?;
 			let identity = FunctionIdentity {
 				name: parsed_identity.name.slice.clone(),
-				parameters: parameters_types,
+				parameters: parameters_types.into_boxed_slice(),
 				return_type,
 			};
 			(identity, parameters_names)
 		};
 
 		// Define the function
-		let return_type = identity.return_type;
 		let func_id = definitions.functions.len();
 		let frame = self.context.frames.iter().rev().next().unwrap();
 		let context_id = ItemId::from(frame);
@@ -2705,24 +2639,21 @@ pub struct QuCompiler {
 			func_id, FrameData::default(),
 		));
 		let body_code = {
-			// Allocate return value
-			self.context.define_variable(
-				"return value".into(),
-				return_type,
-				definitions,
-			)?;
+			let mut b = QuAsmBuilder::new();
 
 			// Allocate parameters
+			let mut i = 0;
 			for (name, class_id) in &parameters {
-				self.context.define_variable(
+				let stack_id = self.context.define_variable(
 					name.into(),
 					*class_id,
 					definitions,
-				)?;
+				)?.stack_id;
+				b.add_op(QuOp::LoadArg(i, stack_id));
+				i += 1;
 			}
 
 			// Compile code block
-			let mut b = QuAsmBuilder::new();
 			b.add_builder(self.cmp_code_block(&body.code_block, definitions)?);
 			Ok::<QuAsmBuilder, QuMsg>(b)
 		}?;
@@ -2730,9 +2661,13 @@ pub struct QuCompiler {
 
 
 		// Compile function body
-		definitions.get_function_mut(func_id)?.code_block = definitions
+		definitions
+			.get_function_mut(func_id)?
+			.code_block = FunctionReference::Internal(
+				definitions
 			.byte_code_blocks
-			.len();
+					.len()
+			);
 		let bytcode = body_code.ops;
 		definitions.byte_code_blocks.push(bytcode);
 
@@ -2759,7 +2694,6 @@ pub struct QuCompiler {
 						.get_item_id(indexer)?
 				},
 				ItemId::Constant(_) => todo!(),
-				ItemId::ExternalFunction(_) => todo!(),
 				ItemId::Function(_) => todo!(),
 				ItemId::FunctionGroup(_) => todo!(),
 				ItemId::Module(id) => {
@@ -2826,7 +2760,6 @@ pub struct QuCompiler {
 				)?;
 			},
 			ItemId::Constant(_) => todo!(),
-			ItemId::ExternalFunction(_) => todo!(),
 			ItemId::Function(_) => todo!(),
 			ItemId::FunctionGroup(id) => {
 				self.context.import_function(
@@ -3079,7 +3012,7 @@ pub struct QuCompiler {
 
 
 	/// Compiles Qu code from a [`&str`] into a [`Vec<u8>`].
-	pub fn compile(
+	pub(crate) fn compile(
 		&mut self, code:&str, definitions: &mut Definitions,
 	) -> Result<Vec<QuOp>, QuMsg> {
 		let mut p = QuParser::new();
@@ -3100,7 +3033,7 @@ pub struct QuCompiler {
 
 
 	/// Compiles Qu code from a [QuLeaf] into a [`Vec<u8>`].
-	pub fn compile_code(
+	pub(crate) fn compile_code(
 		&mut self, code_block:&CodeBlock, definitions: &mut Definitions
 	) -> Result<Vec<QuOp>, QuMsg> {
 		// Main code
@@ -3215,7 +3148,6 @@ pub struct QuCompiler {
 					},
 					ItemId::Constant(id) =>
 						definitions.constants[id].class_id,
-					ItemId::ExternalFunction(_) => todo!(),
 					ItemId::Function(_) => todo!(),
 					ItemId::FunctionGroup(_) => todo!(),
 					ItemId::Module(_) => {
@@ -3283,7 +3215,7 @@ pub struct QuCompiler {
 					)?;
 					let function_identity = FunctionIdentity {
 						name: signature.name.slice.clone(),
-						parameters,
+						parameters: parameters.into_boxed_slice(),
 						return_type,
 					};
 

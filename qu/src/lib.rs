@@ -47,7 +47,6 @@ pub use errors::QuMsg;
 pub use compiler::QuCompiler;
 pub use objects::*;
 pub use parser::QuParser;
-pub use vm::QuOp;
 pub use vm::QuVm;
 pub use vm::QuStackId;
 pub use import::RegistererLayer;

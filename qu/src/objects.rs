@@ -10,7 +10,6 @@ use crate::compiler::ModuleId;
 use crate::compiler::REGISTERED_BANK;
 use crate::import::ClassId;
 use crate::import::ArgsAPI;
-use crate::import::ExternalFunctionPointer;
 use crate::import::Registerer;
 use crate::import::RegistererLayer;
 use std::any::TypeId;
@@ -80,7 +79,7 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 			// Traits
 			let add = m.add_trait::<QuAdd>()?;
 			{
-				qufn!(m, api, add(add, add) add {
+				qufn!(m, _api, add(add, add) add {
 					Ok(())
 				});
 			}
@@ -412,6 +411,7 @@ pub fn math_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 }
 
 
+/// The Add trait for Qu
 pub struct QuAdd {}
 impl Register for QuAdd {
 	fn name() -> &'static str {"Add"}
@@ -424,54 +424,6 @@ pub struct Class {
 	_id: ClassId,
 } impl Register for Class {
 	fn name() -> &'static str {"__Class__"}
-}
-
-
-/// Defines information about an external function that can be sued by Qu.
-#[derive(Clone)]
-pub struct ExternalFunction {
-	/// The name of the function.
-	/// 
-	/// This is the name used when calling this function from a Qu script.
-	pub name: String,
-	/// The pointer to the function.
-	pub pointer: &'static ExternalFunctionPointer,
-	/// The arguments this function takes.
-	pub parameters: Vec<ClassId>,
-	/// The return type of the function.
-	pub return_type: ClassId,
-} impl ExternalFunction {
-	/// Instantiates a new [`ExternalFunctionDefinition`].
-	pub fn new(
-		name: &str,
-		pointer: &'static ExternalFunctionPointer,
-		parameters: Vec<ClassId>,
-		return_type: ClassId,
-	) -> Self{
-		Self {
-			name: name.into(),
-			pointer,
-			parameters: parameters,
-			return_type,
-		}
-	}
-} impl Debug for ExternalFunction {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ExternalFunctionDefinition")
-			.field("name", &self.name)
-			.field("parameters", &self.parameters)
-			.field("return_type", &self.return_type)
-			.finish()
-    }
-} impl Default for ExternalFunction {
-    fn default() -> Self {
-        Self {
-			name: Default::default(),
-			pointer: &|_| {Ok(())},
-			parameters: Default::default(),
-			return_type: Default::default(),
-		}
-    }
 }
 
 
