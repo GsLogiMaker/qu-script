@@ -6,7 +6,7 @@ use std::mem::size_of;
 
 use crate::ExternalFunction;
 use crate::QuMsg;
-use crate::QuRegisterStruct;
+use crate::Register;
 use crate::QuStackId;
 use crate::QuVm;
 use crate::Uuid;
@@ -28,7 +28,7 @@ pub struct ArgsAPI<'a> {
 	pub(crate) out_id: QuStackId,
 } impl<'a> ArgsAPI<'a> {
 	/// Gets a reference to the value of the function argument at `index`.
-	pub fn get<T: QuRegisterStruct + 'static>(
+	pub fn get<T: Register + 'static>(
 		&self,
 		index:usize,
 	) -> Result<&T, QuMsg> {
@@ -36,7 +36,7 @@ pub struct ArgsAPI<'a> {
 	}
 
 	/// Sets the return value of the function to `value`.
-	pub fn set<T: QuRegisterStruct + 'static>(
+	pub fn set<T: Register + 'static>(
 		&mut self,
 		value:T,
 	) {
@@ -123,10 +123,10 @@ pub struct QuRegistered {
 	}
 
 
-	pub fn get_struct<T:QuRegisterStruct>(
+	pub fn get_struct<T:Register>(
 		&self,
 	) -> Result<&QuStruct, QuMsg>{
-		self.get_struct_by_str(<T as QuRegisterStruct>::name())
+		self.get_struct_by_str(<T as Register>::name())
 	}
 
 
@@ -160,10 +160,10 @@ pub struct QuRegistered {
 	}
 
 
-	pub fn get_struct_id<T:QuRegisterStruct>(
+	pub fn get_struct_id<T:Register>(
 		&self
 	) -> Result<ClassId, QuMsg> {
-		self.get_struct_id_by_str(<T as QuRegisterStruct>::name())
+		self.get_struct_id_by_str(<T as Register>::name())
 	}
 
 
@@ -180,15 +180,14 @@ pub struct QuRegistered {
 
 
 	/// Registers an external struct to be used within the Qu langauge.
-	pub fn register_struct<S:QuRegisterStruct+'static>(&mut self) {
+	pub fn register_struct<S:Register+'static>(&mut self) {
 		let r_struct = QuStruct::new(
-			<S as QuRegisterStruct>::name(),
-			&<S as QuRegisterStruct>::register_fns,
+			<S as Register>::name(),
 			size_of::<S>(),
 		);
 		
 		self.structs_map.insert(
-			<S as QuRegisterStruct>::name().to_owned(),
+			<S as Register>::name().to_owned(),
 			ClassId::new(self.structs.len()),
 		);
 		self.structs.push(r_struct);
@@ -213,13 +212,13 @@ pub struct Registerer<'a> {
         &mut self.definitions
     }
 
-	fn add_class<T:QuRegisterStruct+'static>(
+	fn add_class<T:Register+'static>(
 		&mut self
 	) -> Result<ClassId, QuMsg> {
 		panic!("Classes can't be added at this level. Add a module first.")
 	}
 
-	fn add_constant<T: QuRegisterStruct + 'static>(
+	fn add_constant<T: Register + 'static>(
 		&mut self,
 		_name: impl Into<String>,
 		_value: T,
@@ -282,14 +281,12 @@ pub struct QuStruct {
 	pub static_functions_map: HashMap<FunctionIdentity, SomeFunctionId>,
 	
 	pub name: String,
-	pub register_fn: &'static dyn Fn(&mut Definitions) -> Vec<ExternalFunction>,
 	/// The size of the struct in bytes.
 	pub size: u8,
 
 } impl QuStruct {
 	pub fn new(
 		name:impl Into<String>,
-		fn_registerer:&'static dyn Fn(&mut Definitions) -> Vec<ExternalFunction>,
 		size:usize,
 	) -> Self {
 		let name = name.into();
@@ -302,7 +299,6 @@ pub struct QuStruct {
 		} else { 0 };
 		Self {
 			name,
-			register_fn: fn_registerer,
 			size: aligned_size as u8,
 			constants_map: Default::default(),
 			external_functions_map: Default::default(),
@@ -374,7 +370,6 @@ pub struct QuStruct {
 			external_functions_map: Default::default(),
 			functions_map: Default::default(),
 			name: Default::default(),
-			register_fn: &|_d:&mut Definitions| {vec![]},
 			size: Default::default(),
 			function_groups_map: Default::default(),
 			static_functions_map: Default::default(),
@@ -400,7 +395,7 @@ pub trait RegistererLayer {
 	}
 
 	/// Adds a class to the current layer.
-	fn add_class<T:QuRegisterStruct+'static>(
+	fn add_class<T:Register+'static>(
 		&mut self
 	) -> Result<ClassId, QuMsg> {
 		let module_id = match self.get_layer_item_id() {
@@ -412,7 +407,7 @@ pub trait RegistererLayer {
 	}
 
 	/// Adds a constant to the current layer.
-	fn add_constant<T: QuRegisterStruct + 'static>(
+	fn add_constant<T: Register + 'static>(
 		&mut self,
 		name: impl Into<String>,
 		value: T,
@@ -485,7 +480,7 @@ pub trait RegistererLayer {
 	}
 
 	/// Returns the [`ClassId`] of the given struct.
-	fn get_class_id_of<T: QuRegisterStruct + 'static>(
+	fn get_class_id_of<T: Register + 'static>(
 		&self
 	) -> Option<ClassId> {
 		T::get_id(&self.get_definitions().uuid)

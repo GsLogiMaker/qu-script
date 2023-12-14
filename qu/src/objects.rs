@@ -6,7 +6,6 @@ use once_cell::sync::Lazy;
 use crate::QuMsg;
 use crate::Uuid;
 use crate::compiler::CONSTRUCTOR_NAME;
-use crate::compiler::Definitions;
 use crate::compiler::ModuleId;
 use crate::compiler::REGISTERED_BANK;
 use crate::import::ClassId;
@@ -14,8 +13,6 @@ use crate::import::ArgsAPI;
 use crate::import::ExternalFunctionPointer;
 use crate::import::Registerer;
 use crate::import::RegistererLayer;
-use crate::vm::QuExtFn;
-use crate::vm::QuVoidExtFn;
 use std::any::TypeId;
 use std::any::type_name;
 use std::fmt::Debug;
@@ -25,6 +22,13 @@ use std::ops::Mul;
 use std::ops::Sub;
 
 pub(crate) const FUNDAMENTALS_MODULE:&str = "__fundamentals__";
+
+/// Qu's boolean type
+pub type Bool = bool;
+/// Qu's float type
+pub type Float = f32;
+/// Qu's int type
+pub type Int = i32;
 
 macro_rules! qufn {
 	($module_builder:ident, $api:ident, $name:ident($($param:ident),*) $return:ident $block:block) => {
@@ -66,9 +70,10 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 	registerer.add_module(
 		FUNDAMENTALS_MODULE,
 		&|m| {
-			let void = m.add_class::<QuVoid>()?;
-			let int = m.add_class::<i32>()?;
-			let bool = m.add_class::<bool>()?;
+			let void = m.add_class::<Void>()?;
+			let bool = m.add_class::<Bool>()?;
+			let float = m.add_class::<Float>()?;
+			let int = m.add_class::<Int>()?;
 			let class = m.add_class::<Class>()?;
 			let module = m.add_class::<Module>()?;
 
@@ -81,13 +86,117 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 				});
 			}
 
+			// float functions
+			{
+				m.add_class_static_function(float, CONSTRUCTOR_NAME,
+					&[],
+					float,
+					&|api| {
+						api.set::<Float>(0f32);
+						Ok(())
+					}
+				)?;
+				m.add_class_static_function(float, CONSTRUCTOR_NAME,
+					&[float],
+					float,
+					&|api| {
+						api.set::<Float>(*api.get::<Float>(0)?);
+						Ok(())
+					}
+				)?;
+				m.add_class_static_function(float, CONSTRUCTOR_NAME,
+					&[int],
+					float,
+					&|api| {
+						api.set::<Float>(*api.get::<Int>(0)? as Float);
+						Ok(())
+					}
+				)?;
+				m.add_class_static_function(float, CONSTRUCTOR_NAME,
+					&[bool],
+					float,
+					&|api| {
+						api.set::<Float>(*api.get::<Bool>(0)? as Int as Float);
+						Ok(())
+					}
+				)?;
+				qufn!(m, api, add(float, float) float {
+					api.set::<Float>(<Float as Add>::add(
+						*api.get::<Float>(0)?,
+						*api.get::<Float>(1)?
+					));
+					Ok(())
+				});
+				qufn!(m, api, sub(float, float) float {
+					api.set::<Float>(<Float as Sub>::sub(
+						*api.get::<Float>(0)?,
+						*api.get::<Float>(1)?
+					));
+					Ok(())
+				});
+				qufn!(m, api, mul(float, float) float {
+					api.set::<Float>(<Float as Mul>::mul(
+						*api.get::<Float>(0)?,
+						*api.get::<Float>(1)?
+					));
+					Ok(())
+				});
+				qufn!(m, api, div(float, float) float {
+					api.set::<Float>(<Float as Div>::div(
+						*api.get::<Float>(0)?,
+						*api.get::<Float>(1)?
+					));
+					Ok(())
+				});
+				qufn!(m, api, lesser(float, float) bool {
+					let output = api.get::<Float>(0)? < api.get::<Float>(1)?;
+					api.set_hold(output);
+					api.set::<Bool>(output);
+					Ok(())
+				});
+				qufn!(m, api, lessereq(float, float) bool {
+					let output = api.get::<Float>(0)? <= api.get::<Float>(1)?;
+					api.set_hold(output);
+					api.set::<Bool>(output);
+					Ok(())
+				});
+				qufn!(m, api, greater(float, float) bool {
+					let output = api.get::<Float>(0)? > api.get::<Float>(1)?;
+					api.set_hold(output);
+					api.set::<Bool>(output);
+					Ok(())
+				});
+				qufn!(m, api, greatereq(float, float) bool {
+					let output = api.get::<Float>(0)? >= api.get::<Float>(1)?;
+					api.set_hold(output);
+					api.set::<Bool>(output);
+					Ok(())
+				});
+				qufn!(m, api, eq(float, float) bool {
+					let output = api.get::<Float>(0)? == api.get::<Float>(1)?;
+					api.set_hold(output);
+					api.set::<Bool>(output);
+					Ok(())
+				});
+				qufn!(m, api, neq(float, float) bool {
+					let output = api.get::<Float>(0)? != api.get::<Float>(1)?;
+					api.set_hold(output);
+					api.set::<Bool>(output);
+					Ok(())
+				});
+				qufn!(m, api, copy(float) float {
+					api.set::<Float>(*api.get::<Float>(0)?);
+					Ok(())
+				});
+			}
+
 			// int functions
 			{
 				m.add_class_static_function(int, CONSTRUCTOR_NAME,
 					&[],
 					int,
 					&|api| {
-						api.set(0);
+						api.set::<Int>(0);
 						Ok(())
 					}
 				)?;
@@ -95,7 +204,7 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 					&[int],
 					int,
 					&|api| {
-						api.set(*api.get::<i32>(0)?);
+						api.set::<Int>(*api.get::<Int>(0)?);
 						Ok(())
 					}
 				)?;
@@ -103,76 +212,84 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 					&[bool],
 					int,
 					&|api| {
-						api.set(*api.get::<bool>(0)? as i32);
+						api.set::<Int>(*api.get::<Bool>(0)? as Int);
+						Ok(())
+					}
+				)?;
+				m.add_class_static_function(int, CONSTRUCTOR_NAME,
+					&[float],
+					int,
+					&|api| {
+						api.set::<Int>(*api.get::<f32>(0)? as Int);
 						Ok(())
 					}
 				)?;
 				qufn!(m, api, add(int, int) int {
-					api.set(<i32 as Add>::add(
-						*api.get::<i32>(0)?,
-						*api.get::<i32>(1)?
+					api.set::<Int>(<Int as Add>::add(
+						*api.get::<Int>(0)?,
+						*api.get::<Int>(1)?
 					));
 					Ok(())
 				});
 				qufn!(m, api, sub(int, int) int {
-					api.set(<i32 as Sub>::sub(
-						*api.get::<i32>(0)?,
-						*api.get::<i32>(1)?
+					api.set::<Int>(<Int as Sub>::sub(
+						*api.get::<Int>(0)?,
+						*api.get::<Int>(1)?
 					));
 					Ok(())
 				});
 				qufn!(m, api, mul(int, int) int {
-					api.set(<i32 as Mul>::mul(
-						*api.get::<i32>(0)?,
-						*api.get::<i32>(1)?
+					api.set::<Int>(<Int as Mul>::mul(
+						*api.get::<Int>(0)?,
+						*api.get::<Int>(1)?
 					));
 					Ok(())
 				});
 				qufn!(m, api, div(int, int) int {
-					api.set(<i32 as Div>::div(
-						*api.get::<i32>(0)?,
-						*api.get::<i32>(1)?
+					api.set::<Int>(<Int as Div>::div(
+						*api.get::<Int>(0)?,
+						*api.get::<Int>(1)?
 					));
 					Ok(())
 				});
 				qufn!(m, api, lesser(int, int) bool {
-					let output = api.get::<i32>(0)? < api.get::<i32>(1)?;
+					let output = api.get::<Int>(0)? < api.get::<Int>(1)?;
 					api.set_hold(output);
-					api.set::<bool>(output.into());
+					api.set::<Bool>(output);
 					Ok(())
 				});
 				qufn!(m, api, lessereq(int, int) bool {
-					let output = api.get::<i32>(0)? <= api.get::<i32>(1)?;
+					let output = api.get::<Int>(0)? <= api.get::<Int>(1)?;
 					api.set_hold(output);
-					api.set::<bool>(output.into());
+					api.set::<Bool>(output);
 					Ok(())
 				});
 				qufn!(m, api, greater(int, int) bool {
-					let output = api.get::<i32>(0)? > api.get::<i32>(1)?;
+					let output = api.get::<Int>(0)? > api.get::<Int>(1)?;
 					api.set_hold(output);
-					api.set::<bool>(output.into());
+					api.set::<Bool>(output);
 					Ok(())
 				});
 				qufn!(m, api, greatereq(int, int) bool {
-					let output = api.get::<i32>(0)? >= api.get::<i32>(1)?;
+					let output = api.get::<Int>(0)? >= api.get::<Int>(1)?;
 					api.set_hold(output);
-					api.set::<bool>(output.into());
+					api.set::<Bool>(output);
 					Ok(())
 				});
 				qufn!(m, api, eq(int, int) bool {
-					let output = api.get::<i32>(0)? == api.get::<i32>(1)?;
+					let output = api.get::<Int>(0)? == api.get::<Int>(1)?;
 					api.set_hold(output);
-					api.set::<bool>(output.into());
+					api.set::<Bool>(output);
 					Ok(())
 				});
 				qufn!(m, api, neq(int, int) bool {
-					let output = api.get::<i32>(0)? != api.get::<i32>(1)?;
+					let output = api.get::<Int>(0)? != api.get::<Int>(1)?;
 					api.set_hold(output);
-					api.set::<bool>(output.into());
+					api.set::<Bool>(output);
 					Ok(())
 				});
 				qufn!(m, api, copy(int) int {
-					api.set(*api.get::<i32>(0)?);
+					api.set::<Int>(*api.get::<Int>(0)?);
 					Ok(())
 				});
 			}
@@ -183,7 +300,7 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 					&[],
 					bool,
 					&|api| {
-						api.set(bool::from(false));
+						api.set::<Bool>(false);
 						Ok(())
 					}
 				)?;
@@ -191,7 +308,7 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 					&[bool],
 					bool,
 					&|api| {
-						api.set(*api.get::<bool>(0)?);
+						api.set::<Bool>(*api.get::<Bool>(0)?);
 						Ok(())
 					}
 				)?;
@@ -199,28 +316,36 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 					&[int],
 					bool,
 					&|api| {
-						api.set(bool::from(*api.get::<i32>(0)? != 0));
+						api.set::<Bool>(*api.get::<Int>(0)? != 0);
+						Ok(())
+					}
+				)?;
+				m.add_class_static_function(bool, CONSTRUCTOR_NAME,
+					&[float],
+					bool,
+					&|api| {
+						api.set::<Bool>(*api.get::<Float>(0)? != 0f32);
 						Ok(())
 					}
 				)?;
 				qufn!(m, api, and(bool) bool {
-					api.set(*api.get::<bool>(0)? && *api.get::<bool>(1)?);
+					api.set::<Bool>(*api.get::<Bool>(0)? && *api.get::<Bool>(1)?);
 					Ok(())
 				});
 				qufn!(m, api, or(bool) bool {
-					api.set(*api.get::<bool>(0)? || *api.get::<bool>(1)?);
+					api.set::<Bool>(*api.get::<Bool>(0)? || *api.get::<Bool>(1)?);
 					Ok(())
 				});
 				qufn!(m, api, eq(bool) bool {
-					api.set::<bool>((api.get::<bool>(0)? == api.get::<bool>(1)?).into());
+					api.set::<Bool>(api.get::<Bool>(0)? == api.get::<Bool>(1)?);
 					Ok(())
 				});
 				qufn!(m, api, neq(bool) bool {
-					api.set::<bool>((api.get::<bool>(0)? != api.get::<bool>(1)?).into());
+					api.set::<Bool>(api.get::<Bool>(0)? != api.get::<Bool>(1)?);
 					Ok(())
 				});
 				qufn!(m, api, copy(bool) bool {
-					api.set::<bool>(*api.get::<bool>(0)?);
+					api.set::<Bool>(*api.get::<Bool>(0)?);
 					Ok(())
 				});
 			}
@@ -228,7 +353,7 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 			// class functions
 			{
 				qufn!(m, api, copy(class) class {
-					api.set(*api.get::<Class>(0)?);
+					api.set::<Class>(*api.get::<Class>(0)?);
 					Ok(())
 				});
 			}
@@ -236,7 +361,7 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 			// module functions
 			{
 				qufn!(m, api, copy(module) module {
-					api.set(*api.get::<Module>(0)?);
+					api.set::<Module>(*api.get::<Module>(0)?);
 					Ok(())
 				});
 			}
@@ -263,8 +388,8 @@ pub fn math_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 				&[int],
 				int,
 				&|api:&mut ArgsAPI| {
-					let first:i32 = *api.get(0)?;
-					api.set(first);
+					let first:Int = *api.get(0)?;
+					api.set::<>(first);
 					Ok(())
 				}
 			)?;
@@ -275,18 +400,11 @@ pub fn math_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 }
 
 
-/// Data for an external function.
-pub type QuExtFnData = (String, QuExtFn, Vec<usize>, usize);
-
-/// Data for a void external function.
-pub type QuVoidFnForm = (String, QuVoidExtFn, Vec<usize>);
-
-
 /// A reference to a Qu class.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Class {
 	_id: ClassId,
-} impl QuRegisterStruct for Class {
+} impl Register for Class {
 	fn name() -> &'static str {"__Class__"}
 }
 
@@ -343,112 +461,32 @@ pub struct ExternalFunction {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Module { // TODO: Lock modules to the vm they came from.
 	_id: ModuleId,
-} impl QuRegisterStruct for Module {
+} impl Register for Module {
 	fn name() -> &'static str {"__Module__"}
 }
 
-/// Defines a block of code.
-/// 
-/// Often used for Qu functions.
-#[derive(Debug, Default, Clone)]
-pub struct QuCodeObject {
-	/// Where the [`QuCodeObject`] starts. The [`QuCodeObject`] ends at the
-	/// `END` VM instruction.
-	pub start_index:usize,
-} impl QuCodeObject {
 
-	/// Constructs a new [`QuCodeObject`].
-	/// 
-	/// # Examples
-	/// 
-	/// ```
-	/// use qu::QuCodeObject;
-	/// 
-	/// let codeobj = QuCodeObject::new(0);
-	/// ```
-	pub fn new(start_index:usize) -> Self {
-		return Self{start_index};
-	}
-
+impl Register for Bool {
+	fn name() -> &'static str {"bool"}
 }
-
-
-/// Defines a Qu function.
-#[derive(Debug, Default, Clone)]
-pub struct QuFnObject {
-	/// The input parameters of the function.
-	pub parameters:Vec<String>,
-	/// The function body.
-	pub body:QuCodeObject,
-	/// The variable type that this function returns.
-	pub return_type:String,
-
-} impl QuFnObject {
-
-	/// Constructs a new [`QuFnObject`].
-	pub fn new(parameters:Vec<String>, body:QuCodeObject, return_type:String
-	) -> Self {
-		Self {
-			parameters,
-			body,
-			return_type,
-		}
-	}
-
-}
-
-/// A wrapper for Qu booleans.
-// #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-// pub struct bool (bool, bool, bool, bool);
-// impl bool {
-// 	/// Performas the boolean *and* operation between this and another `[bool]`.
-// 	pub fn and(&self, other: &Self) -> bool {
-// 		(self.0 && other.0).into()
-// 	}
-	
-// 	/// Performas the boolean *or* operation between this and another `[bool]`.
-// 	pub fn or(&self, other: &Self) -> bool {
-// 		(self.0 && other.0).into()
-// 	}
-// } impl From<bool> for bool {
-//     fn from(value: bool) -> Self {
-    //     Self (
-	// 		value,
-	// 		false,
-	// 		false,
-	// 		false
-	// 	)
-    // }
-// }
-impl QuRegisterStruct for bool {
-	fn register_fns(
-		_definitions: &mut Definitions
-	) -> Vec<ExternalFunction> {vec![]}
-
-	// fn name() -> &'static str {"bool"}
-}
-
-// impl From<bool> for bool {
-//     fn from(value: bool) -> Self {
-//         value.0
-//     }
-// }
-
-impl QuRegisterStruct for i32 {
+impl Register for Int {
 	fn name() -> &'static str {"int"}
+}
+impl Register for Float {
+	fn name() -> &'static str {"float"}
 }
 
 
 #[derive(Debug, Default, Clone, Copy)]
 /// Represents a void type in Qu.
-pub struct QuVoid();
-impl QuRegisterStruct for QuVoid {
+pub struct Void();
+impl Register for Void {
 	fn name() -> &'static str {"void"}
 }
 
 
 /// A trait for registering structs into the Qu programming language.
-pub trait QuRegisterStruct {
+pub trait Register {
 	/// The name of the object inferred from the source type.
 	const NAME:Lazy<&'static str> = Lazy::new(||{
 		let path = type_name::<Self>().split("::");
@@ -463,13 +501,6 @@ pub trait QuRegisterStruct {
 			.get(&uuid)?
 			.get(&TypeId::of::<Self>())
 			.map(|x|{*x})
-	}
-
-	/// Returns functions that are callable by [`QuVm`].
-	fn register_fns(
-		_definitions: &mut Definitions
-	) -> Vec<ExternalFunction> where Self: Sized {
-		Vec::default()
 	}
 
 	/// Returns the name that identifies the struct being registered.

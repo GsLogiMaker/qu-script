@@ -98,7 +98,7 @@ pub struct Qu<'a> {
 	}
 
 	/// Returns the [`ClassId`] registered to the struct in this Qu instance.
-	pub fn get_class_id_of<T: QuRegisterStruct + 'static>(
+	pub fn get_class_id_of<T: Register + 'static>(
 		&self
 	) -> Option<ClassId> {
 		T::get_id(self.get_uuid())
@@ -245,7 +245,7 @@ pub struct Qu<'a> {
 	/// # return Ok(());
 	/// # }
 	/// ```
-	pub fn run_and_get<T: QuRegisterStruct + 'static>(
+	pub fn run_and_get<T: Register + 'static>(
 		&mut self,
 		script:&str,
 	) -> Result<&T, QuMsg> {
@@ -276,15 +276,21 @@ pub struct Qu<'a> {
 
 #[cfg(test)]
 mod lib {
-    use crate::{Qu, Module, QuRegisterStruct};
+    use crate::{Qu, Module, Float};
 
 	// TODO: Test what happens when a function overrides a class name
 	// TODO: Test what happens when a class constructor that doesn't exist is called
 
 	#[test]
-	fn names() {
-		dbg!(bool::name());
-		let x = 0;
+	fn floats() {
+		let mut qu = Qu::new();
+		let result:Float = *qu.run_and_get("
+			var number float = 3.12
+			var added float = number + 4.2
+			added = added + 3.
+			return added - 1.01
+		").unwrap();
+		assert_eq!(result, 3.12 + 4.2 + 3.0 - 1.01);
 	}
 
 	#[test]

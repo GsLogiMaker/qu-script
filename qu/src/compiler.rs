@@ -1,15 +1,18 @@
 
 use once_cell::sync::Lazy;
 
+use crate::Bool;
 use crate::Class;
 use crate::ExternalFunction;
+use crate::Float;
+use crate::Int;
 use crate::Module;
 use crate::QuOp;
 use crate::QuOp::*;
 use crate::QuParser;
-use crate::QuRegisterStruct;
+use crate::Register;
 use crate::QuStackId;
-use crate::QuVoid;
+use crate::Void;
 use crate::Uuid;
 use crate::import::ModuleBody;
 use crate::import::ModuleBuilder;
@@ -28,6 +31,7 @@ use crate::QuMsg;
 use crate::QuToken;
 use crate::objects::FUNDAMENTALS_MODULE;
 
+use core::num;
 use core::panic;
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -910,14 +914,14 @@ pub struct Definitions {
 	}
 
 
-	pub fn class_id<T:QuRegisterStruct>(
+	pub fn class_id<T:Register>(
 		&self
 	) -> Result<ClassId, QuMsg> {
-		self.find_class_id(<T as QuRegisterStruct>::name())
+		self.find_class_id(<T as Register>::name())
 	}
 
 	/// Adds a constant without binding any names to it.
-	pub fn add_constant<T: QuRegisterStruct + 'static>(
+	pub fn add_constant<T: Register + 'static>(
 		&mut self,
 		name: String,
 		value: T,
@@ -945,7 +949,7 @@ pub struct Definitions {
 
 
 	/// Adds a constant and binds a names to it relative to the given item.
-	pub fn define_constant_in_item<T: QuRegisterStruct + 'static>(
+	pub fn define_constant_in_item<T: Register + 'static>(
 		&mut self,
 		name: String,
 		value: T,
@@ -980,7 +984,7 @@ pub struct Definitions {
 		// Update module's function map
 		let first_arg_id = match identity.parameters.first() {
 			Some(id) => *id,
-			None => self.class_id::<QuVoid>()?,
+			None => self.class_id::<Void>()?,
 		};
 		self.add_class_function_map(
 			first_arg_id, identity.clone(), funciton_id,
@@ -1005,7 +1009,7 @@ pub struct Definitions {
 		// Update module's function map
 		let first_arg_id = match identity.parameters.first() {
 			Some(id) => *id,
-			None => self.class_id::<QuVoid>()?,
+			None => self.class_id::<Void>()?,
 		};
 
 		// Push to functions
@@ -1159,7 +1163,7 @@ pub struct Definitions {
 	) -> Result<ExternalFunctionId, QuMsg> {
 		let first_arg_type = match identity.parameters.first() {
 			Some(object_id) => *object_id,
-			None => self.class_id::<QuVoid>()?,
+			None => self.class_id::<Void>()?,
 		};
 		let external_function_id = *self
 			.get_class(first_arg_type)?
@@ -1215,7 +1219,7 @@ pub struct Definitions {
 	) -> Result<FunctionId, QuMsg> {
 		let first_arg_type = match identity.parameters.first() {
 			Some(object_id) => *object_id,
-			None => self.class_id::<QuVoid>()?,
+			None => self.class_id::<Void>()?,
 		};
 		let function_id = *self
 			.get_class(first_arg_type)?
@@ -1280,7 +1284,7 @@ pub struct Definitions {
 	) -> Result<SomeFunctionId, QuMsg> {
 		let first_arg_type = match identity.parameters.first() {
 			Some(object_id) => *object_id,
-			None => self.class_id::<QuVoid>()?,
+			None => self.class_id::<Void>()?,
 		};
 		let first_arg = self.get_class(first_arg_type)?;
 
@@ -1440,11 +1444,11 @@ pub struct Definitions {
 
 
 	/// Registers an external struct to be used within the Qu langauge.
-	pub fn register_module_struct<S:QuRegisterStruct+'static>(
+	pub fn register_module_struct<S:Register+'static>(
 		&mut self,
 		module_id: ModuleId,
 	) -> Result<ClassId, QuMsg> {
-		let class_name = <S as QuRegisterStruct>::name();
+		let class_name = <S as Register>::name();
 
 		// Manage classes map
 		let class_id:ClassId = self.classes.len().into();
@@ -1455,7 +1459,6 @@ pub struct Definitions {
 		// Add class to list of classes
 		let class = QuStruct::new(
 			class_name,
-			&<S as QuRegisterStruct>::register_fns,
 			size_of::<S>(),
 		);
 		self.classes.push(class);
@@ -1898,7 +1901,7 @@ pub struct QuCompiler {
 					)?
 				} else {
 					// Function has no parameters
-					definitions.class_id::<QuVoid>()?
+					definitions.class_id::<Void>()?
 				}
 			},
 		};
@@ -2021,7 +2024,7 @@ pub struct QuCompiler {
 		definitions: &mut Definitions,
 	) -> Result<ClassId, QuMsg> {
 		let Some(identity) = option_identity else {
-			return definitions.class_id::<QuVoid>();
+			return definitions.class_id::<Void>();
 		};
 		let class_id = definitions.find_class_id(
 			&identity.slice
@@ -2136,9 +2139,9 @@ pub struct QuCompiler {
 				output_reg,
 				definitions,
 			),
-			Expression::Number(
-				number,
-			) => self.cmp_expr_literal(&number.value, output_reg, definitions),
+			Expression::Bool(
+				bool_literal,
+			) => self.cmp_expr_bool(&bool_literal.value, output_reg, definitions),
 			Expression::Tuple(
 				tuple,
 			) => self.cmp_expr_tuple(
@@ -2153,10 +2156,17 @@ pub struct QuCompiler {
 					output_reg,
 					definitions,
 				),
-		}?;
+			Expression::Number(number) =>
+				self.cmp_expr_number(
+					&number.value,
+					&number.decimal,
+					output_reg,
+					definitions
+				),
+			}?;
 
 		// Type check
-		let void_id = definitions.class_id::<QuVoid>()?;
+		let void_id = definitions.class_id::<Void>()?;
 		if builder.return_type != void_id {
 			if builder.return_type != output_reg.class_id() {
 				return Err(format!(
@@ -2240,35 +2250,72 @@ pub struct QuCompiler {
 	/// # Panics
 	/// 
 	/// Panics if `val` can't be parsed to a number.
-	fn cmp_expr_literal(
+	fn cmp_expr_bool(
 		// TODO: Change output_reg to a struct without type information
 		&mut self,
 		value:&QuToken,
 		output_reg:QuStackId,
 		definitions: &mut Definitions,
 	) -> Result<QuAsmBuilder, QuMsg> {
+		let mut b = QuAsmBuilder::new();
 
 		// WARNING: Value takes an isize, which can be 4 or 8 bytes, but bool is only 4 bytes
 		// TODO: Add proper way of adding bool
-		if value.slice == KEYWORD_BOOL_TRUE {
-			let mut b = QuAsmBuilder::new();
-			b.add_op(Value(1, output_reg));
-			b.return_type = definitions.class_id::<bool>()?;
-			return Ok(b);
-		} else if value.slice == KEYWORD_BOOL_FALSE {
-			let mut b = QuAsmBuilder::new();
-			b.add_op(Value(0, output_reg));
-			b.return_type = definitions.class_id::<bool>()?;
-			return Ok(b);
+		match value {
+			x if x == KEYWORD_BOOL_TRUE => {
+				b.add_op(Value(1, output_reg));
+				b.return_type = definitions.class_id::<Bool>()?;
+			},
+			x if x == KEYWORD_BOOL_FALSE => {
+				b.add_op(Value(0, output_reg));
+				b.return_type = definitions.class_id::<Bool>()?;
+			}
+			_ => unreachable!()
 		}
-		
-		let Ok(val) = value.slice.parse::<isize>() else {
-			panic!("Could not convert text '{}' to number!", value.slice);
-		};
 
+		Ok(b)
+	}
+
+
+	fn cmp_expr_number(
+		// TODO: Change output_reg to a struct without type information
+		&mut self,
+		value:&QuToken,
+		decimal:&Option<QuToken>,
+		output_reg:QuStackId,
+		definitions: &mut Definitions,
+	) -> Result<QuAsmBuilder, QuMsg> {
+		let int = Int::get_id(&definitions.uuid).unwrap();
+		let float = Float::get_id(&definitions.uuid).unwrap();
 		let mut b = QuAsmBuilder::new();
-		b.add_op(Value(val, output_reg));
-		b.return_type = definitions.class_id::<i32>()?;
+		match output_reg.class_id() {
+			x if x == int => {
+				let Ok(val) = value.slice.parse::<Int>() else {
+					panic!("Could not convert text '{}' to number!", value.slice);
+				};
+				b.add_op(Value(val as isize, output_reg));
+				b.return_type = int;
+			},
+			x if x == float => {
+				let deci = match decimal {
+					Some(tk) => &tk.slice,
+					None => ""
+				};
+				let float_full = format!(
+					"{}.{}",
+					value.slice,
+					deci,
+				);
+				let Ok(val) = float_full.parse::<Float>() else {
+					panic!("Could not convert text '{}' to number!", value.slice);
+				};
+				b.add_op(Value(val.to_bits() as isize, output_reg));
+				b.return_type = float;
+			},
+			_ => {
+				unreachable!();
+			}
+		}
 
 		return Ok(b);
 	}
@@ -2644,7 +2691,7 @@ pub struct QuCompiler {
 						parameters_names.push((param.name().to_owned(), id))
 					},
 					None => {
-						let id = definitions.class_id::<QuVoid>()?;
+						let id = definitions.class_id::<Void>()?;
 						parameters_types.push(id);
 						parameters_names.push((param.name().to_owned(), id))
 					},
@@ -3085,7 +3132,9 @@ pub struct QuCompiler {
 	/// Most expressions require a new memory location, but variables
 	/// should just return the register of the variable.
 	fn get_expr_reg(
-		&mut self, expr_leaf:&Expression, definitions: &mut Definitions
+		&mut self,
+		expr_leaf:&Expression,
+		definitions: &mut Definitions,
 	) -> Result<QuStackId, QuMsg> {
 		return match expr_leaf {
 			Expression::Operation(operation) => {
@@ -3110,9 +3159,10 @@ pub struct QuCompiler {
 				)?;
 				self.context.allocate(class_id, definitions)
 			},
-			Expression::Number(_) => {
+			Expression::Bool(_) => {
 				self.context.allocate(
-					definitions.class_id::<i32>()?, definitions
+					definitions.class_id::<Bool>()?,
+					definitions,
 				)
 			},
 			Expression::Tuple(_) => {
@@ -3131,6 +3181,13 @@ pub struct QuCompiler {
 			}
 			Expression::DotIndex(_) => {
 				todo!()
+			},
+    		Expression::Number(number) => {
+				let class_id = match number.decimal {
+					Some(_) => Float::get_id(&definitions.uuid).unwrap(),
+					None => Int::get_id(&definitions.uuid).unwrap(),
+				};
+				self.context.allocate(class_id, definitions)
 			},
 		};
 	}
@@ -3154,8 +3211,8 @@ pub struct QuCompiler {
 					definitions,
 				)?
 			},
-			Expression::Number(_) => {
-				definitions.class_id::<i32>()?
+			Expression::Bool(_) => {
+				Bool::get_id(&definitions.uuid).unwrap()
 			},
 			Expression::Tuple(_tuple) => {
 				unimplemented!()
@@ -3195,6 +3252,13 @@ pub struct QuCompiler {
 					QuStackId::default(),
 					definitions,
 				)?.return_type
+			},
+			Expression::Number(number) => {
+				let class_id = match number.decimal {
+					Some(_) => Float::get_id(&definitions.uuid).unwrap(),
+					None => Int::get_id(&definitions.uuid).unwrap(),
+				};
+				class_id
 			},
 		};
 		Ok(object_id)

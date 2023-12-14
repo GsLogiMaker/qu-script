@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use std::mem::size_of;
 
 use crate::QuMsg;
-use crate::QuRegisterStruct;
+use crate::Register;
 use crate::Uuid;
 use crate::compiler::Definitions;
 use crate::compiler::ExternalFunctionId;
@@ -14,18 +14,6 @@ use crate::objects::fundamentals_module;
 use crate::objects::math_module;
 
 pub const MAIN_MODULE:&str = "__main__";
-
-
-pub type QuExtFn = &'static dyn Fn(
-	&mut QuVm,
-	&[QuStackId],
-	QuStackId,
-	)->Result<(), QuMsg>;
-pub type QuVoidExtFn = &'static dyn Fn(
-	&mut QuVm,
-	&Vec<QuStackId>,
-	)->Result<(), QuMsg>;
-
 
 #[derive(Clone, PartialEq)]
 /// The low level operations of [`QuVm`].
@@ -332,7 +320,7 @@ pub struct QuVm {
 
 	#[inline]
 	/// Gets a register value.
-	pub fn read<T: QuRegisterStruct + 'static>(&self, at_reg:QuStackId) -> Result<&T, QuMsg> {
+	pub fn read<T: Register + 'static>(&self, at_reg:QuStackId) -> Result<&T, QuMsg> {
 		if
 			T::get_id(&self.definitions.uuid).unwrap()
 			!= at_reg.class_id()

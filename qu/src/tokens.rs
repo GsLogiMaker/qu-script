@@ -34,9 +34,12 @@ pub type Rules<'a> = [(&'a dyn Fn(&[char])->bool, u8)];
 pub fn tokenrule_identity(added_so_far:&[char]) -> bool {
 	for char in  added_so_far {
 		if *char == ' ' {
-			return false
+			return false;
 		}
 		if !char.is_alphanumeric() && *char != '_' {
+			return false;
+		}
+		if char.is_numeric() && added_so_far.len() == 0 {
 			return false;
 		}
 	}
@@ -50,9 +53,12 @@ pub fn tokenrule_identity(added_so_far:&[char]) -> bool {
 pub fn tokenrule_number(added_so_far:&[char]) -> bool {
 	for char in  added_so_far {
 		if char == &' ' {
-			return false
+			return false;
 		}
-		if !(char.is_numeric()) {
+		if *char == '_' && added_so_far.len() == 0 {
+			return false;
+		}
+		if !(char.is_numeric()) && *char != '_'{
 			return false;
 		}
 	}

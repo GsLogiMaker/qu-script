@@ -59,8 +59,10 @@ pub mod parsed {
 		DotIndex(Box<DotIndex>),
 		/// A calculable expression. Contains an operator and two [`QuLeafExpr`]s.
 		Operation(Box<OperationExpression>),
-		/// A literal int value.
-		Number(Box<ValueLiteral>),
+		/// A literal int or boolean value.
+		Bool(Box<BoolLiteral>),
+		/// A literal float value.
+		Number(Box<NumberLiteral>),
 		/// A tuple.
 		Tuple(Box<TupleExpression>),
 		/// A variable name.
@@ -75,9 +77,10 @@ pub mod parsed {
 					&dot_index.right.slice
 				},
 				Expression::Operation(_) => todo!(),
-				Expression::Number(_) => todo!(),
+				Expression::Bool(_) => todo!(),
 				Expression::Tuple(_) => todo!(),
 				Expression::Var(var) => &var.name.slice,
+    			Expression::Number(_) => todo!(),
 			}
 		}
 	} impl Default for Expression {
@@ -90,9 +93,10 @@ pub mod parsed {
 				Expression::Call(a) => write!(f, "{:?}", **a),
 				Expression::DotIndex(a) => write!(f, "{:?}", **a),
 				Expression::Operation(a) => write!(f, "{:?}", **a),
-				Expression::Number(a) => write!(f, "{:?}", **a),
+				Expression::Bool(a) => write!(f, "{:?}", **a),
 				Expression::Tuple(a) => write!(f, "{:?}", **a),
 				Expression::Var(a) => write!(f, "{:?}", **a),
+    			Expression::Number(a) => write!(f, "{:?}", **a),
 			}
 		}
 	}
@@ -280,14 +284,15 @@ pub mod parsed {
 
 
 	#[derive(Debug, Clone, PartialEq)]
-	pub struct ValueLiteral {
+	pub struct NumberLiteral {
 		pub value: QuToken,
-	} impl ValueLiteral {
-		pub fn new(value:&str) -> Self {
-			Self {
-				value: QuToken::from(value),
-			}
-		}
+		pub decimal: Option<QuToken>,
+	}
+
+
+	#[derive(Debug, Clone, PartialEq)]
+	pub struct BoolLiteral {
+		pub value: QuToken,
 	}
 
 
@@ -902,7 +907,11 @@ pub struct QuParser {
 
 
 	/// Attempts to parse a number literal
-	fn ck_literal(&mut self) -> Result<Option<ValueLiteral>, QuMsg> {
+	fn ck_literal(&mut self) -> Result<Option<Expression>, QuMsg> {
+		if let Some(number) = self.ck_number()? {
+			return Ok(Some(number));
+		}
+
 		let tk = self.tk_spy(0);
 		if
 			tk.tk_type == TOKEN_TYPE_NUMBER
@@ -910,11 +919,42 @@ pub struct QuParser {
 			|| tk.slice == KEYWORD_BOOL_FALSE
 		{
 			let value = self.tk_next()?.clone();
-			return Ok(Some(
-				ValueLiteral {value}
-			))
+			return Ok(Some(Expression::Bool(Box::new(
+				BoolLiteral { value }
+			))));
 		}
 		return Ok(None);
+	}
+
+
+	fn ck_number(&mut self) -> Result<Option<Expression>, QuMsg> {
+		if self.tk_spy(0).tk_type == TOKEN_TYPE_NUMBER {
+			let value = self.tk_next()?.clone();
+			let mut decimal = None;
+			if self.tk_spy(0) == "." {
+				let maybe_decimal = self.tk_spy(1);
+				if maybe_decimal.tk_type == TOKEN_TYPE_NUMBER {
+					// Matched decimal after dot
+					self.tk_next()?;
+					decimal = Some(self.tk_next()?.clone());
+				} else if maybe_decimal.tk_type != TOKEN_TYPE_NAME || !self.is_indent_ok(maybe_decimal) {
+					// No number after dot, and it's not part of an
+					// indexing, so it must be part of the decimal
+					self.tk_next()?;
+					decimal = Some(QuToken::from("0"));
+				}
+			}
+
+			return Ok(Some(
+				Expression::Number(Box::new(
+					NumberLiteral {
+						value,
+						decimal,
+					}
+				))
+			));
+		}
+		Ok(None)
 	}
 
 
@@ -1126,8 +1166,8 @@ pub struct QuParser {
 		self.tk_state_pop();
 
 		// Check literal
-		if let Some(leaf) = self.ck_literal()? {
-			return Ok(Some(Expression::Number(Box::new(leaf))));
+		if let Some(expr) = self.ck_literal()? {
+			return Ok(Some(expr));
 		}
 
 		// Check function call
@@ -1267,6 +1307,17 @@ pub struct QuParser {
 	}
 
 
+	/// Returns true if the token follows the indentation rules.
+	fn is_indent_ok(&self, tk:&QuToken) -> bool {
+		if tk.char_index.row != self.line as u32 {
+			if tk.char_index.indent != self.indent+1 {
+				return false;
+			}
+		}
+		return true;
+	}
+
+
 	/// Parses a Qu script.
 	pub fn parse(&mut self, script:&str) -> Result<CodeBlock, QuMsg> {
 		self.tk_idx = 0;
@@ -1346,8 +1397,6 @@ pub struct QuParser {
 	/// Returns the next [`QuToken`] to parse or [`None`] if it violates
 	/// indentation rules.
 	fn tk_next_option(&mut self) -> Option<&QuToken> {
-		let (line, indent) = (self.line, self.indent);
-
 		// Return null if out of range
 		if self.tk_idx == self.tokens.len() {
 			return None;
@@ -1356,10 +1405,8 @@ pub struct QuParser {
 		let tk = &self.tokens[self.tk_idx];
 
 		// Check for proper indentation
-		if tk.char_index.row != line as u32 {
-			if tk.char_index.indent != indent+2 {
-				return None;
-			}
+		if !self.is_indent_ok(tk) {
+			return None;
 		}
 
 		if tk.tk_type == u8::MAX {
@@ -1388,7 +1435,7 @@ pub struct QuParser {
 	/// incrementing the current token index.
 	/// 
 	/// This function will not check if the token follows indentation rules.
-	fn tk_spy(&mut self, at:usize) -> &QuToken {
+	fn tk_spy(&self, at:usize) -> &QuToken {
 		if self.tk_idx+at >= self.tokens.len() {
 			return &self.tokens[self.tokens.len()-1];
 		}
