@@ -23,7 +23,7 @@ pub(crate) enum QuOp {
 	/// Calls a function defined by Qu via a vtable.
 	/// 
 	/// Looks up a function that is overriden by the given class.
-	CallV(FunctionId, ClassId, QuStackId),
+	CallV(ClassId, ClassId, FunctionId, Box<[QuStackId]>, QuStackId),
 	/// Ends the current scope
 	End,
 	/// Moves the program counter by the given [`isize`].
@@ -59,8 +59,8 @@ pub(crate) enum QuOp {
 				write!(f, "Value({:?}, {:?})", arg0, arg1),
 			QuOp::Return(arg0) =>
 				write!(f, "Return({:?})", arg0),
-    		QuOp::CallV(arg0, arg1, arg2) => 
-				write!(f, "&{:?} = {:?}({:?}) (CallV)", arg2, arg1, arg0),
+    		QuOp::CallV(arg0,  arg1, arg2, arg3, arg4) => 
+				write!(f, "&{arg4:?} = {arg0:?}@{arg1:?}.{arg2:?}({arg3:?}) (CallV)")
 		}
 	}
 }
@@ -481,7 +481,7 @@ pub struct QuVm {
 				QuOp::LoadConstant(const_id, output) => self.op_load_constant(*const_id, *output),
 				QuOp::Value(value, output) => self.op_load_int(*value, *output),
 				QuOp::Return(return_type) => self.return_type = *return_type,
-    			QuOp::CallV(_, _, _) => todo!(),
+    			QuOp::CallV(_, _, _, _, _) => todo!(),
     			QuOp::LoadArg(index, output) => {
 					let arg = &self.args[*index as usize];
 					self.stack.write_dyn(

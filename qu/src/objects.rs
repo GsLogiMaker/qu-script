@@ -97,6 +97,20 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 			// float functions
 			{
 				m.implement(add, float)?;
+				m.implement_function(
+					add,
+					float,
+					"add",
+					&[float, float],
+					float,
+					&|api| {
+						api.set::<Float>(<Float as Add>::add(
+							*api.get::<Float>(0)?,
+							*api.get::<Float>(1)?
+						));
+						Ok(())
+					},
+				)?;
 
 				m.add_class_static_function(float, CONSTRUCTOR_NAME,
 					&[],
@@ -130,13 +144,13 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 						Ok(())
 					}
 				)?;
-				qufn!(m, api, add(float, float) float {
-					api.set::<Float>(<Float as Add>::add(
-						*api.get::<Float>(0)?,
-						*api.get::<Float>(1)?
-					));
-					Ok(())
-				});
+				// qufn!(m, api, add(float, float) float {
+				// 	api.set::<Float>(<Float as Add>::add(
+				// 		*api.get::<Float>(0)?,
+				// 		*api.get::<Float>(1)?
+				// 	));
+				// 	Ok(())
+				// });
 				qufn!(m, api, sub(float, float) float {
 					api.set::<Float>(<Float as Sub>::sub(
 						*api.get::<Float>(0)?,

@@ -1,4 +1,5 @@
 
+use duplicate::duplicate_item;
 use once_cell::sync::Lazy;
 
 use crate::Bool;
@@ -61,7 +62,7 @@ pub struct CommonItem {
 	pub function_groups_map: HashMap<String, FunctionGroupId>,
 	pub static_variables_map: HashMap<String, VariableId>,
 	
-	pub implementations: HashMap<ClassId, CommonItem>,
+	pub(crate) implementations: HashMap<ClassId, Implementation>,
 } impl CommonItem {
 	pub fn has_item(&self, identity: &str) -> bool {
 		self.constants_map.contains_key(identity)
@@ -105,6 +106,27 @@ pub struct CommonItem {
 	}
 
 
+	#[duplicate_item(
+		get_trait_implementation Self Implementation _get;
+		[get_trait_implementation] [Self] [Implementation] [get];
+		[get_trait_implementation_mut] [mut Self] [mut Implementation] [get_mut];
+	)]
+	pub(crate) fn get_trait_implementation(
+		self: &Self,
+		trait_id: ClassId,
+	) -> Result<&Implementation, QuMsg> {
+		self.implementations
+			._get(&trait_id)
+			.ok_or_else(||->QuMsg {
+				format!(
+					"Item '{}' has no implementation for trait '{:?}'",
+					self.name,
+					trait_id
+				).into()
+			})
+	}
+
+
 	pub fn get_item_id(&self, identity: &str) -> Result<ItemId, QuMsg> {
 		if let Some(id) = self.constants_map.get(identity) {
 			return Ok(ItemId::Constant(*id));
@@ -124,21 +146,6 @@ pub struct CommonItem {
 		).into())
 	}
 
-	pub fn get_impl_item_id(
-		&self,
-		identity: &str,
-		impl_id:ClassId,
-	) -> Result<ItemId, QuMsg> {
-		assert!(
-			self.implementations.contains_key(&impl_id),
-			"TODO: Handle error better",
-		);
-		let impl_common = self.implementations
-			.get(&impl_id)
-			.unwrap();
-
-		impl_common.get_item_id(identity)
-	}
 } impl Default for CommonItem {
 	fn default() -> Self {
 		Self {
@@ -506,7 +513,7 @@ struct Context {
 	}
 
 
-	pub fn get_some_function_id_by_identity(
+	pub fn get_function_id_by_identity(
 		&self,
 		identity: &FunctionIdentity,
 		definitions: &Definitions,
@@ -552,14 +559,43 @@ struct Context {
 			).into());
 		}
 		let source_class_id = identity.parameters[0];
+		let class = definitions.get_class(source_class_id)?;
+
+
+		// Find function in trait implementation
+		if !class.has_item(&identity.name) {
+			for (trait_id, _imp) in &class.common.implementations {
+				let trait_data = definitions.get_class(*trait_id)?;
+				if !trait_data.has_item(&identity.name) {
+					continue;
+				}
+				let ItemId::FunctionGroup(trait_group_id) = trait_data.common
+					.get_item_id(&identity.name)?
+					else {
+						continue;
+					};
+				let trait_fn_id = definitions
+					.get_function_group(trait_group_id)?
+					.get_fn_id(&identity, definitions)?;
+				let ItemId::Function(implemented_fn_id) = class.common
+					.get_trait_implementation(*trait_id)?
+					.get_implemented_item(ItemId::Function(trait_fn_id))?
+					else {
+						unreachable!();
+					};
+				return Ok(implemented_fn_id);
+			}
+		}
+
+		// Find item in class
 		let group_id = definitions
 			.get_class(source_class_id)?
 			.get_function_group_id(&identity.name)?;
-		let some_fn_id = definitions
+		let fn_id = definitions
 			.get_function_group(group_id)?
-			.get_group_id(&identity)?;
+			.get_fn_id(&identity, definitions)?;
 
-		Ok(some_fn_id)
+		Ok(fn_id)
 	}
 
 
@@ -1217,6 +1253,20 @@ pub struct Definitions {
 	}
 
 
+	fn get_common_of(&self, item:ItemId) -> Result<&CommonItem, QuMsg>{
+		match item {
+			ItemId::Class(id) => Ok(&self.get_class(id)?.common),
+			ItemId::Constant(_) => todo!(),
+			ItemId::Function(_) => todo!(),
+			ItemId::FunctionGroup(_) => todo!(),
+			ItemId::Module(id) => Ok(&self.get_module(id)?.common),
+			ItemId::StaticVariable(_) => todo!(),
+			ItemId::Variable(_) => todo!(),
+			ItemId::None => todo!(),
+		}
+	}
+
+
 	pub fn get_function(&self, id: FunctionId) -> Result<&FunctionMetadata, QuMsg> {
 		let function = self.functions
 			.get(usize::from(id))
@@ -1249,6 +1299,24 @@ pub struct Definitions {
 				"There's no function with id '{:?}' defined.", id,
 			).into()})?;
 		Ok(function)
+	}
+
+
+	pub(crate) fn get_item_in_impl(
+		&self,
+		name: &str,
+		item_id: ItemId,
+		trait_id: ClassId,
+	) -> Result<ItemId, QuMsg> {
+		let trait_item = self.get_common_of(
+			ItemId::Class(trait_id)
+		)?.get_item_id(name)?;
+
+		let class_id = self.get_common_of(item_id)?;
+		class_id.implementations
+			.get(&trait_id)
+			.unwrap()
+			.get_implemented_item(trait_item)
 	}
 
 
@@ -1302,12 +1370,22 @@ pub struct Definitions {
 	}
 
 
-	pub(crate) fn implement(
+	pub(crate) fn impl_trait_in_item(
 		&mut self,
 		trait_id: ClassId,
 		class_id: ClassId,
 	) -> Result<(), QuMsg>{
 		let trait_common = self.get_class(trait_id)?.common.clone();
+		
+		let mut implementation = Implementation::default();
+
+		for (_, group_id) in trait_common.function_groups_map {
+			let group = self.get_function_group(group_id)?;
+			for (_, fn_id) in &group.map {
+				implementation.functions.insert(*fn_id, *fn_id);
+			}
+		}
+
 		let class_data = self.get_class_mut(class_id)?;
 		if class_data.common.implementations.contains_key(&trait_id) {
 			return Err(format!(
@@ -1316,7 +1394,7 @@ pub struct Definitions {
 		}
 		class_data.common.implementations.insert(
 			trait_id,
-			trait_common,
+			implementation,
 		);
 		Ok(())
 	}
@@ -1381,6 +1459,35 @@ pub struct Definitions {
 	}
 
 
+	pub fn register_function_implementation(
+		&mut self,
+		class_id:ClassId,
+		trait_id:ClassId,
+		external_function:FunctionMetadata,
+	) -> Result<(), QuMsg> {
+		let new_impl_fn_id = self.functions.len();
+
+		// Map implemenetation
+		let trait_common = self.get_class(trait_id)?.common.clone();
+		let trait_group_id = trait_common
+			.get_function_group_id(&external_function.identity.name)?;
+		let old_trait_fn_id = self.get_function_group(trait_group_id)?
+			.get_fn_id(&external_function.identity, self)?;
+
+		// Override old implementation mapping
+		self.get_class_mut(class_id)?
+			.common
+			.get_trait_implementation_mut(trait_id)?
+			.functions
+			.insert(old_trait_fn_id, new_impl_fn_id);
+
+		self.functions.push(external_function);
+
+
+		Ok(())
+	}
+
+
 	/// Registers an external function can only only be accessed through
 	/// the class.
 	/// 
@@ -1397,11 +1504,6 @@ pub struct Definitions {
 		class_id: ClassId,
 		external_function:FunctionMetadata,
 	) -> Result<(), QuMsg> {
-		// Also register function with module.
-		// self.add_static_external_function_mapping_in_class(
-		// 	class_id,
-		// 	external_function.clone(),
-		// )?;
 		// Add function to global list
 		let new_function_id = self.functions.len();
 		self.functions.push(external_function);
@@ -1519,19 +1621,21 @@ pub struct FunctionGroup {
 		}
 	}
 
-	fn get_group_id(
+	fn get_fn_id(
 		&self,
-		identity:&FunctionIdentity,
+		by_identity:&FunctionIdentity,
+		definitions:&Definitions,
 	) -> Result<FunctionId, QuMsg> {
-		let Some(group_id) = self.map
-			.get(identity)
-			else {
-				return Err(format!(
-					"No function by identity {} exists.",
-					identity
-				).into())
-			};
-		Ok(*group_id)
+		for (identity, fn_id) in &self.map {
+			if !by_identity.compare(identity, definitions) {
+				continue;
+			}
+			return Ok(*fn_id);
+		}
+		return Err(format!(
+			"No function by identity {} exists.",
+			by_identity
+		).into());
 	}
 }
 
@@ -1546,6 +1650,30 @@ pub struct FunctionIdentity {
 	pub parameters: Box<[ClassId]>,
 	pub return_type: ClassId,
 } impl FunctionIdentity {
+	fn compare(&self, other:&Self, definitions:&Definitions) -> bool {
+		if self.name != other.name {
+			return false;
+		}
+		if self.parameters.len() != other.parameters.len() {
+			return false;
+		}
+
+		for (s_id, o_id) in self.parameters.iter().zip(other.parameters.iter()) {
+			if
+				s_id != o_id
+				&& !definitions.get_class(*s_id)
+					.unwrap()
+					.common
+					.implementations
+					.contains_key(&o_id)
+			{
+				return false;
+			}
+		}
+
+		return true;
+	}
+
 	fn id_self_class(&self) -> ClassId {
 		match self.parameters.first() {
 			Some(id) => *id,
@@ -1607,6 +1735,18 @@ pub struct FunctionMetadata {
 	/// The value that the VM's program counter should be set to in order to
 	/// start this function.
 	pub(crate) code_block: FunctionReference,
+}
+
+#[derive(Debug, Default, Clone)]
+pub(crate) struct Implementation {
+	functions: HashMap<FunctionId, FunctionId>,
+} impl Implementation {
+	fn get_implemented_item(&self, item_id:ItemId) -> Result<ItemId, QuMsg> {
+		if let ItemId::Function(id) = item_id {
+			return Ok(ItemId::Function(*self.functions.get(&id).unwrap()));
+		}
+		Err("".into())
+	}
 }
 
 pub type ModuleId = usize;
@@ -2030,6 +2170,8 @@ pub struct QuCompiler {
 		output_reg:QuStackId,
 		definitions: &mut Definitions,
 	) -> Result<QuAsmBuilder, QuMsg> {
+		let mut x = 5;
+		x += 1;
 		let builder = match expression {
 			Expression::Call(
 				call_expression,
@@ -2564,7 +2706,7 @@ pub struct QuCompiler {
 					}
 				} else {
 					self.context
-						.get_some_function_id_by_identity(
+						.get_function_id_by_identity(
 							&function_identity,
 							&definitions,
 						)?

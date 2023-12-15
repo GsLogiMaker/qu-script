@@ -281,6 +281,18 @@ mod lib {
 	// TODO: Test what happens when a class constructor that doesn't exist is called
 
 	#[test]
+	fn traits() {
+		let mut qu = Qu::new();
+		let result:Float = *qu.run_and_get("
+			var number float = 3.12
+			var added float = number + 4.2
+			added = added + 3.
+			return added - 1.01
+		").unwrap();
+		assert_eq!(result, 3.12 + 4.2 + 3.0 - 1.01);
+	}
+
+	#[test]
 	fn floats() {
 		let mut qu = Qu::new();
 		let result:Float = *qu.run_and_get("

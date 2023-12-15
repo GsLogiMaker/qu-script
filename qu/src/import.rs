@@ -353,7 +353,33 @@ pub trait RegistererLayer {
 
 	/// Implements a trait in a class.
 	fn implement(&mut self, trait_id:ClassId, in_class_id:ClassId) -> Result<(), QuMsg> {
-		self.get_definitions_mut().implement(trait_id, in_class_id)?;
+		self.get_definitions_mut().impl_trait_in_item(trait_id, in_class_id)?;
+		Ok(())
+	}
+
+
+	/// Implements a trait's function in the given class.
+	fn implement_function(
+		&mut self,
+		trait_id:ClassId,
+		in_class_id:ClassId,
+		name: impl Into<String>,
+		args: &[ClassId],
+		out: ClassId,
+		body: &'static ExternalFunctionPointer,
+	) -> Result<(), QuMsg> {
+		self.get_definitions_mut().register_function_implementation(
+			in_class_id,
+			trait_id,
+			FunctionMetadata {
+				identity: FunctionIdentity {
+					name: name.into(),
+					parameters: Box::from(args),
+					return_type: out,
+				},
+				code_block: FunctionReference::External(body),
+			},
+		)?;
 		Ok(())
 	}
 
