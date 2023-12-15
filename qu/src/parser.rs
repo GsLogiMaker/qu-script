@@ -43,6 +43,7 @@ pub const OP_EXPR_OR:&str = "or";
 pub const OP_EXPR_POW:&str = "**";
 pub const OP_EXPR_SUB:&str = "-";
 pub const OP_EXPR_SQRT:&str = "//";
+pub const OP_AS:&str = "@";
 
 pub type QuParamNode = (QuToken, Option<QuToken>);
 
@@ -54,6 +55,7 @@ pub mod parsed {
 	#[derive(Debug, Clone, PartialEq)]
 	/// Defines an expression in a Qu program tree.
 	pub enum Expression {
+		As(Box<AsExpression>),
 		/// Call function branch.
 		Call(Box<CallExpression>),
 		DotIndex(Box<DotIndex>),
@@ -72,6 +74,7 @@ pub mod parsed {
 		/// it can't.
 		pub fn into_identity(&self) -> &str {
 			match self {
+				Expression::As(as_expr) => &as_expr.left.into_identity(),
 				Expression::Call(_) => todo!(),
 				Expression::DotIndex(dot_index) => {
 					&dot_index.right.slice
@@ -90,6 +93,7 @@ pub mod parsed {
 	} impl Display for Expression {
 		fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 			match self {
+				Expression::As(a) => write!(f, "{:?}", **a),
 				Expression::Call(a) => write!(f, "{:?}", **a),
 				Expression::DotIndex(a) => write!(f, "{:?}", **a),
 				Expression::Operation(a) => write!(f, "{:?}", **a),
@@ -124,6 +128,14 @@ pub mod parsed {
 		VarDeclaration(Box<VarDeclaration>),
 	}
 
+
+	#[derive(Debug, Default, Clone, PartialEq)]
+	pub struct AsExpression {
+		/// The value being cast
+		pub left: Expression,
+		/// The type being cast to
+		pub right: QuToken,
+	}
 
 	#[derive(Debug, Default, Clone, PartialEq)]
 	pub struct CallExpression {
@@ -1165,22 +1177,34 @@ pub struct QuParser {
 		}
 		self.tk_state_pop();
 
-		// Check literal
-		if let Some(expr) = self.ck_literal()? {
+		let Some(expr) = (
+			if let Some(expr) = self.ck_literal()? {
+				Some(expr)
+			} else if let Some(call) = self.ck_fn_call()? {
+				Some(Expression::Call(Box::new(call)))
+			} else if let Some(leaf) = self.ck_var()? {
+				Some(Expression::Var(Box::new(leaf)))
+			} else {
+				None
+			}
+		) else {
+			return Ok(None);
+		};
+
+		if self.tk_spy(0) != OP_AS {
 			return Ok(Some(expr));
 		}
+		self.tk_next()?;
 
-		// Check function call
-		if let Some(call) = self.ck_fn_call()? {
-			return Ok(Some(Expression::Call(Box::new(call))));
-		}
+		let Some(right) = self.ck_type_name()?
+			else {
+				return Ok(Some(expr));
+			};
 
-		// Check variable
-		if let Some(leaf) = self.ck_var()? {
-			return Ok(Some(Expression::Var(Box::new(leaf))));
-		}
-
-		return Ok(None);
+		Ok(Some(Expression::As(Box::new(AsExpression {
+			left: expr,
+			right,
+		}))))
 	}
 
 

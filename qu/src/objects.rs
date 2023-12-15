@@ -94,8 +94,9 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 				});
 			}
 
-			// float functions
-			{
+			
+			{ // float
+				// Impl Add for float
 				m.implement(add, float)?;
 				m.implement_function(
 					add,
@@ -144,13 +145,6 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 						Ok(())
 					}
 				)?;
-				// qufn!(m, api, add(float, float) float {
-				// 	api.set::<Float>(<Float as Add>::add(
-				// 		*api.get::<Float>(0)?,
-				// 		*api.get::<Float>(1)?
-				// 	));
-				// 	Ok(())
-				// });
 				qufn!(m, api, sub(float, float) float {
 					api.set::<Float>(<Float as Sub>::sub(
 						*api.get::<Float>(0)?,
@@ -214,8 +208,24 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 				});
 			}
 
-			// int functions
-			{
+			{ // int
+				// Impl Add for int
+				m.implement(add, int)?;
+				m.implement_function(
+					add,
+					int,
+					"add",
+					&[int, int],
+					int,
+					&|api| {
+						api.set::<Int>(<Int as Add>::add(
+							*api.get::<Int>(0)?,
+							*api.get::<Int>(1)?
+						));
+						Ok(())
+					},
+				)?;
+
 				m.add_class_static_function(int, CONSTRUCTOR_NAME,
 					&[],
 					int,
@@ -317,9 +327,8 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 					Ok(())
 				});
 			}
-
-			// bool functions
-			{
+			
+			{ // bool
 				m.add_class_static_function(bool, CONSTRUCTOR_NAME,
 					&[],
 					bool,
@@ -374,16 +383,14 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 				});
 			}
 
-			// class functions
-			{
+			{ // class
 				qufn!(m, api, copy(class) class {
 					api.set::<Class>(*api.get::<Class>(0)?);
 					Ok(())
 				});
 			}
 
-			// module functions
-			{
+			{ // module
 				qufn!(m, api, copy(module) module {
 					api.set::<Module>(*api.get::<Module>(0)?);
 					Ok(())

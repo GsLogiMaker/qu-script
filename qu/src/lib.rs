@@ -275,21 +275,137 @@ pub struct Qu<'a> {
 
 #[cfg(test)]
 mod lib {
-    use crate::{Qu, Module, Float};
+    use crate::{Qu, Module, Float, RegistererLayer, Register, Int};
 
 	// TODO: Test what happens when a function overrides a class name
 	// TODO: Test what happens when a class constructor that doesn't exist is called
 
 	#[test]
-	fn traits() {
+	fn traits_same_fn_name() {
 		let mut qu = Qu::new();
-		let result:Float = *qu.run_and_get("
-			var number float = 3.12
-			var added float = number + 4.2
-			added = added + 3.
-			return added - 1.01
+
+		struct TestClass; impl Register for TestClass {}
+		struct Trait1; impl Register for Trait1 {}
+		struct Trait2; impl Register for Trait2 {}
+
+		qu.register(&|r| {
+			r.add_module("test_traits", &|m| {
+				let int = m.get_class_id_of::<Int>().unwrap();
+
+				let t1 = m.add_trait::<Trait1>()?;
+				m.add_function(
+					"foo",
+					&[t1],
+					int,
+					&|_api| {
+						Ok(())
+					}
+				)?;
+
+				let t2 = m.add_trait::<Trait2>()?;
+				m.add_function(
+					"foo",
+					&[t2],
+					int,
+					&|_api| {
+						Ok(())
+					}
+				)?;
+
+				let cls = m.add_class::<TestClass>()?;
+				m.add_class_static_function(cls, ".new",
+					&[],
+					cls,
+					&|api| {
+						api.set::<TestClass>(TestClass{});
+						Ok(())
+					}
+				)?;
+				m.implement(t1, cls)?;
+				m.implement_function(
+					t1,
+					cls,
+					"foo",
+					&[cls],
+					int,
+					&|api| {
+						api.set::<Int>(1);
+						Ok(())
+					}
+				)?;
+				m.implement(t2, cls)?;
+				m.implement_function(
+					t2,
+					cls,
+					"foo",
+					&[cls],
+					int,
+					&|api| {
+						api.set::<Int>(2);
+						Ok(())
+					}
+				)?;
+
+				Ok(())
+			})?;
+			Ok(())
+		}).unwrap();
+
+		// Force calling Trait1's function *foo* should yield 1
+		let result:Int = *qu.run_and_get("
+			import test_traits.TestClass
+			import test_traits.Trait1
+			import test_traits.Trait2
+
+			return TestClass()@Trait1.foo()
 		").unwrap();
-		assert_eq!(result, 3.12 + 4.2 + 3.0 - 1.01);
+		assert_eq!(result, 1);
+
+		// Force calling Trait2's function *foo* should yield 2
+		let result:Int = *qu.run_and_get("
+			import test_traits.TestClass
+			import test_traits.Trait1
+			import test_traits.Trait2
+
+			return TestClass()@Trait2.foo()
+		").unwrap();
+		assert_eq!(result, 2);
+	}
+
+	#[test]
+	fn trait_implementation() {
+		let mut qu = Qu::new();
+
+		// Calling add here should invoke the add function in the trait Add
+		let result:Float = *qu.run_and_get("
+			return add(3.12, 4.56)
+		").unwrap();
+		assert_eq!(result, 3.12 + 4.56);
+
+		// Defining a function called add should NOT override the
+		// trait Add's function
+		qu.run("
+			fn add(x float, y float) float:
+				return x
+		").unwrap();
+
+		// Calling add should invoke the locally defined function
+		let result:Float = *qu.run_and_get("
+			return add(3.12, 4.56)
+		").unwrap();
+		assert_eq!(result, 3.12);
+
+		// Using operators should invoke the trait Add's function
+		let result:Float = *qu.run_and_get("
+			return 3.12 + 4.56
+		").unwrap();
+		assert_eq!(result, 3.12 + 4.56);
+
+		// Force the use of a trait function with the @ operator
+		let result:Float = *qu.run_and_get("
+			return 25.32@Add.add(14.28)
+		").unwrap();
+		assert_eq!(result, 25.32 + 14.28);
 	}
 
 	#[test]

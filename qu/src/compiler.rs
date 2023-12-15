@@ -7,6 +7,8 @@ use crate::Class;
 use crate::Float;
 use crate::Int;
 use crate::Module;
+use crate::QuAdd;
+use crate::parser::OP_EXPR_ADD;
 use crate::vm::QuOp;
 use crate::vm::QuOp::*;
 use crate::QuParser;
@@ -1358,6 +1360,16 @@ pub struct Definitions {
 	}
 
 	
+	/// Get's a class's implementation of a trait.
+	fn get_implementation(
+		&self,
+		class_id:ClassId,
+		trait_id:ClassId,
+	) -> Result<&Implementation, QuMsg> {
+		self.get_class(class_id)?.common.get_trait_implementation(trait_id)
+	}
+
+	
 	fn find_class_id(&self, name: &str) -> Result<ClassId, QuMsg> {
 		for module in &self.modules {
 			if module.common.class_map.contains_key(name) {
@@ -1941,6 +1953,7 @@ struct Scope {
 }
 
 
+
 type VariableId = usize;
 
 
@@ -2068,7 +2081,7 @@ pub struct QuCompiler {
 			{
 				todo!("Class dot notation has not been implemented. Requires constant evaluation.");
 			} else {
-				self.context.find_function(&function_identity, &definitions)?
+				self.context.get_function_id_by_identity(&function_identity, &definitions)?
 			}
 		};
 
@@ -2183,6 +2196,7 @@ pub struct QuCompiler {
 				self.cmp_fn_call(
 					&call_expression,
 					output_reg,
+					None,
 					definitions,
 				)
 			}
@@ -2226,6 +2240,21 @@ pub struct QuCompiler {
 					output_reg,
 					definitions
 				),
+    		Expression::As(as_expr) => {
+				let mut b = self.cmp_expr(
+					&as_expr.left,
+					output_reg,
+					definitions,
+				)?;
+				let ItemId::Class(class_id) = self.context
+					.find_item(&as_expr.right.slice, definitions)?
+					else {
+						todo!("Add err msg");
+					};
+				b.as_type = Some(class_id);
+				Ok(b)
+				
+			},
 			}?;
 
 		// Type check
@@ -2293,15 +2322,12 @@ pub struct QuCompiler {
 		output_reg: QuStackId,
 		definitions: &mut Definitions,
 	)-> Result<QuAsmBuilder, QuMsg> {
-		// let trait_id = match operator {
-		// 	x if x == OP_EXPR_ADD => {
-		// 		definitions.class_id::<QuAdd>()?
-		// 	},
-		// 	_ => unimplemented!(),
-		// };
-
-
-
+		let trait_id = match operator {
+			x if x == OP_EXPR_ADD => {
+				Some(definitions.class_id::<QuAdd>()?)
+			},
+			_ => None,
+		};
 
 		// TODO: reimplment without copying
 		let call_expression = CallExpression {
@@ -2312,6 +2338,7 @@ pub struct QuCompiler {
 		self.cmp_fn_call(
 			&call_expression,
 			output_reg,
+			trait_id,
 			definitions,
 		)
 	}
@@ -2585,42 +2612,49 @@ pub struct QuCompiler {
 		&mut self,
 		call_expression: &CallExpression,
 		store_to: QuStackId,
+		caller_as_id_default: Option<ClassId>,
 		definitions: &mut Definitions,
 	) -> Result<QuAsmBuilder, QuMsg> {
 		let mut builder = QuAsmBuilder::new();
 
 		let name = &call_expression.name.slice;
-		let mut function_identity = FunctionIdentity {
+		let mut signature = FunctionIdentity {
 			name: name.to_owned(),
 			return_type: store_to.class_id(),
 			..Default::default()
 		};
 
-		let (caller_is_container, caller_id) = {
-			if let Some(caller) =  &call_expression.caller {
-				let object_id = self.get_expr_type(
+		// The class ID of the item calling this function
+		let caller_id = match &call_expression.caller {
+			Some(caller) => Some(self.get_expr_type(
 					&caller,
 					definitions,
-				)?;
+			)?),
+			None => None,
+		};
+		// The Class ID if this function is a constructor, eg "int()"
+		let callable_id = self.context
+			.find_item_maybe(&call_expression.name.slice, definitions);
+		// The ID of the trait the caller should be treated as
+		let mut caller_as_id: Option<ClassId> = caller_as_id_default;
 
-				(
-					object_id == definitions.class_id::<Class>()?
-						|| object_id == definitions.class_id::<Module>()?,
-					Some(object_id)
-				)
-			} else {
-				(false, None)
-			}
+		let caller_is_container = match caller_id {
+			Some(caller_id) => {
+				caller_id == definitions.class_id::<Class>()?
+				|| caller_id == definitions.class_id::<Module>()?
+			},
+			None => false,
 		};
 
 		// Compile parameter expressions
 		let mut parameter_ids = vec![];
 		self.context.open_scope(); {
-			if let Some(object_id) = caller_id {
-				// Maker caller the first parameter
+			// Maybe compile caller
+			if let Some(caller_id) = caller_id {
 				if !caller_is_container {
+					// Caller is not a module or class, use it as the first parameter
 					let var_stack_id = self.context.allocate(
-						object_id,
+						caller_id,
 						definitions,
 					)?;
 					let parameter_expr = self.cmp_expr(
@@ -2628,11 +2662,13 @@ pub struct QuCompiler {
 						var_stack_id,
 						definitions,
 					)?;
+					caller_as_id = parameter_expr.as_type;
 					builder.add_builder(parameter_expr);
 					parameter_ids.push(var_stack_id);
 				}
 			}
 
+			// Compile parameter expressions
 			for parameter in &call_expression.parameters.elements {
 				let object_id = self.get_expr_type(
 					parameter,
@@ -2652,26 +2688,41 @@ pub struct QuCompiler {
 			}
 		}
 		self.context.close_scope();
-		function_identity.parameters = parameter_ids
+		signature.parameters = parameter_ids
 			.iter()
 			.map(|x| -> ClassId {
 				x.class_id()
 			})
 			.collect();
 
-		let callable_id = self.context
-			.find_item_maybe(&call_expression.name.slice, definitions);
-
 		// Find function id in the current context
 		let fn_id =
 			if let Some(ItemId::Class(class_id)) = callable_id {
 				self.get_class_constructor_id(
 					class_id,
-					function_identity,
+					signature,
 					definitions
 				)?
 			} else {
-				if caller_is_container {
+				if
+					let (Some(caller_id), Some(caller_as_id))
+					= (caller_id, caller_as_id)
+				{
+					let trait_obj = definitions.get_class(caller_as_id)?;
+					let trait_group_id = trait_obj
+						.get_function_group_id(&signature.name)?;
+					let trait_fn_id = definitions
+						.get_function_group(trait_group_id)?
+						.get_fn_id(&signature, definitions)?;
+					let imp = definitions.get_implementation(
+						caller_id,
+						caller_as_id,
+					)?;
+					let ItemId::Function(fn_id) = imp.get_implemented_item(
+						ItemId::Function(trait_fn_id)
+					)? else {unreachable!()};
+					fn_id
+				} else if caller_is_container {
 					let identity = call_expression.caller
 						.as_ref()
 						.unwrap()
@@ -2681,33 +2732,26 @@ pub struct QuCompiler {
 						definitions,
 					)?;
 
-					match item {
+					let group_id = match item {
 						ItemId::Class(id) => {
-							let class = definitions.get_class(id)?;
-							let fn_group = class.get_function_group_id(
-								&function_identity.name
-							)?;
-							*definitions.function_groups[fn_group]
-								.map
-								.get(&function_identity)
-								.unwrap() // TODO: Handle none
+							&definitions.get_class(id)?.common
 						},
 						ItemId::Module(id) => {
-							let module = definitions.get_module(id)?;
-							let fn_group = module.common.get_function_group_id(
-								&function_identity.name
-							)?;
-							*definitions.function_groups[fn_group]
-								.map
-								.get(&function_identity)
-								.unwrap() // TODO: Handle none
+							&definitions.get_module(id)?.common
 						},
 						_ => panic!(),
-					}
+					}.get_function_group_id(
+						&signature.name
+							)?;
+						
+					*definitions.function_groups[group_id]
+								.map
+						.get(&signature)
+								.unwrap() // TODO: Handle none
 				} else {
 					self.context
 						.get_function_id_by_identity(
-							&function_identity,
+							&signature,
 							&definitions,
 						)?
 				}
@@ -3250,6 +3294,7 @@ pub struct QuCompiler {
 				};
 				self.context.allocate(class_id, definitions)
 			},
+    		Expression::As(_) => todo!(),
 		};
 	}
 
@@ -3320,6 +3365,9 @@ pub struct QuCompiler {
 				};
 				class_id
 			},
+    		Expression::As(as_expr) => {
+				self.get_expr_type(&as_expr.left, definitions)?
+			},
 		};
 		Ok(object_id)
 	}
@@ -3380,11 +3428,13 @@ pub struct QuCompiler {
 struct QuAsmBuilder {
 	ops: Vec<QuOp>,
 	return_type: ClassId,
+	as_type: Option<ClassId>,
 } impl QuAsmBuilder {
 	fn new() -> Self {
 		return Self {
 			ops: vec![],
 			return_type: ClassId::new(0),
+			as_type: None,
 		}
 	}
 
