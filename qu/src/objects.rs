@@ -1,6 +1,7 @@
 
 //! Defines all types and objects used by Qu.
 
+use duplicate::duplicate;
 use once_cell::sync::Lazy;
 
 use crate::QuMsg;
@@ -76,13 +77,23 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 			let class = m.add_class::<Class>()?;
 			let module = m.add_class::<Module>()?;
 
-			// Traits
-			let add = m.add_trait::<QuAdd>()?;
-			{
-				qufn!(m, _api, add(add, add) add {
-					Ok(())
-				});
-			}
+			// Define traits
+			duplicate!(
+				[
+					[ident[add] Type [QuAdd]]
+					[ident[sub] Type [QuSub]]
+					[ident[mul] Type [QuMul]]
+					[ident[div] Type [QuDiv]]
+					[ident[pow] Type [QuPow]]
+					[ident[modulous] Type [QuMod]]
+					[ident[lesser] Type [QuLesser]]
+					[ident[greater] Type [QuGreater]]
+					[ident[equal] Type [QuEqual]]
+					[ident[not_equal] Type [QuNotEqual]]
+				]
+				let ident = m.add_trait::<Type>()?;
+				qufn!(m, _api, ident(ident, ident) ident {Ok(())});
+			);
 
 			// Constants
 			m.add_constant("PI", 3)?;
@@ -93,26 +104,8 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 					Ok(())
 				});
 			}
-
 			
 			{ // float
-				// Impl Add for float
-				m.implement(add, float)?;
-				m.implement_function(
-					add,
-					float,
-					"add",
-					&[float, float],
-					float,
-					&|api| {
-						api.set::<Float>(<Float as Add>::add(
-							*api.get::<Float>(0)?,
-							*api.get::<Float>(1)?
-						));
-						Ok(())
-					},
-				)?;
-
 				m.add_class_static_function(float, CONSTRUCTOR_NAME,
 					&[],
 					float,
@@ -145,63 +138,6 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 						Ok(())
 					}
 				)?;
-				qufn!(m, api, sub(float, float) float {
-					api.set::<Float>(<Float as Sub>::sub(
-						*api.get::<Float>(0)?,
-						*api.get::<Float>(1)?
-					));
-					Ok(())
-				});
-				qufn!(m, api, mul(float, float) float {
-					api.set::<Float>(<Float as Mul>::mul(
-						*api.get::<Float>(0)?,
-						*api.get::<Float>(1)?
-					));
-					Ok(())
-				});
-				qufn!(m, api, div(float, float) float {
-					api.set::<Float>(<Float as Div>::div(
-						*api.get::<Float>(0)?,
-						*api.get::<Float>(1)?
-					));
-					Ok(())
-				});
-				qufn!(m, api, lesser(float, float) bool {
-					let output = api.get::<Float>(0)? < api.get::<Float>(1)?;
-					api.set_hold(output);
-					api.set::<Bool>(output);
-					Ok(())
-				});
-				qufn!(m, api, lessereq(float, float) bool {
-					let output = api.get::<Float>(0)? <= api.get::<Float>(1)?;
-					api.set_hold(output);
-					api.set::<Bool>(output);
-					Ok(())
-				});
-				qufn!(m, api, greater(float, float) bool {
-					let output = api.get::<Float>(0)? > api.get::<Float>(1)?;
-					api.set_hold(output);
-					api.set::<Bool>(output);
-					Ok(())
-				});
-				qufn!(m, api, greatereq(float, float) bool {
-					let output = api.get::<Float>(0)? >= api.get::<Float>(1)?;
-					api.set_hold(output);
-					api.set::<Bool>(output);
-					Ok(())
-				});
-				qufn!(m, api, eq(float, float) bool {
-					let output = api.get::<Float>(0)? == api.get::<Float>(1)?;
-					api.set_hold(output);
-					api.set::<Bool>(output);
-					Ok(())
-				});
-				qufn!(m, api, neq(float, float) bool {
-					let output = api.get::<Float>(0)? != api.get::<Float>(1)?;
-					api.set_hold(output);
-					api.set::<Bool>(output);
-					Ok(())
-				});
 				qufn!(m, api, copy(float) float {
 					api.set::<Float>(*api.get::<Float>(0)?);
 					Ok(())
@@ -209,23 +145,6 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 			}
 
 			{ // int
-				// Impl Add for int
-				m.implement(add, int)?;
-				m.implement_function(
-					add,
-					int,
-					"add",
-					&[int, int],
-					int,
-					&|api| {
-						api.set::<Int>(<Int as Add>::add(
-							*api.get::<Int>(0)?,
-							*api.get::<Int>(1)?
-						));
-						Ok(())
-					},
-				)?;
-
 				m.add_class_static_function(int, CONSTRUCTOR_NAME,
 					&[],
 					int,
@@ -258,70 +177,6 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 						Ok(())
 					}
 				)?;
-				qufn!(m, api, add(int, int) int {
-					api.set::<Int>(<Int as Add>::add(
-						*api.get::<Int>(0)?,
-						*api.get::<Int>(1)?
-					));
-					Ok(())
-				});
-				qufn!(m, api, sub(int, int) int {
-					api.set::<Int>(<Int as Sub>::sub(
-						*api.get::<Int>(0)?,
-						*api.get::<Int>(1)?
-					));
-					Ok(())
-				});
-				qufn!(m, api, mul(int, int) int {
-					api.set::<Int>(<Int as Mul>::mul(
-						*api.get::<Int>(0)?,
-						*api.get::<Int>(1)?
-					));
-					Ok(())
-				});
-				qufn!(m, api, div(int, int) int {
-					api.set::<Int>(<Int as Div>::div(
-						*api.get::<Int>(0)?,
-						*api.get::<Int>(1)?
-					));
-					Ok(())
-				});
-				qufn!(m, api, lesser(int, int) bool {
-					let output = api.get::<Int>(0)? < api.get::<Int>(1)?;
-					api.set_hold(output);
-					api.set::<Bool>(output);
-					Ok(())
-				});
-				qufn!(m, api, lessereq(int, int) bool {
-					let output = api.get::<Int>(0)? <= api.get::<Int>(1)?;
-					api.set_hold(output);
-					api.set::<Bool>(output);
-					Ok(())
-				});
-				qufn!(m, api, greater(int, int) bool {
-					let output = api.get::<Int>(0)? > api.get::<Int>(1)?;
-					api.set_hold(output);
-					api.set::<Bool>(output);
-					Ok(())
-				});
-				qufn!(m, api, greatereq(int, int) bool {
-					let output = api.get::<Int>(0)? >= api.get::<Int>(1)?;
-					api.set_hold(output);
-					api.set::<Bool>(output);
-					Ok(())
-				});
-				qufn!(m, api, eq(int, int) bool {
-					let output = api.get::<Int>(0)? == api.get::<Int>(1)?;
-					api.set_hold(output);
-					api.set::<Bool>(output);
-					Ok(())
-				});
-				qufn!(m, api, neq(int, int) bool {
-					let output = api.get::<Int>(0)? != api.get::<Int>(1)?;
-					api.set_hold(output);
-					api.set::<Bool>(output);
-					Ok(())
-				});
 				qufn!(m, api, copy(int) int {
 					api.set::<Int>(*api.get::<Int>(0)?);
 					Ok(())
@@ -397,8 +252,65 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 				});
 			}
 
+			// Implement trait functions traits in classes
+			duplicate!(
+				[
+					[class_id [float] OpType [Float]]
+					[class_id [int] OpType [Int]]
+				]
+				duplicate!(
+					[
+						[trait_id [equal] fn_name ["equal"] op [==] Ret [Bool] ret_id [bool]]
+						[trait_id [not_equal] fn_name ["not_equal"] op [!=] Ret [Bool] ret_id [bool]]
+						[trait_id [greater] fn_name ["greater"] op [>] Ret [Bool] ret_id [bool]]
+						[trait_id [lesser] fn_name ["lesser"] op [<] Ret [Bool] ret_id [bool]]
+					]
+					m.implement(trait_id, class_id)?;
+					m.implement_function(
+						trait_id,
+						class_id,
+						fn_name,
+						&[class_id, class_id],
+						ret_id,
+						&|api| {
+							let value = *api.get::<OpType>(0)?
+								op *api.get::<OpType>(1)?;
+							api.set_hold(value);
+							api.set::<Ret>(value);
+							Ok(())
+						},
+					)?;
+				)
+			);
+			duplicate!(
+				[
+					[class_id [float] OpType [Float]]
+					[class_id [int] OpType [Int]]
+				]
+				duplicate!(
+					[
+						[trait_id [add] fn_name ["add"] op [+] Ret [OpType] ret_id [class_id]]
+						[trait_id [sub] fn_name ["sub"] op [-] Ret [OpType] ret_id [class_id]]
+						[trait_id [mul] fn_name ["mul"] op [*] Ret [OpType] ret_id [class_id]]
+						[trait_id [div] fn_name ["div"] op [/] Ret [OpType] ret_id [class_id]]
+					]
+					m.implement(trait_id, class_id)?;
+					m.implement_function(
+						trait_id,
+						class_id,
+						fn_name,
+						&[class_id, class_id],
+						ret_id,
+						&|api| {
+							api.set::<Ret>(
+								*api.get::<OpType>(0)? op *api.get::<OpType>(1)?
+							);
+							Ok(())
+						},
+					)?;
+				)
+			);
 			
-
 			Ok(())
 		}
 	)?;
@@ -432,11 +344,25 @@ pub fn math_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 }
 
 
-/// The Add trait for Qu
-pub struct QuAdd {}
-impl Register for QuAdd {
-	fn name() -> &'static str {"Add"}
-}
+duplicate!(
+	[
+		[ClassName ["Add"] InternalName [QuAdd]]
+		[ClassName ["Sub"] InternalName [QuSub]]
+		[ClassName ["Mul"] InternalName [QuMul]]
+		[ClassName ["Div"] InternalName [QuDiv]]
+		[ClassName ["Pow"] InternalName [QuPow]]
+		[ClassName ["Mod"] InternalName [QuMod]]
+		[ClassName ["Greater"] InternalName [QuGreater]]
+		[ClassName ["Lesser"] InternalName [QuLesser]]
+		[ClassName ["Equal"] InternalName [QuEqual]]
+		[ClassName ["NotEqual"] InternalName [QuNotEqual]]
+	]
+	/// The ClassName trait for Qu
+	pub struct InternalName {}
+	impl Register for InternalName {
+		fn name() -> &'static str {ClassName}
+	}
+);
 
 
 /// A reference to a Qu class.

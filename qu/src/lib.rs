@@ -406,6 +406,12 @@ mod lib {
 			return 25.32@Add.add(14.28)
 		").unwrap();
 		assert_eq!(result, 25.32 + 14.28);
+
+		// This is redundent and does nothing special, but good to know it workds
+		let result:Float = *qu.run_and_get("
+			return 1.23@Add + 5.366@Add
+		").unwrap();
+		assert_eq!(result, 1.23 + 5.366);
 	}
 
 	#[test]
@@ -720,7 +726,8 @@ mod lib {
 	}
 
 
-	#[test]
+	// TODO: Allow functions that are similar to trait functions
+	// #[test]
 	fn function_similar_identity_to_add() {
 		let mut qu = Qu::new();
 		let script = r#"

@@ -8,7 +8,23 @@ use crate::Float;
 use crate::Int;
 use crate::Module;
 use crate::QuAdd;
+use crate::QuDiv;
+use crate::QuEqual;
+use crate::QuGreater;
+use crate::QuLesser;
+use crate::QuMod;
+use crate::QuNotEqual;
+use crate::QuPow;
+use crate::QuSub;
 use crate::parser::OP_EXPR_ADD;
+use crate::parser::OP_EXPR_DIV;
+use crate::parser::OP_EXPR_EQL;
+use crate::parser::OP_EXPR_GRT;
+use crate::parser::OP_EXPR_LES;
+use crate::parser::OP_EXPR_MOD;
+use crate::parser::OP_EXPR_NEQ;
+use crate::parser::OP_EXPR_POW;
+use crate::parser::OP_EXPR_SUB;
 use crate::vm::QuOp;
 use crate::vm::QuOp::*;
 use crate::QuParser;
@@ -1401,7 +1417,9 @@ pub struct Definitions {
 		let class_data = self.get_class_mut(class_id)?;
 		if class_data.common.implementations.contains_key(&trait_id) {
 			return Err(format!(
-				"TODO: Add err msg"
+				"Can't implment trait, {}, in class, {}, because it's already implemented",
+				trait_common.name,
+				class_data.common.name,
 			).into());
 		}
 		class_data.common.implementations.insert(
@@ -2326,6 +2344,30 @@ pub struct QuCompiler {
 			x if x == OP_EXPR_ADD => {
 				Some(definitions.class_id::<QuAdd>()?)
 			},
+			x if x == OP_EXPR_SUB => {
+				Some(definitions.class_id::<QuSub>()?)
+			},
+			x if x == OP_EXPR_DIV => {
+				Some(definitions.class_id::<QuDiv>()?)
+			},
+			x if x == OP_EXPR_MOD => {
+				Some(definitions.class_id::<QuMod>()?)
+			},
+			x if x == OP_EXPR_POW => {
+				Some(definitions.class_id::<QuPow>()?)
+			},
+			x if x == OP_EXPR_GRT => {
+				Some(definitions.class_id::<QuGreater>()?)
+			},
+			x if x == OP_EXPR_LES => {
+				Some(definitions.class_id::<QuLesser>()?)
+			},
+			x if x == OP_EXPR_EQL => {
+				Some(definitions.class_id::<QuEqual>()?)
+			},
+			x if x == OP_EXPR_NEQ => {
+				Some(definitions.class_id::<QuNotEqual>()?)
+			},
 			_ => None,
 		};
 
@@ -2630,7 +2672,19 @@ pub struct QuCompiler {
 					&caller,
 					definitions,
 			)?),
-			None => None,
+			None => {
+				if
+					let Some(first_param)
+					= call_expression.parameters.elements.first()
+				{
+					Some(self.get_expr_type(
+						first_param,
+						definitions,
+					)?)
+				} else {
+					None
+				}
+			},
 		};
 		// The Class ID if this function is a constructor, eg "int()"
 		let callable_id = self.context
@@ -2650,7 +2704,10 @@ pub struct QuCompiler {
 		let mut parameter_ids = vec![];
 		self.context.open_scope(); {
 			// Maybe compile caller
-			if let Some(caller_id) = caller_id {
+			if
+				let (Some(caller_expr), Some(caller_id))
+				= (&call_expression.caller, caller_id)
+			{
 				if !caller_is_container {
 					// Caller is not a module or class, use it as the first parameter
 					let var_stack_id = self.context.allocate(
@@ -2658,7 +2715,7 @@ pub struct QuCompiler {
 						definitions,
 					)?;
 					let parameter_expr = self.cmp_expr(
-						call_expression.caller.as_ref().unwrap(),
+						caller_expr,
 						var_stack_id,
 						definitions,
 					)?;

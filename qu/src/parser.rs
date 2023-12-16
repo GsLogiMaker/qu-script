@@ -458,8 +458,8 @@ pub enum QuOperator {
 			QuOperator::LessEq => "lessereq",
 			QuOperator::Great => "greater",
 			QuOperator::GreatEq => "greatereq",
-			QuOperator::Eq => "eq",
-			QuOperator::NotEq => "neq",
+			QuOperator::Eq => "equal",
+			QuOperator::NotEq => "not_equal",
 			QuOperator::And => "and",
 			QuOperator::Or => "or",
 		}
