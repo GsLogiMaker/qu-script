@@ -1136,11 +1136,8 @@ pub struct Definitions {
 					)
 					.collect();
 				self.function_groups.push(impl_group);
-				for (key, fn_id) in trait_group_pairs {
-					// Copy over keys and values, converting cases of Self
-					// to the class type
-					let mut impl_key = key;
-					impl_key.set_self_type(class_id);
+				for (_, fn_id) in trait_group_pairs {
+					// Copy over keys and values
 					self.add_to_function_group(
 						ItemId::FunctionGroup(impl_group_id),
 						fn_id,
@@ -1192,7 +1189,7 @@ pub struct Definitions {
 	pub fn define_function_in_item(
 		&mut self,
 		item_id: ItemId,
-		mut fn_definition:FunctionMetadata,
+		fn_definition:FunctionMetadata,
 		default_class:Option<ClassId>,
 		auto_add_to_class:bool,
 	) -> Result<FunctionId, QuMsg> {
@@ -1204,28 +1201,6 @@ pub struct Definitions {
 					.first()
 					.map(|x| *x)
 			});
-		
-		if let Some(x) = class_id { if x.is_self_type() { panic!(
-			"Can't define function, {}, because self type is ambiguous",
-			fn_definition.identity.display_pretty(self)
-		) } }
-
-		// Replace instances of the self type
-		match (class_id, auto_add_to_class) {
-			(Some(class_id), true) /*if !self.get_class(class_id)?.is_trait*/ => {
-				// Replace instances of the self type with the specific class
-				fn_definition.identity.set_self_type(class_id);
-			},
-			(_, false) | (None, _) => {
-				// Function is static, throw an error if any Self types exist
-				if fn_definition.identity.has_self_type() {
-					panic!(
-						"Couldn't define static function, {}, because it contains a Self type, which can only be used in non-static functions.",
-						fn_definition.identity.display_pretty(self)
-					)
-				}
-			}
-		}
 
 		// Register function
 		let new_function_id = self.add_function(fn_definition);
@@ -1254,11 +1229,8 @@ pub struct Definitions {
 		class_id:ClassId,
 		trait_id:ClassId,
 		parent_item:ItemId,
-		mut external_function:FunctionMetadata,
+		external_function:FunctionMetadata,
 	) -> Result<(), QuMsg> {
-		// Convert cases of Self to the implementing class
-		external_function.identity.set_self_type(class_id);
-
 		let trait_group_id = self.get_class(trait_id)?
 			.common
 			.get_function_group_id(
@@ -1466,25 +1438,6 @@ pub struct FunctionIdentity {
 			args,
 			ret_type
 		)
-	}
-
-	fn has_self_type(&mut self) -> bool{
-		self.return_type.is_self_type()
-		|| {
-			for arg in self.parameters.iter() {
-				if arg.is_self_type() {
-					return true;
-				}
-			}
-			false
-		}
-	}
-
-	fn set_self_type(&mut self, to_type:ClassId) {
-		self.return_type.set_self(to_type);
-		for arg in self.parameters.iter_mut() {
-			arg.set_self(to_type);
-		}
 	}
 } impl Hash for FunctionIdentity {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {

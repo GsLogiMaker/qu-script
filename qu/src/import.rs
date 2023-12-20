@@ -3,7 +3,6 @@ use std::alloc::Layout;
 use std::fmt::Debug;
 
 use crate::QuMsg;
-use crate::QuSelf;
 use crate::Register;
 use crate::QuVm;
 use crate::Uuid;
@@ -183,16 +182,6 @@ impl ClassId {
 			.common.implementations
 			.contains_key(&other)
 	}
-
-	pub(crate) fn is_self_type(self) -> bool{
-		self == QuSelf::id()
-	}
-
-	pub(crate) fn set_self(&mut self, to_type:ClassId) {
-		if self.is_self_type() {
-			*self = to_type;
-		}
-	}
 } impl From<usize> for ClassId {
 	fn from(index: usize) -> Self {
 		Self(index)
@@ -369,7 +358,7 @@ pub trait RegistererLayer {
 		if args.len() == 0 {
 			panic!("Can't add function to class without binding a 'self' argument. TODO: better msg")
 		}
-		if !args[0].is(class, self.get_definitions()) && !args[0].is_self_type() {
+		if !args[0].is(class, self.get_definitions()) {
 			panic!(
 				"First argument's type, {}, does not match class's type, {}.",
 				self.get_definitions().get_class(args[0])?.common.name,

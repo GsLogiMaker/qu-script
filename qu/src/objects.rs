@@ -82,7 +82,6 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 			let float = m.add_class::<Float>()?;
 			let int = m.add_class::<Int>()?;
 			let module = m.add_class::<Module>()?;
-			let self_type = m.add_class::<QuSelf>()?;
 
 			
 
@@ -98,7 +97,7 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 				]
 				let ident = m.add_trait::<Type>()?;
 				m.add_function_to_class(ident, name,
-					[self_type, self_type], self_type,
+					[ident, ident], ident,
 					&|api| { (EMPTY_FN)(api) }
 				)?;
 			);
@@ -111,7 +110,7 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 				]
 				let ident = m.add_trait::<Type>()?;
 				m.add_function_to_class(ident, name,
-					[self_type, self_type], bool,
+					[ident, ident], bool,
 					&|api| { (EMPTY_FN)(api) }
 				)?;
 			);
@@ -252,9 +251,7 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 				m.implement_function(
 					equal,
 					class,
-					"equal",
-					[self_type, self_type],
-					bool,
+					"equal", [class, class], bool,
 					&|api| {
 						let left = *api.get::<Class>(0)?;
 						let right = *api.get::<Class>(1)?;
@@ -293,7 +290,7 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 					m.implement_function(
 						trait_id,
 						class_id,
-						fn_name, [self_type, self_type], class_id,
+						fn_name, [class_id, class_id], class_id,
 						&|api| {
 							api.set::<Ret>(
 								*api.get::<OpType>(0)? op *api.get::<OpType>(1)?
@@ -319,9 +316,7 @@ pub fn fundamentals_module(registerer: &mut Registerer) -> Result<(), QuMsg> {
 					m.implement_function(
 						trait_id,
 						class_id,
-						fn_name,
-						[self_type, self_type],
-						bool,
+						fn_name, [class_id, class_id], bool,
 						&|api| {
 							let value = *api.get::<OpType>(0)?
 								op *api.get::<OpType>(1)?;
@@ -384,12 +379,6 @@ duplicate!(
 		fn name() -> &'static str {ClassName}
 	}
 );
-
-/// The Self type Qu
-pub struct QuSelf {}
-impl Register for QuSelf {
-	fn name() -> &'static str {"Self"}
-}
 
 
 /// A reference to a Qu class.
