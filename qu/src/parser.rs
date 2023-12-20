@@ -24,6 +24,7 @@ pub const KEYWORD_IMPORT:&str = "import";
 pub const KEYWORD_RETURN:&str = "return";
 pub const KEYWORD_VAR:&str = "var";
 pub const KEYWORD_WHILE:&str = "while";
+pub const KEYWORD_IS:&str = "is";
 
 pub const OP_ASSIGN_SYMBOL:&str = "=";
 pub const OP_BLOCK_START:&str = ":";
@@ -417,6 +418,7 @@ pub enum QuOperator {
 	And,
 	/// The `or` logical operator.
 	Or,
+	Is,
 
 } impl QuOperator {
 	pub fn from_symbol(symbol:&str) -> Self {
@@ -440,6 +442,8 @@ pub enum QuOperator {
 			OP_EXPR_AND => And,
 			OP_EXPR_OR => Or,
 
+			KEYWORD_IS => Is,
+
 			_ => unimplemented!(),
 		}
 	}
@@ -462,6 +466,7 @@ pub enum QuOperator {
 			QuOperator::NotEq => "not_equal",
 			QuOperator::And => "and",
 			QuOperator::Or => "or",
+			QuOperator::Is => "is",
 		}
 	}
 } impl From<&str> for QuOperator {
@@ -970,6 +975,17 @@ pub struct QuParser {
 	}
 
 
+	/// The top level function for checking operators
+	fn ck_ops(&mut self) -> Result<Option<Expression>, QuMsg>{
+		return self.ck_op_is();
+	}
+
+
+	fn ck_op_is(&mut self) -> Result<Option<Expression>, QuMsg>{
+		return self.ck_operation(KEYWORD_IS, &Self::ck_op_les);
+	}
+
+
 	/// Attempts to parse a lesser than expression.
 	fn ck_op_les(&mut self) -> Result<Option<Expression>, QuMsg>{
 		return self.ck_operation(OP_EXPR_LES, &Self::ck_op_grt);
@@ -1109,7 +1125,7 @@ pub struct QuParser {
 	/// A tuple is denoted by expressions separated by commas (Ex: "1,2,3").
 	/// Parenthesis technicly have nothing to do with tuples.
 	fn ck_tuple(&mut self) -> Result<Option<Expression>, QuMsg>{
-		match self.ck_op_les()? {
+		match self.ck_ops()? {
 			// Matched an expression
 			Some(expr) => {
 				if self.tk_spy(0) == "," {
@@ -1117,7 +1133,7 @@ pub struct QuParser {
 					let mut elements = vec![expr];
 					self.tk_next()?;
 					loop {
-						match self.ck_op_les()? {
+						match self.ck_ops()? {
 							Some(next_expr) => {
 								// Found another expression, add to tuple
 								elements.push(next_expr);

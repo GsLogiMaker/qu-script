@@ -5,11 +5,12 @@ use std::mem::size_of;
 use crate::QuMsg;
 use crate::Register;
 use crate::Uuid;
+use crate::compiler::ConstantId;
 use crate::compiler::Definitions;
-use crate::compiler::FunctionId;
 use crate::compiler::FunctionReference;
 use crate::import::ArgsAPI;
 use crate::import::ClassId;
+use crate::import::FunctionId;
 use crate::objects::fundamentals_module;
 use crate::objects::math_module;
 
@@ -19,11 +20,11 @@ pub const MAIN_MODULE:&str = "__main__";
 /// The low level operations of [`QuVm`].
 pub(crate) enum QuOp {
 	/// Calls a function defined by Qu.
-	Call(FunctionId, Box<[QuStackId]>, QuStackId),
+	Call(FunctionId, Box<[RegId]>, RegId),
 	/// Calls a function defined by Qu via a vtable.
 	/// 
 	/// Looks up a function that is overriden by the given class.
-	CallV(ClassId, ClassId, FunctionId, Box<[QuStackId]>, QuStackId),
+	CallV(ClassId, ClassId, FunctionId, Box<[RegId]>, RegId),
 	/// Ends the current scope
 	End,
 	/// Moves the program counter by the given [`isize`].
@@ -32,14 +33,70 @@ pub(crate) enum QuOp {
 	/// was false.
 	JumpByIfNot(isize),
 	/// Loads a function argument into the current scope
-	LoadArg(u8, QuStackId),
+	LoadArg(u8, RegId),
 	/// Loads a constant onto the stack
-	LoadConstant(u32, QuStackId),
-	/// Loads an [`isize`] into the stack. Takes the value being loaded and the
-	/// stack id where it will bestored.
-	Value(isize, QuStackId),
+	LoadConstant(ConstantId, RegId),
 	/// Specifies to the Vm what class can be retrieved from the API.
 	Return(ClassId),
+} impl QuOp {
+	pub(crate) fn get_output(&self) -> RegId {
+		match self {
+			QuOp::Call(_, _, output) => *output,
+			QuOp::CallV(_, _, _, _, output) => *output,
+			QuOp::End => unreachable!(),
+			QuOp::JumpBy(_) => unreachable!(),
+			QuOp::JumpByIfNot(_) => unreachable!(),
+			QuOp::LoadArg(_, output) => *output,
+			QuOp::LoadConstant(_, output) => *output,
+			QuOp::Return(_) => unreachable!(),
+		}
+	}
+
+	pub(crate) fn readable(&self, d: &Definitions) -> String {
+		match self {
+			QuOp::Call(fn_id, args, reg) => format!(
+				"{0} = {1}:{3}( {2} )",
+				reg.readable(),
+				Self::readable_fn(*fn_id, d),
+				Self::readable_args(args),
+				fn_id.0,
+			),
+			QuOp::CallV(_, _, _, _, _) => todo!(),
+			QuOp::End => "End".into(),
+			QuOp::JumpBy(by) => format!("JumpyBy ({by})"),
+			QuOp::JumpByIfNot(by) => format!("JumpyByIfNot ({by})"),
+			QuOp::LoadArg(arg, reg) => format!(
+				"{} = arg {}",
+				reg.readable(),
+				arg,
+			),
+			QuOp::LoadConstant(con, reg) => format!(
+				"{} = const {}",
+				reg.readable(),
+				Self::readable_const(*con, d),
+			),
+			QuOp::Return(_) => "return".into(),
+		}
+	}
+
+	fn readable_fn(fn_id:FunctionId, d:&Definitions) -> String {
+		d.functions[fn_id.0].identity.name.clone()
+	}
+
+	fn readable_args(args:&[RegId]) -> String {
+		let mut string = "".to_owned();
+		for (i, arg) in args.iter().enumerate() {
+			string.push_str(&arg.readable());
+			if i != args.len()-1 {
+				string.push_str(", ")
+			}
+		}
+		string
+	}
+
+	fn readable_const(con:usize, d:&Definitions) -> String {
+		d.constants[con].name.clone()
+	}
 } impl Debug for QuOp {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		match self {
@@ -55,8 +112,6 @@ pub(crate) enum QuOp {
 				write!(f, "&{arg1:?} = LoadArg({arg0:?})"),
 			QuOp::LoadConstant(arg0, arg1) =>
 				write!(f, "&{:?} = LoadConstant({:?})", arg1, arg0),
-			QuOp::Value(arg0, arg1) =>
-				write!(f, "Value({:?}, {:?})", arg0, arg1),
 			QuOp::Return(arg0) =>
 				write!(f, "Return({:?})", arg0),
     		QuOp::CallV(arg0,  arg1, arg2, arg3, arg4) => 
@@ -119,17 +174,72 @@ impl From<QuConstId> for u32 {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 /// An ID to a location on the Vm's stack.
-pub struct QuStackId(pub usize, ClassId);
-impl QuStackId {
+pub struct RegId(pub(crate) usize);
+impl RegId {
+	/// Returns an index in the [`QuVm`]s stack.
+	pub fn index(&self) -> usize {
+		self.0
+	}
+
+	pub(crate) fn readable(self) -> String {
+		format!("&{}", usize::from(self))
+	}
+}
+impl From<usize> for RegId {
+	fn from(v:usize) -> Self {
+		Self(v)
+	}
+} impl From<isize> for RegId {
+	fn from(v:isize) -> Self {
+		Self(v as usize)
+	}
+} impl From<u8> for RegId {
+	fn from(v:u8) -> Self {
+		Self(v as usize)
+	}
+} impl From<i32> for RegId {
+	fn from(v:i32) -> Self {
+		Self(v as usize)
+	}
+} impl From<TypedRegId> for RegId {
+	fn from(v:TypedRegId) -> Self {
+		Self(v.0.into())
+	}
+}
+
+impl From<RegId> for u8 {
+	fn from(v:RegId) -> Self {
+		v.0 as u8
+	}
+} impl From<RegId> for usize {
+	fn from(v:RegId) -> Self {
+		v.0 as usize
+	}
+} impl From<RegId> for isize {
+	fn from(v:RegId) -> Self {
+		v.0 as isize
+	}
+} impl From<RegId> for i32 {
+	fn from(v:RegId) -> Self {
+		v.0 as i32
+	}
+}
+
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// An ID to a location on the Vm's stack.
+pub struct TypedRegId(pub(crate) RegId, pub(crate) ClassId);
+impl TypedRegId {
 	/// Constructs a [`QuStackId`]
-	pub fn new(index: usize, struct_id: ClassId) -> Self {
+	pub fn new(index: RegId, struct_id: ClassId) -> Self {
 		Self(index, struct_id)
 	}
 
+	
 	/// Returns a readable [`String`] representation of the Id.
 	fn _readable(&self, definitions: &Definitions) -> String {
 		format!(
-			"{}:{}",
+			"{:?}:{}",
 			self.0,
 			definitions.get_class(self.1).unwrap().common.name,
 		)
@@ -137,7 +247,7 @@ impl QuStackId {
 
 
 	/// Returns an index in the [`QuVm`]s stack.
-	pub fn index(&self) -> usize {
+	pub fn index(&self) -> RegId {
 		self.0
 	}
 
@@ -147,40 +257,40 @@ impl QuStackId {
 		self.1
 	}
 }
-impl From<usize> for QuStackId {
+impl From<usize> for TypedRegId {
 	fn from(v:usize) -> Self {
-		Self(v, ClassId::default())
+		Self(v.into(), ClassId::default())
 	}
-} impl From<isize> for QuStackId {
+} impl From<isize> for TypedRegId {
 	fn from(v:isize) -> Self {
-		Self(v as usize, 0.into())
+		Self(v.into(), 0.into())
 	}
-} impl From<u8> for QuStackId {
+} impl From<u8> for TypedRegId {
 	fn from(v:u8) -> Self {
-		Self(v as usize, ClassId::default())
+		Self(v.into(), ClassId::default())
 	}
-} impl From<i32> for QuStackId {
+} impl From<i32> for TypedRegId {
 	fn from(v:i32) -> Self {
-		Self(v as usize, ClassId::default())
+		Self(v.into(), ClassId::default())
 	}
 }
 
 
-impl From<QuStackId> for u8 {
-	fn from(v:QuStackId) -> Self {
-		v.0 as u8
+impl From<TypedRegId> for u8 {
+	fn from(v:TypedRegId) -> Self {
+		v.0.into()
 	}
-} impl From<QuStackId> for usize {
-	fn from(v:QuStackId) -> Self {
-		v.0 as usize
+} impl From<TypedRegId> for usize {
+	fn from(v:TypedRegId) -> Self {
+		v.0.into()
 	}
-} impl From<QuStackId> for isize {
-	fn from(v:QuStackId) -> Self {
-		v.0 as isize
+} impl From<TypedRegId> for isize {
+	fn from(v:TypedRegId) -> Self {
+		v.0.into()
 	}
-} impl From<QuStackId> for i32 {
-	fn from(v:QuStackId) -> Self {
-		v.0 as i32
+} impl From<TypedRegId> for i32 {
+	fn from(v:TypedRegId) -> Self {
+		v.0.into()
 	}
 }
 
@@ -227,31 +337,33 @@ pub struct QuVm {
 	fn call_function(
 		&mut self,
 		fn_id: FunctionId,
-		args: Box<[QuStackId]>,
-		output: QuStackId,
+		args: Box<[RegId]>,
+		output: RegId,
 	) -> Result<(), QuMsg> {
+		let fn_data = self.definitions.get_function(fn_id)?;
+
 		// Get arguments
 		self.args = Vec::with_capacity(args.len());
-		for arg in args.iter() {
-			let size = self.definitions.get_class(arg.class_id())?.size;
+		for (i, arg) in args.iter().enumerate() {
+			let param_id = fn_data.identity.parameters[i];
+			let size = self.definitions.get_class(param_id)?.size;
 			self.args.push(Box::from(
 				self.stack.read_dyn(*arg, size as usize
 			)));
 		}
-
-		let fn_data = self.definitions.get_function(fn_id)?;
 
 		match fn_data.code_block {
 			FunctionReference::Internal(code_block) => {
 				self.op_call_fn(code_block, output)
 			},
 			FunctionReference::External(fn_ptr) => {
-		// Call the external function
-		let mut api = ArgsAPI {
-			vm: self,
-			arg_ids: &args,
+				// Call the external function
+				let mut api = ArgsAPI {
+					vm: self,
+					fn_id,
+					arg_ids: &args,
 					out_id: output,
-		};
+				};
 				(fn_ptr)(&mut api,)
 			},
 		}
@@ -280,7 +392,7 @@ pub struct QuVm {
 	fn op_call_fn(
 		&mut self,
 		code_block: usize,
-		output: QuStackId,
+		output: RegId,
 	) -> Result<(), QuMsg> {
 		*self.stack.offset_mut() += usize::from(output);
 		// Assure registers is big enought to fit u8::MAX more values
@@ -322,36 +434,15 @@ pub struct QuVm {
 	}
 
 
-	fn op_load_constant(&mut self, const_id:u32, output:QuStackId) {
+	fn op_load_constant(&mut self, const_id:usize, output:RegId) {
 		let value = &self.definitions.constants[const_id as usize].value;
 		self.stack.write_dyn(output, value);
 	}
 
 
-	fn op_load_int(&mut self, value:isize, output:QuStackId) {
-		// TODO: Make function signature i32
-		self.write(output, value as i32);
-	}
-
-
 	#[inline]
 	/// Gets a register value.
-	pub fn read<T: Register + 'static>(&self, at_reg:QuStackId) -> Result<&T, QuMsg> {
-		if
-			T::get_id(&self.definitions.uuid).unwrap()
-			!= at_reg.class_id()
-		{
-			return Err(format!(
-				"Can't get register as type '{}' because it's type '{}'.",
-				T::name(),
-				self.definitions
-					.get_class(at_reg.class_id())
-					.unwrap()
-					.common
-					.name,
-			).into());
-		}
-
+	pub fn read<T: Register + 'static>(&self, at_reg:RegId) -> Result<&T, QuMsg> {
 		let got = self.stack.read(at_reg);
 		Ok(got)
 	}
@@ -359,7 +450,7 @@ pub struct QuVm {
 
 	#[inline]
 	/// Gets a register value.
-	pub fn reg_get_mut<T>(&mut self, at_reg:QuStackId) -> Result<&mut T, QuMsg> {
+	pub fn reg_get_mut<T>(&mut self, at_reg:TypedRegId) -> Result<&mut T, QuMsg> {
 		let struct_data = self.definitions
 			.get_class(at_reg.class_id())?;
 		// TODO: Add check if casting to right struct
@@ -372,7 +463,7 @@ pub struct QuVm {
 
 	#[inline]
 	/// Sets a register value.
-	pub fn write<T>(&mut self, id:QuStackId, value:T) {
+	pub fn write<T>(&mut self, id:RegId, value:T) {
 		return self.stack.write(id.into(), value);
 	}
 
@@ -385,101 +476,14 @@ pub struct QuVm {
 		let mut pc = 0;
 		while pc != self.definitions.byte_code_blocks[code_block].len() {
 			let op = &self.definitions.byte_code_blocks[code_block][pc];
-			#[cfg(feature = "qu_print_vm_operations")]
-			{
-				match op {
-					QuOp::Call(function_id, output) => {
-						let params = &self.definitions
-							.get_function(*function_id)?
-							.identity.parameters;
-						
-						let mut args_string = String::from("");
-						for arg in params {
-							args_string.push_str(&format!(
-								"{}, ",
-								self.definitions
-									.get_class(*arg)
-									.unwrap().name,
-								));
-						}
-						println!(
-							"Call::{}({args_string}) -> {}",
-							self.definitions
-								.get_function(*function_id)
-								.unwrap()
-								.identity
-								.name,
-							output._readable(&self.definitions),
-						);
-					},
-					QuOp::CallExt(function_id, args, output) => {
-						let mut args_string = String::from("");
-						for arg in args {
-							args_string.push_str(&format!(
-								"{}:{}, ",
-								arg.0,
-								self.definitions
-									.get_class(arg.class_id())
-									.unwrap().name,
-								));
-						}
-						println!(
-							"CallExt::{}({args_string}) -> {}",
-							self.definitions
-								.get_external_function(*function_id)
-								.unwrap()
-								.name,
-							output._readable(&self.definitions),
-						);
-					},
-					QuOp::End => {
-						println!("End");
-					},
-					QuOp::DefineFn(function_id, length) => {
-						println!(
-							"DefineFn({}, {})",
-							self.definitions
-								.get_function(*function_id)
-								.unwrap()
-								.identity
-								.name,
-							length,
-						);
-					},
-					QuOp::JumpByIfNot(by) => {
-						println!(
-							"JumpBy({})IfNot hold:{}",
-							by,
-							self.is_hold_true(),
-						);
-					},
-					QuOp::JumpBy(by) => {
-						println!(
-							"JumpBy {by}",
-						);
-					},
-					QuOp::Value(value, output) => {
-						println!(
-							"Value {} -> {}",
-							value,
-							output._readable(&self.definitions),
-						);
-					},
-					QuOp::Return(return_type) => {
-						println!(
-							"Return:{}",
-							self.definitions.get_class(*return_type).unwrap().name,
-						);
-					},
-				};
-			}
+			const PRINT_RUNNING_OPS:bool = false;
+			if PRINT_RUNNING_OPS { println!("{}", op.readable(&self.definitions)); }
 			match op {
 				QuOp::Call(fn_id, args, ouput) => self.call_function(*fn_id, args.clone(), *ouput)?,
 				QuOp::End => break,
 				QuOp::JumpByIfNot(by) => pc = self.op_jump_by_if_not(pc, *by),
 				QuOp::JumpBy( by) => pc = self.op_jump_by(pc, *by),
 				QuOp::LoadConstant(const_id, output) => self.op_load_constant(*const_id, *output),
-				QuOp::Value(value, output) => self.op_load_int(*value, *output),
 				QuOp::Return(return_type) => self.return_type = *return_type,
     			QuOp::CallV(_, _, _, _, _) => todo!(),
     			QuOp::LoadArg(index, output) => {
@@ -508,7 +512,7 @@ struct VmStack {
 		stack
 	}
 } impl Stack for VmStack {
-	type Indexer = QuStackId;
+	type Indexer = RegId;
 
 
 	fn data(&self) -> &Vec<u8> {

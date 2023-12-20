@@ -40,7 +40,6 @@ use std::any::type_name;
 use std::marker::PhantomData;
 
 use compiler::RegistrationMethod;
-use import::ClassId;
 use tokens::TOKEN_TYPE_NAME;
 use tokens::QuToken;
 pub use errors::QuMsg;
@@ -48,7 +47,7 @@ pub use compiler::QuCompiler;
 pub use objects::*;
 pub use parser::QuParser;
 pub use vm::QuVm;
-pub use vm::QuStackId;
+pub use vm::TypedRegId;
 pub use import::RegistererLayer;
 
 type Uuid = uuid::Uuid;
@@ -96,12 +95,6 @@ pub struct Qu<'a> {
 		}
 	}
 
-	/// Returns the [`ClassId`] registered to the struct in this Qu instance.
-	pub fn get_class_id_of<T: Register + 'static>(
-		&self
-	) -> Option<ClassId> {
-		T::get_id(self.get_uuid())
-	}
 
 	/// Compiles Qu script without running it.
 	/// 
@@ -167,7 +160,7 @@ pub struct Qu<'a> {
 	/// 		m.add_class_static_function(
 	/// 			my_class_id,
 	/// 			".new",
-	/// 			&[],
+	/// 			[],
 	/// 			my_class_id,
 	/// 			&|api| {
 	/// 				api.set(MyClass(25));
@@ -215,6 +208,8 @@ pub struct Qu<'a> {
 	/// ```
 	pub fn run(&mut self, script:&str) -> Result<(), QuMsg> {
 		self.compile(script)?;
+		const PRINT_COMPIELED_BYTECODE:bool = false;
+		if PRINT_COMPIELED_BYTECODE { dbg!(&self.vm.definitions.byte_code_blocks); } // Debug print bytecode
 		self.vm.loop_ops(self.vm.definitions.byte_code_blocks.len()-1)
 	}
 
@@ -244,30 +239,22 @@ pub struct Qu<'a> {
 	/// # return Ok(());
 	/// # }
 	/// ```
-	pub fn run_and_get<T: Register + 'static>(
+	pub fn run_and_get<T: Register + 'static> (
 		&mut self,
 		script:&str,
 	) -> Result<&T, QuMsg> {
-		let Some(type_class_id) = self.get_class_id_of::<T>()
-			else {
-				return Err(format!(
-					"Type {} is not registered in this Qu isntance",
-					type_name::<T>(),
-				).into());
-			};
-
 		self.run(script)?;
 		let return_id = self.vm.return_value_id();
 
-		if type_class_id != return_id {
+		if T::id() != return_id {
 			return Err(format!(
-				"Returned value of type {} does not match requested value ot type {}",
-				self.vm.definitions.classes[return_id.0].common.name,
+				"The returned value's type, {}, does not match the requested value's type, {}",
+				self.vm.definitions.get_class(return_id)?.common.name,
 				type_name::<T>(),
 			).into())
 		}
 
-		self.vm.read::<T>(QuStackId::new(0, return_id))
+		self.vm.read::<T>(0.into())
 	}
 
 }
@@ -275,10 +262,45 @@ pub struct Qu<'a> {
 
 #[cfg(test)]
 mod lib {
-    use crate::{Qu, Module, Float, RegistererLayer, Register, Int};
+    use crate::{Qu, Module, Float, RegistererLayer, Register, Int, Bool};
 
 	// TODO: Test what happens when a function overrides a class name
-	// TODO: Test what happens when a class constructor that doesn't exist is called
+
+	#[test]
+	fn test_is() {
+		let mut qu = Qu::new();
+
+		// int is int should return true
+		let result:Bool = *qu.run_and_get("
+			var value int = 5
+			return value is int
+		").unwrap();
+		assert_eq!(result, true);
+
+		// int is float should return false
+		let result:Bool = *qu.run_and_get("
+			var value float = 5.2
+			return value is float
+		").unwrap();
+		assert_eq!(result, true);
+
+		// Dynamic int is int should return true
+		let result:Bool = *qu.run_and_get("
+			var value int = 32
+			var type __Class__ = int
+			return value is type
+		").unwrap();
+		assert_eq!(result, true);
+
+		// Dynamic float is int should return true
+		let result:Bool = *qu.run_and_get("
+			var value float = 32.3
+			var type __Class__ = int
+			return value is type
+		").unwrap();
+		assert_eq!(result, false);
+	}
+
 
 	#[test]
 	fn traits_same_fn_name() {
@@ -295,7 +317,7 @@ mod lib {
 				let t1 = m.add_trait::<Trait1>()?;
 				m.add_function(
 					"foo",
-					&[t1],
+					[t1],
 					int,
 					&|_api| {
 						Ok(())
@@ -305,7 +327,7 @@ mod lib {
 				let t2 = m.add_trait::<Trait2>()?;
 				m.add_function(
 					"foo",
-					&[t2],
+					[t2],
 					int,
 					&|_api| {
 						Ok(())
@@ -314,7 +336,7 @@ mod lib {
 
 				let cls = m.add_class::<TestClass>()?;
 				m.add_class_static_function(cls, ".new",
-					&[],
+					[],
 					cls,
 					&|api| {
 						api.set::<TestClass>(TestClass{});
@@ -326,7 +348,7 @@ mod lib {
 					t1,
 					cls,
 					"foo",
-					&[cls],
+					[cls],
 					int,
 					&|api| {
 						api.set::<Int>(1);
@@ -338,7 +360,7 @@ mod lib {
 					t2,
 					cls,
 					"foo",
-					&[cls],
+					[cls],
 					int,
 					&|api| {
 						api.set::<Int>(2);
@@ -382,18 +404,12 @@ mod lib {
 		").unwrap();
 		assert_eq!(result, 3.12 + 4.56);
 
-		// Defining a function called add should NOT override the
-		// trait Add's function
+		// Defining a function called 'add' should override the function by name
 		qu.run("
 			fn add(x float, y float) float:
 				return x
-		").unwrap();
-
-		// Calling add should invoke the locally defined function
-		let result:Float = *qu.run_and_get("
 			return add(3.12, 4.56)
 		").unwrap();
-		assert_eq!(result, 3.12);
 
 		// Using operators should invoke the trait Add's function
 		let result:Float = *qu.run_and_get("
@@ -401,7 +417,7 @@ mod lib {
 		").unwrap();
 		assert_eq!(result, 3.12 + 4.56);
 
-		// Force the use of a trait function with the @ operator
+		// Force the use of a trait function with the 'as' operator
 		let result:Float = *qu.run_and_get("
 			return 25.32@Add.add(14.28)
 		").unwrap();
@@ -470,7 +486,7 @@ mod lib {
 		let result:i32 = *qu.run_and_get("
 			return int(0==0) + int(0==0) + int(0!=0)
 		").unwrap();
-		assert_eq!(result, 1+1+0+0);
+		assert_eq!(result, 1+1+0);
 
 		let result:bool = *qu.run_and_get::<bool>("
 			return bool()
@@ -560,7 +576,7 @@ mod lib {
 				return a + b
 
 			var last int = 3
-			return adder(1,2) + last
+			return adder(1, 2) + last
 		"#;
 		let mut qu = Qu::new();
 
@@ -703,17 +719,17 @@ mod lib {
 			fn grow(item int, times int) int:
 				return item * times
 			
-			return grow(2) + grow(3, 3)
+			return grow(2) + grow(3, 4)
 		"#;
 
 		let res:i32 = *qu.run_and_get(script).unwrap();
-		assert_eq!(res, (2*2) + (3*3));
+		assert_eq!(res, (2*2) + (3*4));
 	}
 
 
 	#[test]
-	#[should_panic]
 	fn function_identity_same_names_diff_returns_panic() {
+		// The most recently defined function should be used in this case
 		let mut qu = Qu::new();
 		let script = r#"
 			fn weird(item int) int:
@@ -721,13 +737,15 @@ mod lib {
 			
 			fn weird(item int) bool:
 				return item > 5
+			
+			return weird(13)
 		"#;
-		qu.run(script).unwrap();
+		let value = *qu.run_and_get::<Bool>(script).unwrap();
+		assert_eq!(value, 13>5);
 	}
 
 
-	// TODO: Allow functions that are similar to trait functions
-	// #[test]
+	#[test]
 	fn function_similar_identity_to_add() {
 		let mut qu = Qu::new();
 		let script = r#"
@@ -749,8 +767,7 @@ mod lib {
 	}
 
 
-	// #[test]
-	// TODO: Allow accessing functions from class name (Requires constant evaluation)
+	#[test]
 	fn _class_dot_notation() {
 		let mut qu = Qu::new();
 		let result:i32 = *qu.run_and_get("return int.sub(5, 8)").unwrap();
@@ -809,7 +826,7 @@ mod lib {
 			
 			var location int = 5
 			return location.move()
-		").unwrap();
+		").unwrap(); 
 		assert_eq!(result, 5+1);
 	}
 

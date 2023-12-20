@@ -3,8 +3,8 @@ use std::alloc::Layout;
 use std::fmt::Debug;
 
 use crate::QuMsg;
+use crate::QuSelf;
 use crate::Register;
-use crate::QuStackId;
 use crate::QuVm;
 use crate::Uuid;
 use crate::compiler::CommonItem;
@@ -17,18 +17,31 @@ use crate::compiler::FunctionReference;
 use crate::compiler::ItemId;
 use crate::compiler::ModuleId;
 use crate::compiler::ModuleMetadata;
+use crate::vm::RegId;
 
 
 pub struct ArgsAPI<'a> {
 	pub(crate) vm: &'a mut QuVm,
-	pub(crate) arg_ids: &'a [QuStackId],
-	pub(crate) out_id: QuStackId,
+	pub(crate) fn_id: FunctionId,
+	pub(crate) arg_ids: &'a [RegId],
+	pub(crate) out_id: RegId,
 } impl<'a> ArgsAPI<'a> {
 	/// Gets a reference to the value of the function argument at `index`.
 	pub fn get<T: Register + 'static>(
 		&self,
 		index:usize,
 	) -> Result<&T, QuMsg> {
+		let fn_data = self.vm.definitions.get_function(self.fn_id)?;
+		let value_type_id = self.vm.definitions.class_id::<T>().unwrap();
+		let fn_param_id = fn_data.identity.parameters[index];
+		if fn_param_id != value_type_id {
+			panic!(
+				"Return value of type {} does not match function's parameter[{}] type {}",
+				self.vm.definitions.get_class(value_type_id).unwrap().common.name,
+				index,
+				self.vm.definitions.get_class(fn_param_id).unwrap().common.name,
+			)
+		}
 		self.vm.read::<T>(self.arg_ids[index])
 	}
 
@@ -37,6 +50,16 @@ pub struct ArgsAPI<'a> {
 		&mut self,
 		value:T,
 	) {
+		let fn_data = self.vm.definitions.get_function(self.fn_id).unwrap();
+		let value_type_id = self.vm.definitions.class_id::<T>().unwrap();
+		let fn_return_id = fn_data.identity.return_type;
+		if fn_return_id != value_type_id {
+			panic!(
+				"Return value of type {} does not match function's return type {}",
+				self.vm.definitions.get_class(value_type_id).unwrap().common.name,
+				self.vm.definitions.get_class(fn_return_id).unwrap().common.name,
+			)
+		}
 		self.vm.write::<T>(self.out_id, value);
 	}
 
@@ -123,7 +146,7 @@ pub struct Registerer<'a> {
 	fn add_function(
 		&mut self,
 		_name: impl Into<String>,
-		_args: &[ClassId],
+		_args: impl Into<Box<[ClassId]>>,
 		_out: ClassId,
 		_body: &'static ExternalFunctionPointer,
 	) -> Result<(), QuMsg> {
@@ -134,7 +157,7 @@ pub struct Registerer<'a> {
 		&mut self,
 		_for_class: ClassId,
 		_name: impl Into<String>,
-		_args: &[ClassId],
+		_args: impl Into<Box<[ClassId]>>,
 		_out: ClassId,
 		_body: &'static ExternalFunctionPointer,
 	) -> Result<(), QuMsg> {
@@ -142,11 +165,33 @@ pub struct Registerer<'a> {
 	}
 }
 
+
 #[derive(Clone, Copy, Debug, Default, Hash, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ClassId(pub usize);
 impl ClassId {
 	pub fn new(index:usize) -> Self {
 		Self(index)
+	}
+
+	pub(crate) fn is(self, other:ClassId, d:&Definitions) -> bool{
+		if self == other {
+			return true;
+		}
+		d
+			.get_class(self)
+			.unwrap()
+			.common.implementations
+			.contains_key(&other)
+	}
+
+	pub(crate) fn is_self_type(self) -> bool{
+		self == QuSelf::id()
+	}
+
+	pub(crate) fn set_self(&mut self, to_type:ClassId) {
+		if self.is_self_type() {
+			*self = to_type;
+		}
 	}
 } impl From<usize> for ClassId {
 	fn from(index: usize) -> Self {
@@ -159,6 +204,22 @@ impl From<ClassId> for u8 {
 	}
 } impl From<ClassId> for usize {
 	fn from(v:ClassId) -> Self {
+		v.0 as usize
+	}
+}
+
+#[derive(Clone, Copy, Debug, Default, Hash, Eq, Ord, PartialEq, PartialOrd)]
+pub struct FunctionId(pub usize);
+impl FunctionId {
+	pub fn new(index:usize) -> Self {
+		Self(index)
+	}
+} impl From<usize> for FunctionId {
+	fn from(index: usize) -> Self {
+		Self(index)
+	}
+} impl From<FunctionId> for usize {
+	fn from(v:FunctionId) -> Self {
 		v.0 as usize
 	}
 }
@@ -260,7 +321,7 @@ pub trait RegistererLayer {
 	fn add_function(
 		&mut self,
 		name: impl Into<String>,
-		args: &[ClassId],
+		args: impl Into<Box<[ClassId]>>,
 		out: ClassId,
 		body: &'static ExternalFunctionPointer,
 	) -> Result<(), QuMsg> {
@@ -269,17 +330,67 @@ pub trait RegistererLayer {
 			_ => todo!("Support adding functions to more types items"),
 		};
 
-		self.get_definitions_mut().register_function_in_module(
-			module_id,
+		let args = args.into();
+
+		self.get_definitions_mut().define_function_in_item(
+			ItemId::Module(module_id),
 			FunctionMetadata {
 				identity: FunctionIdentity {
 					name: name.into(),
-					parameters: Box::from(args),
+					parameters: args,
 					return_type: out,
 				},
 				code_block: FunctionReference::External(body),
+				..Default::default()
 				
-			}
+			},
+			None,
+			true,
+		)?;
+		Ok(())
+	}
+
+	/// Adds a function in the layer.
+	fn add_function_to_class(
+		&mut self,
+		class: ClassId,
+		name: impl Into<String>,
+		args: impl Into<Box<[ClassId]>>,
+		out: ClassId,
+		body: &'static ExternalFunctionPointer,
+	) -> Result<(), QuMsg> {
+		let module_id = match self.get_layer_item_id() {
+			ItemId::Module(id) => {id},
+			_ => todo!("Support adding functions to more types items"),
+		};
+
+		let args = args.into();
+
+		if args.len() == 0 {
+			panic!("Can't add function to class without binding a 'self' argument. TODO: better msg")
+		}
+		if !args[0].is(class, self.get_definitions()) && !args[0].is_self_type() {
+			panic!(
+				"First argument's type, {}, does not match class's type, {}.",
+				self.get_definitions().get_class(args[0])?.common.name,
+				self.get_definitions().get_class(class)?.common.name,
+			)
+		}
+
+		self.get_definitions_mut().define_function_in_item(
+			ItemId::Module(module_id),
+			FunctionMetadata {
+				identity: FunctionIdentity {
+					name: name.into(),
+					parameters: args,
+					return_type: out,
+				},
+				code_block: FunctionReference::External(body),
+				..Default::default()
+				
+			},
+			Some(class),
+			true,
 		)?;
 		Ok(())
 	}
@@ -289,21 +400,24 @@ pub trait RegistererLayer {
 		&mut self,
 		for_class: ClassId,
 		name: impl Into<String>,
-		args: &[ClassId],
+		args: impl Into<Box<[ClassId]>>,
 		out: ClassId,
 		body: &'static ExternalFunctionPointer,
 	) -> Result<(), QuMsg> {
-		self.get_definitions_mut().register_static_function_in_class(
-			for_class,
+		let args = args.into();
+		self.get_definitions_mut().define_function_in_item(
+			ItemId::Class(for_class),
 			FunctionMetadata {
 				identity: FunctionIdentity {
 					name: name.into(),
-					parameters: Box::from(args),
+					parameters: args,
 					return_type: out,
 				},
 				code_block: FunctionReference::External(body),
-				
+				..Default::default()
 			},
+			None,
+			false,
 		)?;
 		Ok(())
 	}
@@ -342,7 +456,9 @@ pub trait RegistererLayer {
 	fn get_class_id_of<T: Register + 'static>(
 		&self
 	) -> Option<ClassId> {
-		T::get_id(&self.get_definitions().uuid)
+		let id = T::id();
+		if !self.get_definitions().classes.contains_key(&id) {return None}
+		Some(id)
 	}
 
 	/// Gets a module by name.
@@ -364,20 +480,24 @@ pub trait RegistererLayer {
 		trait_id:ClassId,
 		in_class_id:ClassId,
 		name: impl Into<String>,
-		args: &[ClassId],
+		args: impl Into<Box<[ClassId]>>,
 		out: ClassId,
 		body: &'static ExternalFunctionPointer,
 	) -> Result<(), QuMsg> {
-		self.get_definitions_mut().register_function_implementation(
+		let args = args.into();
+		let layer_id = self.get_layer_item_id();
+		self.get_definitions_mut().define_function_implementation(
 			in_class_id,
 			trait_id,
+			layer_id,
 			FunctionMetadata {
 				identity: FunctionIdentity {
 					name: name.into(),
-					parameters: Box::from(args),
+					parameters: args,
 					return_type: out,
 				},
 				code_block: FunctionReference::External(body),
+				..Default::default()
 			},
 		)?;
 		Ok(())
